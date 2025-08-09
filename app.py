@@ -782,31 +782,12 @@ def unified_login() -> Response:
     password = request.form.get('password', '').strip()
     user_type = request.form.get('user_type', '').strip().lower()
 
-    valid_user_types = ['admin', 'cre', 'ps', 'branch_head', 'rec']
+    valid_user_types = ['admin', 'cre', 'ps', 'rec']
     if user_type not in valid_user_types:
-        flash('Please select a valid role (Admin, CRE, PS, Branch Head, or Receptionist)', 'error')
+        flash('Please select a valid role (Admin, CRE, PS, or Receptionist)', 'error')
         return redirect(url_for('index'))
 
-    if user_type == 'branch_head':
-        bh = supabase.table('Branch Head').select('*').eq('Username', username).execute().data
-        if not bh:
-            flash('Invalid username or password', 'error')
-            return redirect(url_for('index'))
-        bh = bh[0]
-        if not bh['Is Active']:
-            flash('User is inactive', 'error')
-            return redirect(url_for('index'))
-        # Use plain text password comparison for Branch Head
-        if bh['Password'] != password:
-            flash('Incorrect password', 'error')
-            return redirect(url_for('index'))
-        session['branch_head_id'] = bh['id']
-        session['branch_head_name'] = bh['Name']
-        session['branch_head_branch'] = bh['Branch']
-        session['user_type'] = 'branch_head'  # Add this line to set user_type
-        session['username'] = username  # Add username for consistency
-        flash('Welcome! Logged in as Branch Head', 'success')
-        return redirect('/branch_head_dashboard')
+    # Branch Head login removed
 
     elif user_type == 'rec':
         # Receptionist authentication
@@ -5012,79 +4993,12 @@ def analytics():
         return render_template('analytics.html', analytics=empty_analytics)
 
 
-@app.route('/branch_head_dashboard')
-def branch_head_dashboard():
-    if 'branch_head_id' not in session:
-        return redirect(url_for('index'))
-    
-    # Set user type for dashboard API access
-    session['user_type'] = 'branch_head'
-    
-    branch = session.get('branch_head_branch')
-    ps_users = supabase.table('ps_users').select('*').eq('branch', branch).execute().data or []
-    
-    # Calculate initial KPI counts for the dashboard
-    try:
-        # Fresh leads count
-        fresh_leads = supabase.table('ps_followup_master').select('*').eq('ps_branch', branch).execute().data or []
-        fresh_leads_count = len([
-            row for row in fresh_leads
-            if (not row.get('first_call_date') or str(row.get('first_call_date')).strip() == '')
-                and row.get('final_status', '').strip().lower() == 'pending'
-        ])
-        
-        # Walk-in leads count
-        walkin_leads = supabase.table('walkin_table').select('*').eq('branch', branch).execute().data or []
-        walkin_leads_count = len(walkin_leads)
-        
-        # CRE assigned leads count
-        cre_assigned_leads = supabase.table('ps_followup_master').select('*').eq('ps_branch', branch).execute().data or []
-        cre_assigned_leads_count = len(cre_assigned_leads)
-        
-        # Pending leads count (from multiple sources)
-        pending_followup = supabase.table('ps_followup_master').select('*').eq('ps_branch', branch).eq('final_status', 'Pending').execute().data or []
-        pending_event = supabase.table('activity_leads').select('*').eq('location', branch).eq('final_status', 'Pending').execute().data or []
-        pending_walkin = supabase.table('walkin_table').select('*').eq('branch', branch).eq('status', 'Pending').execute().data or []
-        pending_leads_count = len(pending_followup) + len(pending_event) + len(pending_walkin)
-        
-        # Today's follow-ups count
-        today_str = datetime.now().strftime('%Y-%m-%d')
-        followup_today = supabase.table('ps_followup_master').select('*').eq('ps_branch', branch).eq('follow_up_date', today_str).execute().data or []
-        event_today = supabase.table('activity_leads').select('*').eq('location', branch).eq('ps_followup_date_ts', today_str).execute().data or []
-        walkin_today = supabase.table('walkin_table').select('*').eq('branch', branch).eq('next_followup_date', today_str).execute().data or []
-        followup_leads_count = len(followup_today) + len(event_today) + len(walkin_today)
-        
-        # Event leads count
-        event_leads = supabase.table('activity_leads').select('*').eq('location', branch).execute().data or []
-        event_leads_count = len(event_leads)
-        
-        # Won leads count
-        won_leads = supabase.table('ps_followup_master').select('*').eq('ps_branch', branch).eq('final_status', 'Won').execute().data or []
-        won_leads_count = len(won_leads)
-        
-        # Lost leads count
-        lost_leads = supabase.table('ps_followup_master').select('*').eq('ps_branch', branch).eq('final_status', 'Lost').execute().data or []
-        lost_leads_count = len(lost_leads)
-        
-    except Exception as e:
-        print(f"Error calculating KPI counts: {str(e)}")
-        fresh_leads_count = walkin_leads_count = cre_assigned_leads_count = pending_leads_count = 0
-        followup_leads_count = event_leads_count = won_leads_count = lost_leads_count = 0
-    
-    return render_template('branch_head_dashboard.html', 
-                         ps_users=ps_users,
-                         fresh_leads_count=fresh_leads_count,
-                         walkin_leads_count=walkin_leads_count,
-                         cre_assigned_leads_count=cre_assigned_leads_count,
-                         pending_leads_count=pending_leads_count,
-                         followup_leads_count=followup_leads_count,
-                         event_leads_count=event_leads_count,
-                         won_leads_count=won_leads_count,
-                         lost_leads_count=lost_leads_count)
+# Branch Head dashboard route removed
 
 @app.route('/api/branch_head_dashboard_data')
 def api_branch_head_dashboard_data():
-    """Get data for branch head dashboard"""
+    # Deprecated endpoint (Branch Head removed)
+    return jsonify({'success': False, 'error': 'Branch Head feature removed'}), 410
     # Get query parameters
     section = request.args.get('section', 'fresh_leads')
     # Note: All filtering (date, search, etc.) is handled client-side
@@ -8708,19 +8622,7 @@ def ps_analytics():
         flash(f'Error loading PS analytics: {str(e)}', 'error')
         return redirect(url_for('ps_dashboard'))
 
-@app.route('/manage_branch_head')
-def manage_branch_head():
-    # Fetch all branch heads
-    branch_heads = supabase.table('Branch Head').select('*').execute().data
-    
-    # Debug: Print the structure of existing data
-    if branch_heads:
-        print("Sample branch head data structure:")
-        print(f"Keys in first record: {list(branch_heads[0].keys())}")
-        print(f"Sample record: {branch_heads[0]}")
-    
-    branches = get_all_branches()  # This should return a list of branch names
-    return render_template('manage_branch_head.html', branch_heads=branch_heads, branches=branches)
+# Branch Head management removed
 
 def get_all_branches():
     # Replace with a DB fetch if you have a branches table
@@ -8756,135 +8658,19 @@ def get_active_ps_users(branch):
 
 @app.route('/add_branch_head', methods=['POST'])
 def add_branch_head():
-    try:
-        # Get form data
-        name = request.form.get('name', '').strip()
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '').strip()
-        email = request.form.get('email', '').strip()
-        phone = request.form.get('phone', '').strip()
-        branch = request.form.get('branch', '').strip()
-        is_active = request.form.get('is_active') == 'on'
-        
-        # Debug: Print form data
-        print(f"Form data received:")
-        print(f"Name: '{name}'")
-        print(f"Username: '{username}'")
-        print(f"Email: '{email}'")
-        print(f"Phone: '{phone}'")
-        print(f"Branch: '{branch}'")
-        
-        # Validate required fields
-        if not all([name, username, password, branch]):
-            flash('Name, Username, Password, and Branch are required fields', 'error')
-            return redirect(url_for('manage_branch_head'))
-        
-        # Validate email format if provided
-        if email and '@' not in email:
-            flash('Please enter a valid email address', 'error')
-            return redirect(url_for('manage_branch_head'))
-        
-        # Validate phone number format (10 digits)
-        if phone and not phone.replace(' ', '').isdigit() or (phone and len(phone.replace(' ', '')) != 10):
-            flash('Please enter a valid 10-digit phone number', 'error')
-            return redirect(url_for('manage_branch_head'))
-        
-        # Store plain text password for Branch Head (testing only)
-        hashed_pw = password
-        
-        # Prepare data for insertion
-        branch_head_data = {
-            'Name': name,
-            'Username': username,
-            'Password': hashed_pw,
-            'Branch': branch,
-            'Is Active': is_active
-        }
-        
-        # Add email and phone (always include them, even if empty)
-        branch_head_data['email'] = email if email else None
-        branch_head_data['Phone No.'] = phone if phone else None
-        
-        # Debug: Print final data to be inserted
-        print(f"Data to be inserted: {branch_head_data}")
-        
-        # Insert into database
-        result = supabase.table('Branch Head').insert(branch_head_data).execute()
-        
-        if result.data:
-            flash('Branch Head added successfully!', 'success')
-            print(f"Successfully inserted branch head with ID: {result.data[0]['id'] if result.data else 'Unknown'}")
-            
-            # Debug: Fetch the inserted record to verify what was saved
-            if result.data:
-                inserted_id = result.data[0]['id']
-                verify_record = supabase.table('Branch Head').select('*').eq('id', inserted_id).execute().data
-                if verify_record:
-                    print(f"Verified saved data: {verify_record[0]}")
-        else:
-            flash('Error creating branch head. Please try again.', 'error')
-            print("Failed to insert branch head")
-            
-    except Exception as e:
-        flash(f'Error adding branch head: {str(e)}', 'error')
-        print(f"Exception occurred: {str(e)}")
-    
-    return redirect(url_for('manage_branch_head'))
+    return jsonify({'success': False, 'error': 'Branch Head feature removed'}), 410
 
 @app.route('/toggle_branch_head_active/<int:id>', methods=['POST'])
 def toggle_branch_head_active(id):
-    is_active = request.form.get('is_active') == 'True'
-    supabase.table('Branch Head').update({'Is Active': is_active}).eq('id', id).execute()
-    flash('Branch Head status updated!', 'info')
-    return redirect(url_for('manage_branch_head'))
+    return jsonify({'success': False, 'error': 'Branch Head feature removed'}), 410
 
 @app.route('/edit_branch_head_contact/<int:id>', methods=['POST'])
 def edit_branch_head_contact(id):
-    """Edit branch head email and phone only"""
-    try:
-        email = request.form.get('email', '').strip()
-        phone = request.form.get('phone', '').strip()
-        
-        # Validate email format if provided
-        if email and '@' not in email:
-            return jsonify({'success': False, 'message': 'Please enter a valid email address'})
-        
-        # Validate phone number format (10 digits)
-        if phone and not phone.replace(' ', '').isdigit() or (phone and len(phone.replace(' ', '')) != 10):
-            return jsonify({'success': False, 'message': 'Please enter a valid 10-digit phone number'})
-        
-        # Prepare update data
-        update_data = {}
-        if email:
-            update_data['email'] = email
-        if phone:
-            update_data['Phone No.'] = phone
-        
-        # Update in database
-        result = supabase.table('Branch Head').update(update_data).eq('id', id).execute()
-        
-        if result.data:
-            return jsonify({'success': True, 'message': 'Contact information updated successfully!'})
-        else:
-            return jsonify({'success': False, 'message': 'Error updating contact information'})
-            
-    except Exception as e:
-        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+    return jsonify({'success': False, 'error': 'Branch Head feature removed'}), 410
 
 @app.route('/delete_branch_head/<int:id>', methods=['POST'])
 def delete_branch_head(id):
-    """Delete entire branch head"""
-    try:
-        # Delete from database
-        result = supabase.table('Branch Head').delete().eq('id', id).execute()
-        
-        if result.data:
-            return jsonify({'success': True, 'message': 'Branch Head deleted successfully!'})
-        else:
-            return jsonify({'success': False, 'message': 'Error deleting branch head'})
-            
-    except Exception as e:
-        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+    return jsonify({'success': False, 'error': 'Branch Head feature removed'}), 410
 
 @app.route('/manage_dashboards')
 @require_admin
@@ -8896,13 +8682,8 @@ def manage_dashboards():
 def get_dashboards():
     # Custom authentication for branch head users
     if 'session_id' not in session:
-        # Check if it's a branch head user
-        if 'branch_head_id' in session:
-            # Branch head user is authenticated
-            pass
-        else:
-            flash('Please log in to access this page', 'error')
-            return redirect(url_for('index'))
+        flash('Please log in to access this page', 'error')
+        return redirect(url_for('index'))
     else:
         # Regular user authentication
         auth_manager = current_app.config['AUTH_MANAGER']
@@ -8957,10 +8738,6 @@ def get_dashboards():
         elif user_type == 'ps':
             # PS users can only see PS dashboards
             filtered_dashboards = {'ps': grouped_dashboards.get('ps', [])}
-        elif user_type == 'branch_head':
-            # Branch Head users can only see Branch Head dashboards
-            filtered_dashboards = {'branch-head': grouped_dashboards.get('branch-head', [])}
-            print(f"DEBUG: Branch head dashboards found: {len(grouped_dashboards.get('branch-head', []))}")
         else:
             # Admin users can see all dashboards
             filtered_dashboards = grouped_dashboards
@@ -9553,8 +9330,8 @@ def add_walkin_lead():
 def api_branch_analytics_ps_performance():
     """API endpoint for Product Specialist Performance data"""
     try:
-        # Get branch from session
-        branch = session.get('branch_head_branch')
+        # Get branch from session (fallbacks for non-branch-head flows)
+        branch = session.get('branch') or session.get('rec_branch')
         print(f"PS Performance API - Session branch: '{branch}'")
         if not branch:
             return jsonify({'success': False, 'message': 'Branch not found in session'})
@@ -9610,7 +9387,7 @@ def api_branch_analytics_source_leads():
     """API endpoint for Source-wise Leads Analysis data"""
     try:
         # Get branch from session
-        branch = session.get('branch_head_branch')
+        branch = session.get('branch') or session.get('rec_branch')
         if not branch:
             return jsonify({'success': False, 'message': 'Branch not found in session'})
         
@@ -9676,7 +9453,7 @@ def api_branch_analytics_walkin_leads():
     """API endpoint for Walk-in Leads Summary data"""
     try:
         # Get branch from session
-        branch = session.get('branch_head_branch')
+        branch = session.get('branch') or session.get('rec_branch')
         if not branch:
             return jsonify({'success': False, 'message': 'Branch not found in session'})
         
@@ -9734,7 +9511,7 @@ def api_branch_analytics_walkin_leads():
 def api_branch_sources():
     """Get unique source values for the current branch"""
     try:
-        branch = session.get('branch_head_branch')
+        branch = session.get('branch') or session.get('rec_branch')
         
         # Get unique sources from ps_followup_master
         ps_sources = supabase.table('ps_followup_master').select('source').eq('ps_branch', branch).not_.is_('source', 'null').execute().data or []
@@ -9762,7 +9539,7 @@ def api_branch_sources():
 def api_branch_analytics_summary():
     """API endpoint for Branch Summary KPI data"""
     try:
-        branch = session.get('branch_head_branch')
+        branch = session.get('branch') or session.get('rec_branch')
         if not branch:
             return jsonify({'success': False, 'message': 'Branch not found in session'})
         
@@ -10256,7 +10033,7 @@ def debug_ps_users():
         all_ps = supabase.table('ps_users').select('*').execute()
         
         # Get branch from session
-        branch = session.get('branch_head_branch', 'No branch in session')
+        branch = session.get('branch') or session.get('rec_branch', 'No branch in session')
         
         # Get PS users for this branch
         branch_ps = supabase.table('ps_users').select('*').eq('branch', branch).execute()

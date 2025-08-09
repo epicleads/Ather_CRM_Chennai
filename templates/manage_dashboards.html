@@ -238,11 +238,7 @@
                     <i class="fas fa-user-tie me-2"></i>PS Dashboard
                 </button>
             </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="branch-head-tab" data-bs-toggle="tab" data-bs-target="#branch-head" type="button" role="tab">
-                    <i class="fas fa-building me-2"></i>Branch Head Dashboard
-                </button>
-            </li>
+            
         </ul>
 
         <!-- Tab Content -->
@@ -289,19 +285,7 @@
                 </div>
             </div>
 
-            <!-- Branch Head Dashboard Tab -->
-            <div class="tab-pane fade" id="branch-head" role="tabpanel">
-                <div class="d-flex justify-content-between align-items-center mb-4">
-                    <h3><i class="fas fa-building text-warning"></i> Branch Head Dashboards</h3>
-                    <button class="btn btn-warning" onclick="showAddDashboardModal('branch-head')" id="addBranchHeadBtn">
-                        <i class="fas fa-plus"></i> Add Dashboard
-                    </button>
-                </div>
-                
-                <div id="branchHeadDashboardsList">
-                    <!-- Branch Head dashboards will be loaded here -->
-                </div>
-            </div>
+            
         </div>
     </div>
 
@@ -364,7 +348,7 @@
                         renderDashboards('admin');
                         renderDashboards('cre');
                         renderDashboards('ps');
-                        renderDashboards('branch-head');
+                        
                     }
                 })
                 .catch(error => {
@@ -374,12 +358,7 @@
 
         // Render dashboards for a specific type
         function renderDashboards(type) {
-            let containerId;
-            if (type === 'branch-head') {
-                containerId = 'branchHeadDashboardsList';
-            } else {
-                containerId = type + 'DashboardsList';
-            }
+            let containerId = type + 'DashboardsList';
             const container = document.getElementById(containerId);
             const dashboards = currentDashboards[type] || [];
             
@@ -440,12 +419,7 @@
             document.getElementById('dashboardUrl').value = '';
             document.getElementById('urlPreview').innerHTML = '<em>Enter a URL to see preview...</em>';
             
-            const typeNames = {
-                'admin': 'Admin',
-                'cre': 'CRE',
-                'ps': 'PS',
-                'branch-head': 'Branch Head'
-            };
+                const typeNames = { 'admin': 'Admin', 'cre': 'CRE', 'ps': 'PS' };
             
             document.getElementById('modalTitle').textContent = `Add ${typeNames[type]} Dashboard`;
             
