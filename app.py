@@ -1534,8 +1534,7 @@ def add_cre():
 @app.route('/add_ps', methods=['GET', 'POST'])
 @require_admin
 def add_ps():
-    branches = ['SOMAJIGUDA', 'ATTAPUR', 'BEGUMPET', 'KOMPALLY', 'MALAKPET', 'SRINAGAR COLONY', 'TOLICHOWKI',
-                'VANASTHALIPURAM']
+    branches = ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
 
     if request.method == 'POST':
         name = request.form.get('name', '').strip()
@@ -2064,10 +2063,7 @@ def edit_ps(ps_id):
 @app.route('/manage_rec', methods=['GET', 'POST'])
 @require_admin
 def manage_rec():
-    branches = [
-        "KOMPALLY", "SOMAJIGUDA", "ATTAPUR", "MALAKPET",
-        "TOLICHOWKI", "VANASTHALIPURAM"
-    ]
+    branches = ["PORUR", "NUNGAMBAKKAM", "TIRUVOTTIYUR"]
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
@@ -2232,7 +2228,7 @@ def check_duplicate_lead():
 @require_cre
 def add_lead():
     from datetime import datetime, date
-    branches = ['SOMAJIGUDA', 'ATTAPUR', 'TOLICHOWKI', 'KOMPALLY', 'SRINAGAR COLONY', 'MALAKPET', 'VANASTHALIPURAM']
+    branches = ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
     ps_users = safe_get_data('ps_users')
     if request.method == 'POST':
         customer_name = request.form.get('customer_name', '').strip()
@@ -3075,7 +3071,7 @@ def update_lead(uid):
             '450 Apex STD'
         ]
 
-        branches = ['SOMAJIGUDA', 'ATTAPUR', 'TOLICHOWKI', 'KOMPALLY', 'SRINAGAR COLONY', 'MALAKPET', 'VANASTHALIPURAM']
+        branches = ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
 
         lead_statuses = [
             'Busy on another Call', 'RNR', 'Call me Back', 'Interested',
@@ -4151,7 +4147,7 @@ def update_lead_optimized(uid):
             '450 Apex STD'
         ]
 
-        branches = ['SOMAJIGUDA', 'ATTAPUR', 'TOLICHOWKI', 'KOMPALLY', 'SRINAGAR COLONY', 'MALAKPET', 'VANASTHALIPURAM']
+        branches = ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
 
         lead_statuses = [
             'Busy on another Call', 'RNR', 'Call me Back', 'Interested',
@@ -5004,8 +5000,8 @@ def api_branch_head_dashboard_data():
     # Note: All filtering (date, search, etc.) is handled client-side
     # No backend filtering parameters needed
 
-    # Get branch from session
-    branch = session.get('branch_head_branch')
+    # Get branch from session (fallbacks for non-branch-head flows)
+    branch = session.get('branch') or session.get('rec_branch', 'No branch in session')
 
     # OPTIMIZED: Calculate KPI counts using efficient count queries with caching
     try:
@@ -8626,7 +8622,7 @@ def ps_analytics():
 
 def get_all_branches():
     # Replace with a DB fetch if you have a branches table
-    return ['KOMPALLY', 'SOMAJIGUDA', 'ATTAPUR', 'MALAKPET', 'TOLICHOWKI', 'VANASTHALIPURAM']
+    return ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
 
 def get_active_ps_users(branch):
     """Get active PS users for a specific branch"""
@@ -9236,10 +9232,7 @@ def add_walkin_lead():
         "450 X (2.9 kWh)", "450 X (3.7 kWh)", "450 X (2.9 kWh) Pro Pack", "450 X (3.7 kWh) Pro Pack",
         "450 Apex STD"
     ]
-    branches = [
-        "KOMPALLY", "SOMAJIGUDA", "ATTAPUR", "MALAKPET",
-        "TOLICHOWKI", "VANASTHALIPURAM"
-    ]
+    branches = ["PORUR", "NUNGAMBAKKAM", "TIRUVOTTIYUR"]
     # Fetch PS users for all branches
     ps_users = supabase.table('ps_users').select('name,branch').execute().data or []
     ps_options = {}
