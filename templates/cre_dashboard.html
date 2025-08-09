@@ -1,0 +1,2489 @@
+{% extends "base.html" %}
+
+{% block title %}CRE Dashboard - Ather CRM{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Style for low priority fresh leads */
+    .fresh-lead-row[data-lead-status="RNR"],
+    .fresh-lead-row[data-lead-status="Busy on another Call"],
+    .fresh-lead-row[data-lead-status="Call me Back"] {
+        background-color: #f8f9fa !important;
+        opacity: 0.8;
+    }
+    
+    .fresh-lead-row[data-lead-status="RNR"]:hover,
+    .fresh-lead-row[data-lead-status="Busy on another Call"]:hover,
+    .fresh-lead-row[data-lead-status="Call me Back"]:hover {
+        background-color: #e9ecef !important;
+        opacity: 1;
+    }
+    
+    /* Add a subtle border to distinguish low priority leads */
+    .fresh-lead-row[data-lead-status="RNR"],
+    .fresh-lead-row[data-lead-status="Busy on another Call"],
+    .fresh-lead-row[data-lead-status="Call me Back"] {
+        border-left: 3px solid #6c757d;
+    }
+
+    /* Fix dropdown positioning and clipping issues */
+    .btn-group .dropdown-menu {
+        position: absolute !important;
+        z-index: 1051 !important;
+        min-width: 150px;
+    }
+
+    .card-body {
+        overflow: visible !important;
+        padding-bottom: 2rem !important;
+    }
+
+    .tab-pane {
+        overflow: visible !important;
+        padding-bottom: 1rem !important;
+    }
+
+    /* Ensure Fresh Leads section has enough space for dropdown */
+    #fresh-leads {
+        min-height: 400px !important;
+        position: relative;
+    }
+
+    /* Additional dropdown fixes */
+    .dropdown-menu-end {
+        right: 0 !important;
+        left: auto !important;
+        transform: none !important;
+    }
+
+    /* Date Range Inputs - Ensure they are hidden by default */
+    #freshDateRangeInputs,
+    #pendingDateRangeInputs,
+    #psDateRangeInputs {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        position: absolute !important;
+        z-index: -1 !important;
+    }
+
+    /* Pending Leads Category Toggle Button Styling */
+    .category-toggle {
+        padding: 0.25rem 0.5rem !important;
+        font-size: 0.875rem !important;
+        line-height: 1.2 !important;
+        min-height: auto !important;
+    }
+    
+    .category-toggle i {
+        font-size: 0.75rem !important;
+        margin-right: 0.25rem !important;
+    }
+
+    /* PS Assigned Filters Styling */
+    .ps-assigned-filters {
+        gap: 0.5rem !important;
+        margin-bottom: 1rem !important;
+    }
+
+    .ps-assigned-filters .btn-group {
+        min-width: 150px;
+    }
+
+    .ps-assigned-filters .dropdown-menu {
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
+    /* PS Assigned Category Filter Buttons Styling */
+    .ps-category-filter {
+        font-size: 0.875rem;
+        padding: 0.375rem 0.75rem;
+        border-radius: 0.375rem;
+        margin-right: 0.25rem;
+        transition: all 0.2s ease-in-out;
+    }
+
+    .ps-category-filter:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .ps-category-filter.active {
+        font-weight: 600;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h2><i class="fas fa-headset text-success"></i> CRE Dashboard</h2>
+                <p class="text-muted">Welcome back, {{ session.cre_name }}!</p>
+            </div>
+            <div class="btn-group">
+                <a href="{{ url_for('add_lead') }}" class="btn btn-outline-success">
+                    <i class="fas fa-plus"></i> Add Lead
+                </a>
+                <a href="{{ url_for('cre_analytics') }}" class="btn btn-outline-primary">
+                    <i class="fas fa-chart-line"></i> Analytics
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Stats Row: Now a single horizontal flex line -->
+<div class="dashboard-cards-container">
+    <!-- Fresh Leads -->
+    <div class="dashboard-card fresh-leads" style="background: linear-gradient(135deg, #2196f3 60%, #21cbf3 100%); color: #fff;">
+        <h6 class="mb-1 fw-bold">Fresh Leads</h6>
+        <div class="fs-4 fw-bold">{{ total_fresh_leads }}</div>
+        <div class="d-flex justify-content-between mt-2">
+            <div class="flex-fill mx-1 rounded p-2" style="background: #d4edda; color: #155724;">
+                <div class="fw-semibold">{{ untouched_count }}</div>
+            </div>
+            <div class="flex-fill mx-1 rounded p-2" style="background: #ffe5b4; color: #b26a00;">
+                <div class="fw-semibold">{{ called_count }}</div>
+            </div>
+            <div class="flex-fill mx-1 rounded p-2" style="background: #fff3cd; color: #856404;">
+                <div class="fw-semibold">{{ follow_up_count }}</div>
+            </div>
+        </div>
+    </div>
+    <!-- Today's Follow-ups -->
+    <div class="dashboard-card follow-ups" style="background: #ffc107; color: #fff;">
+        <div class="fs-4 fw-bold">{{ todays_followups|length }}</div>
+        <div class="fw-semibold">Today's Follow-ups</div>
+        <i class="fas fa-calendar-check fa-lg mt-2"></i>
+    </div>
+    <!-- Pending Leads -->
+    <div class="dashboard-card pending-leads" style="background: #17a2b8; color: #fff;">
+        {% set pending_leads_list = [] %}
+        {% for lead in attended_leads %}
+            {% if lead.final_status != 'Won' and lead.final_status != 'Lost' %}
+                {% if pending_leads_list.append(lead) %}{% endif %}
+            {% endif %}
+        {% endfor %}
+        <div class="fs-4 fw-bold">{{ pending_leads_list|length }}</div>
+        <div class="fw-semibold">Pending Leads</div>
+        <i class="fas fa-hourglass-half fa-lg mt-2"></i>
+    </div>
+    <!-- Assigned to PS -->
+    <div class="dashboard-card assigned-ps" style="background: #00796b; color: #fff;">
+        <div class="fs-4 fw-bold">{{ assigned_to_ps|length }}</div>
+        <div class="fw-semibold">Assigned to PS</div>
+        <i class="fas fa-user-tie fa-lg mt-2"></i>
+    </div>
+    <!-- Won Leads -->
+    <div class="dashboard-card won-leads" style="background: #28a745; color: #fff;">
+        <div class="fs-4 fw-bold">{{ won_leads|length }}</div>
+        <div class="fw-semibold">Won Leads</div>
+        <i class="fas fa-trophy fa-lg mt-2"></i>
+    </div>
+    <!-- Lost Leads -->
+    <div class="dashboard-card lost-leads" style="background: #dc3545; color: #fff;">
+        <div class="fs-4 fw-bold">{{ lost_leads|length }}</div>
+        <div class="fw-semibold">Lost Leads</div>
+        <i class="fas fa-ban fa-lg mt-2"></i>
+    </div>
+</div>
+<style>
+.dashboard-cards-container {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 16px;
+  justify-content: space-between;
+  align-items: stretch;
+  overflow-x: auto;
+  padding: 8px 0 24px 0;
+}
+.dashboard-card {
+  flex: 1 1 0;
+  min-width: 160px;
+  max-width: 220px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+  padding: 18px 10px 14px 10px;
+  text-align: center;
+  margin: 0;
+  transition: box-shadow 0.2s;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.dashboard-card i {
+  font-size: 1.5rem;
+  margin-top: 8px;
+}
+@media (max-width: 1200px) {
+  .dashboard-card { min-width: 140px; max-width: 180px; padding: 12px 6px; }
+}
+@media (max-width: 900px) {
+  .dashboard-cards-container { flex-wrap: wrap; }
+  .dashboard-card { min-width: 45vw; max-width: 48vw; margin-bottom: 12px; }
+}
+@media (max-width: 600px) {
+  .dashboard-card { min-width: 90vw; max-width: 98vw; }
+}
+</style>
+
+
+<!-- Tabs for different lead views -->
+<div class="card shadow">
+    <div class="card-header">
+        <ul class="nav nav-tabs card-header-tabs" id="creLeadTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link {% if not return_tab %}active{% endif %}" id="fresh-leads-tab" data-bs-toggle="tab" data-bs-target="#fresh-leads" type="button" role="tab" aria-controls="fresh-leads" aria-selected="{% if not return_tab %}true{% else %}false{% endif %}">
+                    <i class="fas fa-star"></i> Fresh Leads
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="followups-tab" data-bs-toggle="tab" data-bs-target="#followups" type="button" role="tab" aria-controls="followups" aria-selected="false">
+                    <i class="fas fa-calendar-check"></i> Today's Follow-ups
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="pending-tab" data-bs-toggle="tab" data-bs-target="#pending" type="button" role="tab" aria-controls="pending" aria-selected="false">
+                    <i class="fas fa-hourglass-half"></i> Pending Leads
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="ps-assigned-tab" data-bs-toggle="tab" data-bs-target="#ps-assigned" type="button" role="tab" aria-controls="ps-assigned" aria-selected="false">
+                    <i class="fas fa-user-tie"></i> PS Assigned
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="won-leads-tab" data-bs-toggle="tab" data-bs-target="#won-leads" type="button" role="tab" aria-controls="won-leads" aria-selected="false">
+                    <i class="fas fa-trophy"></i> Won/Lost Leads
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="event-leads-tab" data-bs-toggle="tab" data-bs-target="#event-leads" type="button" role="tab" aria-controls="event-leads" aria-selected="false">
+                    <i class="fas fa-calendar-alt"></i> Event Leads
+                </button>
+            </li>
+        </ul>
+    </div>
+    <div class="card-body">
+        <div class="tab-content" id="creLeadTabsContent">
+            <!-- Fresh Leads Tab -->
+            <div class="tab-pane fade {% if not return_tab %}show active{% endif %}" id="fresh-leads" role="tabpanel" aria-labelledby="fresh-leads-tab" style="min-height: 400px;">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0">Fresh Leads (<span id="freshLeadsCount">{{ total_fresh_leads }}</span>)</h5>
+                    <div class="d-flex gap-2">
+                        <div class="btn-group">
+                            <button type="button" class="btn btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" style="z-index: 1050;">
+                                <span id="freshTimeFilterText">Today</span>
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end" style="z-index: 1051;">
+                                <li><a class="dropdown-item fresh-time-filter" href="#" data-filter="today">Today</a></li>
+                                <li><a class="dropdown-item fresh-time-filter" href="#" data-filter="all">All Time</a></li>
+                                <li><a class="dropdown-item fresh-time-filter" href="#" data-filter="range">Date Range</a></li>
+                            </ul>
+                        </div>
+                        <!-- Fresh Leads Date Range Filter -->
+                        <div id="freshDateRangeInputs" class="d-flex gap-2" style="display: none; z-index: 1050;">
+                            <input type="date" class="form-control" id="freshStartDate" style="max-width: 150px;">
+                            <input type="date" class="form-control" id="freshEndDate" style="max-width: 150px;">
+                            <button class="btn btn-outline-primary" type="button" id="applyFreshDateRange">
+                                <i class="fas fa-filter"></i> Apply
+                            </button>
+                        </div>
+                        <div class="input-group" style="max-width: 300px;">
+                            <input type="text" class="form-control" id="freshLeadSearchInput" placeholder="Search by UID, name, mobile...">
+                            <button class="btn btn-outline-secondary" type="button" id="freshLeadSearchButton">
+                                <i class="fas fa-search"></i>
+                            </button>
+                            <button class="btn btn-outline-warning" type="button" id="freshLeadClearButton">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Fresh Leads Tab Navigation -->
+                <ul class="nav nav-tabs mb-3" id="freshLeadsSubTab" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link {% if not return_tab %}active{% endif %}" id="untouched-leads-tab" data-bs-toggle="tab" data-bs-target="#untouched-leads" type="button" role="tab" aria-controls="untouched-leads" aria-selected="{% if not return_tab %}true{% else %}false{% endif %}">
+                            Untouched <span class="badge bg-secondary">{{ untouched_count }}</span>
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="called-leads-tab" data-bs-toggle="tab" data-bs-target="#called-leads" type="button" role="tab" aria-controls="called-leads" aria-selected="false">
+                            Called <span class="badge bg-secondary">{{ called_count }}</span>
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="follow-up-leads-tab" data-bs-toggle="tab" data-bs-target="#follow-up-leads" type="button" role="tab" aria-controls="follow-up-leads" aria-selected="false">
+                            Follow Up <span class="badge bg-warning">{{ follow_up_count }}</span>
+                        </button>
+                    </li>
+                </ul>
+                <div class="tab-content" id="freshLeadsSubTabContent">
+                    <!-- Untouched Leads Table -->
+                    <div class="tab-pane fade {% if not return_tab %}show active{% endif %}" id="untouched-leads" role="tabpanel" aria-labelledby="untouched-leads-tab">
+                        {% if untouched_leads %}
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover" id="untouchedLeadsTable">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th>Action</th>
+                                        <th>Lead Status</th>
+                                        <th>Customer Name</th>
+                                        <th>Mobile</th>
+                                        <th>Source</th>
+                                        <th>Campaign</th>
+                                        <th>Date</th>
+                                        <th>UID</th>
+                                        <th>Call History</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for lead in untouched_leads %}
+                                    <tr data-search="{{ lead.uid }} {{ lead.customer_name }} {{ lead.customer_mobile_number }} {{ lead.source or '' }}" data-assigned-date="{{ lead.cre_assigned_at[:10] if lead.cre_assigned_at else '' }}">
+                                        <td>
+                                            <a href="{{ url_for('update_lead', uid=lead.uid, return_tab='untouched-leads') }}" class="btn btn-sm btn-primary update-untouched-link">Update</a>
+                                        </td>
+                                        <td>{{ lead.lead_status }}</td>
+                                        <td>{{ lead.customer_name }}</td>
+                                        <td>{{ lead.customer_mobile_number }}</td>
+                                        <td>{{ lead.source }}</td>
+                                        <td>{{ lead.campaign or 'Not Set' }}</td>
+                                        <td>{{ lead.date }}</td>
+                                        <td>{{ lead.uid }}</td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-info view-call-history-btn" data-uid="{{ lead.uid }}" title="View Call History">
+                                                <i class="fas fa-history"></i> View
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <div class="alert alert-info">No untouched leads found.</div>
+                        {% endif %}
+                    </div>
+                    <!-- Called Leads Table -->
+                    <div class="tab-pane fade" id="called-leads" role="tabpanel" aria-labelledby="called-leads-tab">
+                        {% if called_leads %}
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover" id="calledLeadsTable">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th>Action</th>
+                                        <th>Lead Status</th>
+                                        <th>Customer Name</th>
+                                        <th>Mobile</th>
+                                        <th>Source</th>
+                                        <th>Campaign</th>
+                                        <th>Date</th>
+                                        <th>UID</th>
+                                        <th>Call History</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for lead in called_leads %}
+                                    <tr data-search="{{ lead.uid }} {{ lead.customer_name }} {{ lead.customer_mobile_number }} {{ lead.source or '' }}" data-assigned-date="{{ lead.cre_assigned_at[:10] if lead.cre_assigned_at else '' }}">
+                                        <td>
+                                            <a href="{{ url_for('update_lead', uid=lead.uid, return_tab='called-leads') }}" class="btn btn-sm btn-primary update-called-link">Update</a>
+                                        </td>
+                                        <td>{{ lead.lead_status }}</td>
+                                        <td>{{ lead.customer_name }}</td>
+                                        <td>{{ lead.customer_mobile_number }}</td>
+                                        <td>{{ lead.source }}</td>
+                                        <td>{{ lead.campaign or 'Not Set' }}</td>
+                                        <td>{{ lead.date }}</td>
+                                        <td>{{ lead.uid }}</td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-info view-call-history-btn" data-uid="{{ lead.uid }}" title="View Call History">
+                                                <i class="fas fa-history"></i> View
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <div class="alert alert-info">No called leads found.</div>
+                        {% endif %}
+                    </div>
+                    <!-- Follow Up Leads Table -->
+                    <div class="tab-pane fade" id="follow-up-leads" role="tabpanel" aria-labelledby="follow-up-leads-tab">
+                        {% if follow_up_leads %}
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover" id="followUpLeadsTable">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th>Action</th>
+                                        <th>Lead Status</th>
+                                        <th>Customer Name</th>
+                                        <th>Mobile</th>
+                                        <th>Source</th>
+                                        <th>Campaign</th>
+                                        <th>Date</th>
+                                        <th>UID</th>
+                                        <th>Call History</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for lead in follow_up_leads %}
+                                    <tr data-search="{{ lead.uid }} {{ lead.customer_name }} {{ lead.customer_mobile_number }} {{ lead.source or '' }}" data-assigned-date="{{ lead.cre_assigned_at[:10] if lead.cre_assigned_at else '' }}">
+                                        <td>
+                                            <a href="{{ url_for('update_lead', uid=lead.uid, return_tab='follow-up-leads') }}" class="btn btn-sm btn-warning update-follow-up-link">Update</a>
+                                        </td>
+                                        <td><span class="badge bg-warning">{{ lead.lead_status }}</span></td>
+                                        <td>{{ lead.customer_name }}</td>
+                                        <td>{{ lead.customer_mobile_number }}</td>
+                                        <td>{{ lead.source }}</td>
+                                        <td>{{ lead.campaign or 'Not Set' }}</td>
+                                        <td>{{ lead.date }}</td>
+                                        <td>{{ lead.uid }}</td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-info view-call-history-btn" data-uid="{{ lead.uid }}" title="View Call History">
+                                                <i class="fas fa-history"></i> View
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <div class="alert alert-info">No follow-up leads found.</div>
+                        {% endif %}
+                    </div>
+                </div>
+                <!-- The filter dropdown remains unchanged and works for both tables -->
+            </div>
+
+            <!-- Today's Follow-ups Tab -->
+            <div class="tab-pane fade" id="followups" role="tabpanel" aria-labelledby="followups-tab">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0">Today's Follow-ups ({{ todays_followups|length }})</h5>
+                    <div class="input-group" style="max-width: 300px;">
+                        <input type="text" class="form-control" id="followupSearchInput" placeholder="Search by UID, name, mobile...">
+                        <button class="btn btn-outline-secondary" type="button" id="followupSearchButton">
+                            <i class="fas fa-search"></i>
+                        </button>
+                        <button class="btn btn-outline-warning" type="button" id="followupClearButton">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+
+                {% if todays_followups %}
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover" id="followupTable">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Action</th>
+                                <th>Customer Name</th>
+                                <th>Mobile</th>
+                                <th>Lead Status</th>
+                                <th>Branch</th>
+                                <th>Activity Name</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for lead in todays_followups %}
+                                {% if lead.is_event_lead %}
+                                    <tr>
+                                        <td>
+                                            <a href="{{ url_for('update_event_lead_cre', activity_uid=lead.activity_uid, return_tab='event-leads') }}" class="btn btn-sm btn-outline-primary">
+                                                <i class="fas fa-edit"></i> Update
+                                            </a>
+                                        </td>
+                                        <td>{{ lead.customer_name }}</td>
+                                        <td>{{ lead.customer_phone_number }}</td>
+                                        <td>{{ lead.lead_status }}</td>
+                                        <td>{{ lead.location }}</td>
+                                        <td>{{ lead.activity_name }}</td>
+                                    </tr>
+                                {% else %}
+                                    <tr>
+                                        <td>
+                                            <a href="{{ url_for('update_lead', uid=lead.uid, return_tab='followups') }}" class="btn btn-sm btn-outline-primary">
+                                                <i class="fas fa-edit"></i> Update
+                                            </a>
+                                        </td>
+                                        <td>{{ lead.customer_name }}</td>
+                                        <td>{{ lead.customer_mobile_number }}</td>
+                                        <td>{{ lead.lead_status }}</td>
+                                        <td>{{ lead.branch }}</td>
+                                        <td></td>
+                                    </tr>
+                                {% endif %}
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5">
+                    <i class="fas fa-calendar-check fa-3x text-muted mb-3"></i>
+                    <h5 class="text-muted">No follow-ups scheduled for today</h5>
+                    <p class="text-muted">Set follow-up dates when updating leads</p>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Pending Leads Tab (formerly Attended Leads) -->
+            <div class="tab-pane fade" id="pending" role="tabpanel" aria-labelledby="pending-tab">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    {% set pending_count = 0 %}
+                    {% for lead in attended_leads %}
+                        {% if lead.final_status != 'Won' and lead.final_status != 'Lost' %}
+                            {% set pending_count = pending_count + 1 %}
+                        {% endif %}
+                    {% endfor %}
+                    <h5 class="mb-0">Pending Leads (<span id="pendingLeadsCount">{{ pending_count }}</span>)</h5>
+                    <div class="d-flex gap-2">
+                        <!-- Pending Leads Category Toggle Buttons -->
+                        <div class="btn-group me-2" role="group" aria-label="Pending Lead Category Filters">
+                            <button type="button" class="btn btn-outline-danger category-toggle" data-category="Hot" id="hotToggle">
+                                <i class="fas fa-fire"></i> H
+                            </button>
+                            <button type="button" class="btn btn-outline-warning category-toggle" data-category="Warm" id="warmToggle">
+                                <i class="fas fa-sun"></i> W
+                            </button>
+                            <button type="button" class="btn btn-outline-info category-toggle" data-category="Cold" id="coldToggle">
+                                <i class="fas fa-snowflake"></i> C
+                            </button>
+                        </div>
+                        <div class="btn-group">
+                            <button type="button" class="btn btn-outline-warning dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                                <span id="pendingTimeFilterText">Today</span>
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li><a class="dropdown-item pending-time-filter" href="#" data-filter="today">Today</a></li>
+                                <li><a class="dropdown-item pending-time-filter" href="#" data-filter="all">All Time</a></li>
+                                <li><a class="dropdown-item pending-time-filter" href="#" data-filter="range">Date Range</a></li>
+                            </ul>
+                        </div>
+                        <!-- Pending Leads Date Range Filter -->
+                        <div id="pendingDateRangeInputs" class="d-flex gap-2" style="display: none;">
+                            <input type="date" class="form-control" id="pendingStartDate" style="max-width: 150px;">
+                            <input type="date" class="form-control" id="pendingEndDate" style="max-width: 150px;">
+                            <button class="btn btn-outline-primary" type="button" id="applyPendingDateRange">
+                                <i class="fas fa-filter"></i> Apply
+                            </button>
+                        </div>
+                        <div class="input-group" style="max-width: 300px;">
+                            <input type="text" class="form-control" id="pendingSearchInput" placeholder="Search by UID, name, mobile...">
+                            <button class="btn btn-outline-secondary" type="button" id="pendingSearchButton">
+                                <i class="fas fa-search"></i>
+                            </button>
+                            <button class="btn btn-outline-warning" type="button" id="pendingClearButton">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Check if there are any pending leads -->
+                {% set pending_leads_exist = [] %}
+                {% for lead in attended_leads %}
+                    {% if lead.final_status != 'Won' and lead.final_status != 'Lost' %}
+                        {% if pending_leads_exist.append(1) %}{% endif %}
+                    {% endif %}
+                {% endfor %}
+
+                {% if pending_leads_exist %}
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover" id="pendingLeadsTable">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Action</th>
+                                <th>Lead Status</th>
+                                <th>Customer Name</th>
+                                <th>Mobile</th>
+                                <th>First Call Date</th>
+                                <th>Last Call Date</th>
+                                <th>Category</th>
+                                <th>Date</th>
+                                <th>UID</th>
+                                <th>Call History</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for lead in attended_leads %}
+                            {% if lead.final_status != 'Won' and lead.final_status != 'Lost' %}
+                            <tr class="pending-lead-row"
+                                data-first-call-date="{{ lead.first_call_date or '' }}"
+                                data-search="{{ (lead.uid + ' ' + lead.customer_name + ' ' + lead.customer_mobile_number + ' ' + (lead.source or '') + ' ' + (lead.campaign or '') + ' ' + (lead.lead_category or ''))|lower }}">
+                                <td>
+                                    <a href="{{ url_for('update_lead', uid=lead.uid, return_tab='pending') }}" class="btn btn-sm btn-outline-primary">
+                                        <i class="fas fa-edit"></i> Update
+                                    </a>
+                                </td>
+                                <td>
+                                    {% if lead.lead_status %}
+                                        <span class="badge bg-info">{{ lead.lead_status }}</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Not Set</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ lead.customer_name }}</td>
+                                <td>{{ lead.customer_mobile_number }}</td>
+                                <td>{{ lead.first_call_date or 'N/A' }}</td>
+                                <td>{{ lead.seventh_call_date or lead.sixth_call_date or lead.fifth_call_date or lead.fourth_call_date or lead.third_call_date or lead.second_call_date or lead.first_call_date or 'N/A' }}</td>
+                                <td>
+                                    {% if lead.lead_category == 'Hot' %}
+                                        <span class="badge bg-danger">{{ lead.lead_category }}</span>
+                                    {% elif lead.lead_category == 'Warm' %}
+                                        <span class="badge bg-warning">{{ lead.lead_category }}</span>
+                                    {% elif lead.lead_category == 'Cold' %}
+                                        <span class="badge bg-info">{{ lead.lead_category }}</span>
+                                    {% else %}
+                                        <span class="badge bg-dark">{{ lead.lead_category or 'Not Set' }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ lead.date }}</td>
+                                <td><span class="badge bg-primary">{{ lead.uid }}</span></td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-info view-call-history-btn" data-uid="{{ lead.uid }}">
+                                        <i class="fas fa-history"></i> View
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endif %}
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5">
+                    <i class="fas fa-hourglass-half fa-3x text-muted mb-3"></i>
+                    <h5 class="text-muted">No pending leads</h5>
+                    <p class="text-muted">Leads will appear here after your first call and are still in progress</p>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- PS Assigned Tab -->
+            <div class="tab-pane fade" id="ps-assigned" role="tabpanel" aria-labelledby="ps-assigned-tab">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0">Leads Assigned to PS (<span id="psAssignedCount">{{ assigned_to_ps|length }}</span>)</h5>
+                    <div class="d-flex gap-2">
+                        <div class="btn-group">
+                            <button type="button" class="btn btn-outline-info dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                                <span id="psTimeFilterText">Today</span>
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li><a class="dropdown-item ps-time-filter" href="#" data-filter="today">Today</a></li>
+                                <li><a class="dropdown-item ps-time-filter" href="#" data-filter="all">All Time</a></li>
+                                <li><a class="dropdown-item ps-time-filter" href="#" data-filter="range">Date Range</a></li>
+                            </ul>
+                        </div>
+                        <!-- PS Assigned Date Range Filter -->
+                        <div id="psDateRangeInputs" class="d-flex gap-2" style="display: none;">
+                            <input type="date" class="form-control" id="psStartDate" style="max-width: 150px;">
+                            <input type="date" class="form-control" id="psEndDate" style="max-width: 150px;">
+                            <button class="btn btn-outline-primary" type="button" id="applyPsDateRange">
+                                <i class="fas fa-filter"></i> Apply
+                            </button>
+                        </div>
+                        <!-- PS Assigned Branch and PS Filters -->
+                        <div class="ps-assigned-filters d-flex gap-2 flex-wrap" style="margin-bottom: 10px;">
+                            <div class="btn-group">
+                                <button type="button" class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                                    <span id="psBranchFilterText">All Branches</span>
+                                </button>
+                                <ul class="dropdown-menu dropdown-menu-end" id="psBranchFilterDropdown">
+                                    <li><a class="dropdown-item ps-branch-filter" href="#" data-branch="all">All Branches</a></li>
+                                    {% for branch in assigned_to_ps|map(attribute='branch')|unique|list %}
+                                    {% if branch %}
+                                    <li><a class="dropdown-item ps-branch-filter" href="#" data-branch="{{ branch }}">{{ branch }}</a></li>
+                                    {% endif %}
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            <div class="btn-group">
+                                <button type="button" class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                                    <span id="psNameFilterText">All PS</span>
+                                </button>
+                                <ul class="dropdown-menu dropdown-menu-end" id="psNameFilterDropdown">
+                                    <li><a class="dropdown-item ps-name-filter" href="#" data-ps="all">All PS</a></li>
+                                    {% for ps_name in assigned_to_ps|map(attribute='ps_name')|unique|list %}
+                                    {% if ps_name %}
+                                    <li><a class="dropdown-item ps-name-filter" href="#" data-ps="{{ ps_name }}">{{ ps_name }}</a></li>
+                                    {% endif %}
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            <!-- PS Assigned Category Filter Buttons -->
+                            <div class="btn-group" role="group">
+                                <button type="button" class="btn btn-outline-danger ps-category-filter" data-category="all" id="psCategoryAll">
+                                    <i class="fas fa-filter"></i> All Categories
+                                </button>
+                                <button type="button" class="btn btn-outline-danger ps-category-filter" data-category="Hot" id="psCategoryHot">
+                                    <i class="fas fa-fire"></i> Hot
+                                </button>
+                                <button type="button" class="btn btn-outline-warning ps-category-filter" data-category="Warm" id="psCategoryWarm">
+                                    <i class="fas fa-sun"></i> Warm
+                                </button>
+                                <button type="button" class="btn btn-outline-info ps-category-filter" data-category="Cold" id="psCategoryCold">
+                                    <i class="fas fa-snowflake"></i> Cold
+                                </button>
+                            </div>
+                        </div>
+                        <div class="input-group" style="max-width: 300px;">
+                            <input type="text" class="form-control" id="psSearchInput" placeholder="Search by UID, name, mobile...">
+                            <button class="btn btn-outline-secondary" type="button" id="psSearchButton">
+                                <i class="fas fa-search"></i>
+                            </button>
+                            <button class="btn btn-outline-warning" type="button" id="psClearButton">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {% if assigned_to_ps %}
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover" id="psAssignedTable">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Action</th>
+                                <th>Lead Status</th>
+                                <th>Customer Name</th>
+                                <th>Mobile</th>
+                                <th>PS Name</th>
+                                <th>Branch</th>
+                                <th>Category</th>
+                                <th>Model Interested</th>
+                                <th>Date</th>
+                                <th>UID</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for lead in assigned_to_ps %}
+                            <tr class="ps-lead-row"
+                                data-ps-assigned-date="{{ lead.ps_assigned_at[:10] if lead.ps_assigned_at else '' }}"
+                                data-search="{{ (lead.uid + ' ' + lead.customer_name + ' ' + lead.customer_mobile_number + ' ' + (lead.ps_name or '') + ' ' + (lead.branch or '') + ' ' + (lead.campaign or ''))|lower }}">
+                                <td>
+                                    <a href="{{ url_for('update_lead', uid=lead.uid, return_tab='ps-assigned') }}" class="btn btn-sm btn-outline-primary">
+                                        <i class="fas fa-edit"></i> Update
+                                    </a>
+                                </td>
+                                <td>
+                                    {% if lead.lead_status %}
+                                        <span class="badge bg-info">{{ lead.lead_status }}</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Not Set</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ lead.customer_name }}</td>
+                                <td>{{ lead.customer_mobile_number }}</td>
+                                <td>{{ lead.ps_name }}</td>
+                                <td>{{ lead.branch }}</td>
+                                <td>
+                                    {% if lead.lead_category == 'Hot' %}
+                                        <span class="badge bg-danger">{{ lead.lead_category }}</span>
+                                    {% elif lead.lead_category == 'Warm' %}
+                                        <span class="badge bg-warning">{{ lead.lead_category }}</span>
+                                    {% elif lead.lead_category == 'Cold' %}
+                                        <span class="badge bg-info">{{ lead.lead_category }}</span>
+                                    {% else %}
+                                        <span class="badge bg-dark">{{ lead.lead_category or 'Not Set' }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ lead.model_interested or 'Not specified' }}</td>
+                                <td>{{ lead.date }}</td>
+                                <td><span class="badge bg-primary">{{ lead.uid }}</span></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5">
+                    <i class="fas fa-user-tie fa-3x text-muted mb-3"></i>
+                    <h5 class="text-muted">No leads assigned to PS</h5>
+                    <p class="text-muted">Assign leads to PS when updating them</p>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Won Leads Tab -->
+            <div class="tab-pane fade" id="won-leads" role="tabpanel" aria-labelledby="won-leads-tab">
+                <div class="d-flex align-items-center mb-3 justify-content-between">
+                    <div class="d-flex align-items-center">
+                        <h5 class="mb-0 me-3">Won/Lost Leads (<span id="wonLostLeadsCount">{{ (won_leads if status == 'won' else lost_leads)|length }}</span>)</h5>
+                        <!-- Modern Slider Toggle -->
+                        <div class="toggle-container">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="wonLostToggle" {% if status == 'won' %}checked{% endif %}>
+                                <span class="slider"></span>
+                                <span class="toggle-label-left">Lost</span>
+                                <span class="toggle-label-right">Won</span>
+                            </label>
+                        </div>
+                        </div>
+                    <div class="d-flex gap-2">
+                        <div class="input-group" style="max-width: 300px;">
+                            <input type="text" class="form-control" id="wonLostLeadSearchInput" placeholder="Search by UID, name, mobile...">
+                            <button class="btn btn-outline-secondary" type="button" id="wonLostLeadSearchButton">
+                                <i class="fas fa-search"></i>
+                            </button>
+                            <button class="btn btn-outline-warning" type="button" id="wonLostLeadClearButton">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                {% if status == 'won' %}
+                    {% set leads_list = won_leads %}
+                                    {% else %}
+                    {% set leads_list = lost_leads %}
+                                    {% endif %}
+                {% include 'cre_dashboard_leads_table.html' with context %}
+            </div>
+
+            <!-- Event Leads Tab -->
+            <div class="tab-pane fade" id="event-leads" role="tabpanel" aria-labelledby="event-leads-tab">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0">Event Leads ({{ event_event_leads|length }})</h5>
+                    <div class="d-flex gap-2">
+                        <div class="input-group" style="max-width: 300px;">
+                            <input type="text" class="form-control" id="eventLeadSearchInput" placeholder="Search by name, mobile, model...">
+                            <button class="btn btn-outline-secondary" type="button" id="eventLeadSearchButton">
+                                <i class="fas fa-search"></i>
+                            </button>
+                            <button class="btn btn-outline-warning" type="button" id="eventLeadClearButton">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                {% if event_event_leads %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0" id="eventLeadsTable">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Action</th>
+                                <th>Customer Name</th>
+                                <th>Mobile</th>
+                                <th>Lead Status</th>
+                                <th>Branch</th>
+                                <th>Activity Name</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for lead in event_event_leads %}
+                            <tr>
+                                <td>
+                                    <a href="{{ url_for('update_event_lead_cre', activity_uid=lead.activity_uid, return_tab='event-leads') }}" class="btn btn-sm btn-outline-primary">
+                                        <i class="fas fa-edit"></i> Update
+                                    </a>
+                                </td>
+                                <td>{{ lead.customer_name }}</td>
+                                <td>{{ lead.customer_phone_number }}</td>
+                                <td>{{ lead.lead_status }}</td>
+                                <td>{{ lead.location }}</td>
+                                <td>{{ lead.activity_name }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5">
+                    <i class="fas fa-calendar-alt fa-3x text-muted mb-3"></i>
+                    <h5 class="text-muted">No event leads</h5>
+                    <p class="text-muted">Event leads will appear here when assigned</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast container for follow-up notifications -->
+<div id="followup-toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 9999;"></div>
+<audio id="followup-audio" src="https://cdn.pixabay.com/audio/2022/07/26/audio_124bfae5b6.mp3" preload="auto"></audio>
+
+<!-- Modal for Call History -->
+<div class="modal fade" id="callHistoryModal" tabindex="-1" aria-labelledby="callHistoryModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="callHistoryModalLabel">Call Attempt History</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="callHistoryTotal" class="mb-2"></div>
+        <div id="callHistoryTableContainer">
+          <div class="text-center text-muted">Loading...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.stats-card {
+    transition: all 0.3s ease;
+    border-radius: 10px;
+}
+
+.stats-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.nav-tabs .nav-link {
+    color: var(--ather-text);
+}
+
+.nav-tabs .nav-link.active {
+    color: var(--ather-primary);
+    background-color: var(--ather-card);
+    border-color: var(--ather-border) var(--ather-border) var(--ather-card);
+}
+
+.nav-tabs .nav-link:hover:not(.active) {
+    border-color: transparent;
+    color: var(--ather-primary);
+}
+
+/* Fix dropdown positioning and clipping issues */
+.btn-group .dropdown-menu {
+    position: absolute !important;
+    z-index: 1051 !important;
+    min-width: 150px;
+}
+
+.card-body {
+    overflow: visible !important;
+    padding-bottom: 2rem !important;
+}
+
+.tab-pane {
+    overflow: visible !important;
+    padding-bottom: 1rem !important;
+}
+
+/* Ensure Fresh Leads section has enough space for dropdown */
+#fresh-leads {
+    min-height: 400px !important;
+    position: relative;
+}
+
+/* Additional dropdown fixes */
+.dropdown-menu-end {
+    right: 0 !important;
+    left: auto !important;
+    transform: none !important;
+}
+
+/* Modern Toggle Switch Styles - Bigger and Better */
+.toggle-container {
+    position: relative;
+    width: 120px;
+    height: 45px;
+    margin-left: 20px;
+}
+
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 120px;
+    height: 45px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #222; /* Black shade for Lost */
+    transition: 0.4s ease;
+    border-radius: 45px;
+    box-shadow: 0 2px 8px rgba(30, 30, 30, 0.3);
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 37px;
+    width: 37px;
+    left: 4px;
+    bottom: 4px;
+    background-color: #888; /* Gray knob */
+    transition: 0.4s ease;
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+input:checked + .slider {
+    background-color: #111; /* Black shade for Won */
+    box-shadow: 0 2px 8px rgba(30, 30, 30, 0.4);
+}
+
+input:checked + .slider:before {
+    transform: translateX(75px);
+}
+
+.toggle-label-left, .toggle-label-right {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+    z-index: 1;
+    pointer-events: none;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.toggle-label-left {
+    left: 12px;
+}
+
+.toggle-label-right {
+    right: 12px;
+}
+
+/* Hover effects */
+.toggle-switch:hover .slider,
+.toggle-switch:hover input:checked + .slider {
+    box-shadow: 0 4px 12px rgba(30, 30, 30, 0.4);
+}
+
+.toggle-switch:hover input:checked + .slider {
+    box-shadow: 0 4px 12px rgba(30, 30, 30, 0.4);
+}
+</style>
+
+    <!-- SocketIO removed - no longer needed for notifications -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    function hideAllDateRangeInputs() {
+        console.log('hideAllDateRangeInputs called');
+        console.log('freshDateRangeInputs:', freshDateRangeInputs);
+        console.log('pendingDateRangeInputs:', pendingDateRangeInputs);
+        console.log('psDateRangeInputs:', psDateRangeInputs);
+        
+        if (freshDateRangeInputs) {
+            freshDateRangeInputs.style.setProperty('display', 'none', 'important');
+            freshDateRangeInputs.style.setProperty('visibility', 'hidden', 'important');
+            freshDateRangeInputs.style.setProperty('opacity', '0', 'important');
+            console.log('Hidden freshDateRangeInputs');
+        }
+        if (pendingDateRangeInputs) {
+            pendingDateRangeInputs.style.setProperty('display', 'none', 'important');
+            pendingDateRangeInputs.style.setProperty('visibility', 'hidden', 'important');
+            pendingDateRangeInputs.style.setProperty('opacity', '0', 'important');
+            console.log('Hidden pendingDateRangeInputs');
+        }
+        if (psDateRangeInputs) {
+            psDateRangeInputs.style.setProperty('display', 'none', 'important');
+            psDateRangeInputs.style.setProperty('visibility', 'hidden', 'important');
+            psDateRangeInputs.style.setProperty('opacity', '0', 'important');
+            console.log('Hidden psDateRangeInputs');
+        }
+    }
+    // Get current date in YYYY-MM-DD format (this will always be the actual current date)
+    function getCurrentDate() {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
+    console.log('Current date for filtering:', getCurrentDate());
+
+    // Filter state management using localStorage
+    const filterState = {
+        fresh: localStorage.getItem('cre_dashboard_fresh_filter') || 'today',
+        pending: localStorage.getItem('cre_dashboard_pending_filter') || 'today',
+        ps: localStorage.getItem('cre_dashboard_ps_filter') || 'today',
+        won: localStorage.getItem('cre_dashboard_won_filter') || 'today'
+    };
+
+    // Save filter state to localStorage
+    function saveFilterState(section, filterType) {
+        filterState[section] = filterType;
+        localStorage.setItem(`cre_dashboard_${section}_filter`, filterType);
+    }
+
+    // Generic search function
+    function setupSearch(inputId, buttonId, clearId, tableId) {
+        const searchInput = document.getElementById(inputId);
+        const searchButton = document.getElementById(buttonId);
+        const clearButton = document.getElementById(clearId);
+
+        if (!searchInput || !searchButton || !clearButton) return;
+
+        function performSearch() {
+            const searchTerm = searchInput.value.toLowerCase().trim();
+            const tableRows = document.querySelectorAll(`#${tableId} tbody tr`);
+
+            tableRows.forEach(row => {
+                const searchData = row.getAttribute('data-search') || '';
+                if (searchData.includes(searchTerm) || searchTerm === '') {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        }
+
+        function clearSearch() {
+            searchInput.value = '';
+            performSearch();
+        }
+
+        searchButton.addEventListener('click', performSearch);
+        clearButton.addEventListener('click', clearSearch);
+
+        searchInput.addEventListener('keyup', function(e) {
+            if (e.key === 'Enter') {
+                performSearch();
+            }
+        });
+
+        // Real-time search as user types
+        searchInput.addEventListener('input', performSearch);
+    }
+
+    // Setup search for all tabs (updated IDs)
+    setupSearch('followupSearchInput', 'followupSearchButton', 'followupClearButton', 'followupTable');
+    setupSearch('pendingSearchInput', 'pendingSearchButton', 'pendingClearButton', 'pendingLeadsTable');
+    setupSearch('psSearchInput', 'psSearchButton', 'psClearButton', 'psAssignedTable');
+    setupSearch('wonLostLeadSearchInput', 'wonLostLeadSearchButton', 'wonLostLeadClearButton', 'wonLostLeadsTable');
+    setupSearch('eventLeadSearchInput', 'eventLeadSearchButton', 'eventLeadClearButton', 'eventLeadsTable');
+
+    // Custom search for fresh leads (untouched, called, and follow-up tables)
+    const freshLeadSearchInput = document.getElementById('freshLeadSearchInput');
+    const freshLeadSearchButton = document.getElementById('freshLeadSearchButton');
+    const freshLeadClearButton = document.getElementById('freshLeadClearButton');
+
+    if (freshLeadSearchInput && freshLeadSearchButton && freshLeadClearButton) {
+        function performFreshLeadsSearch() {
+            const searchTerm = freshLeadSearchInput.value.toLowerCase().trim();
+            const untouchedRows = document.querySelectorAll('#untouchedLeadsTable tbody tr');
+            const calledRows = document.querySelectorAll('#calledLeadsTable tbody tr');
+            const followUpRows = document.querySelectorAll('#followUpLeadsTable tbody tr');
+
+            let untouchedVisibleCount = 0;
+            let calledVisibleCount = 0;
+            let followUpVisibleCount = 0;
+
+            // Search in untouched leads
+            untouchedRows.forEach(row => {
+                const searchData = (row.getAttribute('data-search') || '').toLowerCase();
+                if (searchData.includes(searchTerm) || searchTerm === '') {
+                    row.style.display = '';
+                    untouchedVisibleCount++;
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+
+            // Search in called leads
+            calledRows.forEach(row => {
+                const searchData = (row.getAttribute('data-search') || '').toLowerCase();
+                if (searchData.includes(searchTerm) || searchTerm === '') {
+                    row.style.display = '';
+                    calledVisibleCount++;
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+
+            // Search in follow-up leads
+            followUpRows.forEach(row => {
+                const searchData = (row.getAttribute('data-search') || '').toLowerCase();
+                if (searchData.includes(searchTerm) || searchTerm === '') {
+                    row.style.display = '';
+                    followUpVisibleCount++;
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+
+            // Update counts
+            const totalVisibleCount = untouchedVisibleCount + calledVisibleCount + followUpVisibleCount;
+            document.getElementById('freshLeadsCount').textContent = totalVisibleCount;
+            document.querySelector('#untouched-leads-tab .badge').textContent = untouchedVisibleCount;
+            document.querySelector('#called-leads-tab .badge').textContent = calledVisibleCount;
+            document.querySelector('#follow-up-leads-tab .badge').textContent = followUpVisibleCount;
+        }
+
+        function clearFreshLeadsSearch() {
+            freshLeadSearchInput.value = '';
+            performFreshLeadsSearch();
+        }
+
+        freshLeadSearchButton.addEventListener('click', performFreshLeadsSearch);
+        freshLeadClearButton.addEventListener('click', clearFreshLeadsSearch);
+
+        freshLeadSearchInput.addEventListener('keyup', function(e) {
+            if (e.key === 'Enter') {
+                performFreshLeadsSearch();
+            }
+        });
+
+        // Real-time search as user types
+        freshLeadSearchInput.addEventListener('input', performFreshLeadsSearch);
+    }
+
+    // Fresh leads time filter functionality
+    const freshTimeFilters = document.querySelectorAll('.fresh-time-filter');
+    const freshTimeFilterText = document.getElementById('freshTimeFilterText');
+    const freshDateRangeInputs = document.getElementById('freshDateRangeInputs');
+    const freshStartDate = document.getElementById('freshStartDate');
+    const freshEndDate = document.getElementById('freshEndDate');
+    const applyFreshDateRange = document.getElementById('applyFreshDateRange');
+
+    // Pending leads time filter functionality
+    const pendingTimeFilters = document.querySelectorAll('.pending-time-filter');
+    const pendingTimeFilterText = document.getElementById('pendingTimeFilterText');
+    const pendingRows = document.querySelectorAll('.pending-lead-row');
+    const pendingDateRangeInputs = document.getElementById('pendingDateRangeInputs');
+    const pendingStartDate = document.getElementById('pendingStartDate');
+    const pendingEndDate = document.getElementById('pendingEndDate');
+    const applyPendingDateRange = document.getElementById('applyPendingDateRange');
+    const pendingLeadsCount = document.getElementById('pendingLeadsCount');
+
+    // PS Assigned leads time filter functionality
+    const psTimeFilters = document.querySelectorAll('.ps-time-filter');
+    const psTimeFilterText = document.getElementById('psTimeFilterText');
+    const psRows = document.querySelectorAll('.ps-lead-row');
+    const psDateRangeInputs = document.getElementById('psDateRangeInputs');
+    const psStartDate = document.getElementById('psStartDate');
+    const psEndDate = document.getElementById('psEndDate');
+    const applyPsDateRange = document.getElementById('applyPsDateRange');
+
+    // Store current filter states for PS Assigned
+    let currentPsBranchFilter = 'all';
+    let currentPsNameFilter = 'all';
+    let currentPsCategoryFilter = 'all';
+
+    // Initialize filter state for PS Assigned to default to "All Time" if not set
+    if (!filterState.ps) {
+        filterState.ps = 'all';
+        saveFilterState('ps', 'all');
+    }
+
+    function filterFreshLeads(filterType, startDate = null, endDate = null) {
+        const today = getCurrentDate(); // Use the function to get current date
+        console.log('=== FRESH LEADS FILTER ===');
+        console.log('Filter Type:', filterType, 'Today:', today);
+        console.log('Start Date:', startDate, 'End Date:', endDate);
+
+        // Get rows from all three tables
+        const untouchedRows = document.querySelectorAll('#untouchedLeadsTable tbody tr');
+        const calledRows = document.querySelectorAll('#calledLeadsTable tbody tr');
+        const followUpRows = document.querySelectorAll('#followUpLeadsTable tbody tr');
+        
+        let totalVisibleCount = 0;
+        let untouchedVisibleCount = 0;
+        let calledVisibleCount = 0;
+        let followUpVisibleCount = 0;
+
+        // Filter untouched leads
+        untouchedRows.forEach(row => {
+            const leadDate = row.getAttribute('data-assigned-date');
+            console.log('Untouched Lead - Date:', leadDate);
+
+            let showRow = false;
+
+            switch(filterType) {
+                case 'today':
+                    showRow = leadDate === today;
+                    console.log('Today filter - Untouched Match:', showRow, 'for date:', leadDate);
+                    break;
+                case 'all':
+                    showRow = true;
+                    console.log('All Time filter - Showing all untouched leads');
+                    break;
+                case 'range':
+                    if (startDate && endDate && leadDate) {
+                        showRow = leadDate >= startDate && leadDate <= endDate;
+                        console.log('Range filter - Untouched Match:', showRow, 'for date:', leadDate, 'in range:', startDate, 'to', endDate);
+                    } else {
+                        showRow = false;
+                        console.log('Range filter - Invalid range or date for untouched, hiding');
+                    }
+                    break;
+                default:
+                    showRow = true;
+            }
+
+            if (showRow) {
+                untouchedVisibleCount++;
+            }
+
+            row.style.display = showRow ? '' : 'none';
+        });
+
+        // Filter called leads
+        calledRows.forEach(row => {
+            const leadDate = row.getAttribute('data-assigned-date');
+            console.log('Called Lead - Date:', leadDate);
+
+            let showRow = false;
+
+            switch(filterType) {
+                case 'today':
+                    showRow = leadDate === today;
+                    console.log('Today filter - Called Match:', showRow, 'for date:', leadDate);
+                    break;
+                case 'all':
+                    showRow = true;
+                    console.log('All Time filter - Showing all called leads');
+                    break;
+                case 'range':
+                    if (startDate && endDate && leadDate) {
+                        showRow = leadDate >= startDate && leadDate <= endDate;
+                        console.log('Range filter - Called Match:', showRow, 'for date:', leadDate, 'in range:', startDate, 'to', endDate);
+                    } else {
+                        showRow = false;
+                        console.log('Range filter - Invalid range or date for called, hiding');
+                    }
+                    break;
+                default:
+                    showRow = true;
+            }
+
+            if (showRow) {
+                calledVisibleCount++;
+            }
+
+            row.style.display = showRow ? '' : 'none';
+        });
+
+        // Filter follow-up leads
+        followUpRows.forEach(row => {
+            const leadDate = row.getAttribute('data-assigned-date');
+            console.log('Follow Up Lead - Date:', leadDate);
+
+            let showRow = false;
+
+            switch(filterType) {
+                case 'today':
+                    showRow = leadDate === today;
+                    console.log('Today filter - Follow Up Match:', showRow, 'for date:', leadDate);
+                    break;
+                case 'all':
+                    showRow = true;
+                    console.log('All Time filter - Showing all follow-up leads');
+                    break;
+                case 'range':
+                    if (startDate && endDate && leadDate) {
+                        showRow = leadDate >= startDate && leadDate <= endDate;
+                        console.log('Range filter - Follow Up Match:', showRow, 'for date:', leadDate, 'in range:', startDate, 'to', endDate);
+                    } else {
+                        showRow = false;
+                        console.log('Range filter - Invalid range or date for follow-up, hiding');
+                    }
+                    break;
+                default:
+                    showRow = true;
+            }
+
+            if (showRow) {
+                followUpVisibleCount++;
+            }
+
+            row.style.display = showRow ? '' : 'none';
+        });
+
+        totalVisibleCount = untouchedVisibleCount + calledVisibleCount + followUpVisibleCount;
+
+        console.log('Total visible fresh leads after filter:', totalVisibleCount);
+        console.log('Untouched visible:', untouchedVisibleCount, 'Called visible:', calledVisibleCount, 'Follow Up visible:', followUpVisibleCount);
+        console.log('=== END FRESH LEADS FILTER ===');
+
+        // Update the count display and badges
+        document.getElementById('freshLeadsCount').textContent = totalVisibleCount;
+        document.querySelector('#untouched-leads-tab .badge').textContent = untouchedVisibleCount;
+        document.querySelector('#called-leads-tab .badge').textContent = calledVisibleCount;
+        document.querySelector('#follow-up-leads-tab .badge').textContent = followUpVisibleCount;
+    }
+
+    freshTimeFilters.forEach(filter => {
+        filter.addEventListener('click', function(e) {
+            e.preventDefault();
+            console.log('Fresh time filter clicked:', this.getAttribute('data-filter'));
+            hideAllDateRangeInputs();
+            const filterType = this.getAttribute('data-filter');
+            freshTimeFilterText.textContent = this.textContent;
+            saveFilterState('fresh', filterType);
+
+            if (filterType === 'range') {
+                console.log('Showing freshDateRangeInputs');
+                freshDateRangeInputs.style.setProperty('display', 'flex', 'important');
+                freshDateRangeInputs.style.setProperty('visibility', 'visible', 'important');
+                freshDateRangeInputs.style.setProperty('opacity', '1', 'important');
+            } else {
+                console.log('Hiding freshDateRangeInputs, filtering with type:', filterType);
+                filterFreshLeads(filterType);
+            }
+        });
+    });
+
+    if (applyFreshDateRange) {
+        applyFreshDateRange.addEventListener('click', function() {
+            const startDate = freshStartDate.value;
+            const endDate = freshEndDate.value;
+
+            if (!startDate || !endDate) {
+                alert('Please select both start and end dates');
+                return;
+            }
+
+            if (startDate > endDate) {
+                alert('Start date cannot be later than end date');
+                return;
+            }
+
+            console.log('Applying fresh leads date range filter:', startDate, 'to', endDate);
+            filterFreshLeads('range', startDate, endDate);
+            saveFilterState('fresh', 'range');
+        });
+    }
+
+    // Won leads time filter functionality
+    const wonTimeFilters = document.querySelectorAll('.won-time-filter');
+    const wonTimeFilterText = document.getElementById('wonTimeFilterText');
+    const wonRows = document.querySelectorAll('.won-lead-row');
+    
+    const wonStartDate = document.getElementById('wonStartDate');
+    const wonEndDate = document.getElementById('wonEndDate');
+    const applyDateRange = document.getElementById('applyDateRange');
+    const wonLeadsCount = document.getElementById('wonLeadsCount');
+
+    function updateWonLeadsCount() {
+        const visibleRows = document.querySelectorAll('.won-lead-row[style=""], .won-lead-row:not([style*="display: none"])');
+        wonLeadsCount.textContent = visibleRows.length;
+    }
+
+    function filterWonLeads(filterType, startDate = null, endDate = null) {
+        const today = getCurrentDate(); // Use the function to get current date
+        console.log('Won Leads Filter - Type:', filterType, 'Today:', today);
+
+        wonRows.forEach(row => {
+            const wonTimestamp = row.getAttribute('data-won-timestamp');
+            const wonDate = row.getAttribute('data-won-date');
+
+            // Extract date from timestamp if available
+            let extractedDate = '';
+            if (wonTimestamp) {
+                try {
+                    // Handle different timestamp formats
+                    if (wonTimestamp.includes('T')) {
+                        // ISO format: 2025-01-15T10:30:00 or 2025-01-15T10:30:00.000Z
+                        extractedDate = wonTimestamp.split('T')[0];
+                    } else if (wonTimestamp.includes(' ')) {
+                        // Format: 2025-01-15 10:30:00
+                        extractedDate = wonTimestamp.split(' ')[0];
+                    } else if (wonTimestamp.length >= 10) {
+                        // Just date: 2025-01-15
+                        extractedDate = wonTimestamp.substring(0, 10);
+                    }
+                } catch (e) {
+                    console.log('Error parsing timestamp:', wonTimestamp, e);
+                    extractedDate = wonDate; // Fallback to data-won-date
+                }
+            } else {
+                extractedDate = wonDate;
+            }
+
+            console.log('Won Lead - Timestamp:', wonTimestamp, 'Extracted date:', extractedDate, 'Today:', today);
+
+            if (!extractedDate && filterType !== 'all') {
+                row.style.display = 'none';
+                return;
+            }
+
+            let showRow = false;
+
+            switch(filterType) {
+                case 'today':
+                    showRow = extractedDate === today;
+                    console.log('Won Today filter - Match:', showRow, 'for date:', extractedDate);
+                    break;
+                case 'all':
+                    showRow = true;
+                    break;
+                case 'range':
+                    if (startDate && endDate && extractedDate) {
+                        showRow = extractedDate >= startDate && extractedDate <= endDate;
+                    } else {
+                        showRow = false;
+                    }
+                    break;
+                default:
+                    showRow = true;
+            }
+
+            row.style.display = showRow ? '' : 'none';
+        });
+
+        updateWonLeadsCount();
+    }
+
+    wonTimeFilters.forEach(filter => {
+        filter.addEventListener('click', function(e) {
+            e.preventDefault();
+            hideAllDateRangeInputs();
+            const filterType = this.getAttribute('data-filter');
+            wonTimeFilterText.textContent = this.textContent;
+            saveFilterState('won', filterType);
+
+            if (filterType === 'range') {
+    
+            } else {
+                filterWonLeads(filterType);
+            }
+        });
+    });
+
+    if (applyDateRange) {
+        applyDateRange.addEventListener('click', function() {
+            const startDate = wonStartDate.value;
+            const endDate = wonEndDate.value;
+
+            if (!startDate || !endDate) {
+                alert('Please select both start and end dates');
+                return;
+            }
+
+            if (startDate > endDate) {
+                alert('Start date cannot be later than end date');
+                return;
+            }
+
+            filterWonLeads('range', startDate, endDate);
+            saveFilterState('won', 'range');
+        });
+    }
+
+    function filterPendingLeads(filterType, startDate = null, endDate = null) {
+        const today = getCurrentDate(); // Use the function to get current date
+        console.log('Pending Leads Filter - Type:', filterType, 'Today:', today);
+
+        pendingRows.forEach(row => {
+            const firstCallDate = row.getAttribute('data-first-call-date');
+            console.log('Pending Lead - First Call Date:', firstCallDate, 'Today:', today);
+
+            if (!firstCallDate && filterType !== 'all') {
+                row.style.display = 'none';
+                return;
+            }
+
+            let showRow = false;
+
+            switch(filterType) {
+                case 'today':
+                    showRow = firstCallDate === today;
+                    console.log('Pending Today filter - Match:', showRow, 'for date:', firstCallDate);
+                    break;
+                case 'all':
+                    showRow = true;
+                    break;
+                case 'range':
+                    if (startDate && endDate && firstCallDate) {
+                        showRow = firstCallDate >= startDate && firstCallDate <= endDate;
+                    } else {
+                        showRow = false;
+                    }
+                    break;
+                default:
+                    showRow = true;
+            }
+
+            row.style.display = showRow ? '' : 'none';
+        });
+
+        updatePendingLeadsCount();
+    }
+
+    pendingTimeFilters.forEach(filter => {
+        filter.addEventListener('click', function(e) {
+            e.preventDefault();
+            hideAllDateRangeInputs();
+            const filterType = this.getAttribute('data-filter');
+            pendingTimeFilterText.textContent = this.textContent;
+            saveFilterState('pending', filterType);
+
+            if (filterType === 'range') {
+                pendingDateRangeInputs.style.setProperty('display', 'flex', 'important');
+                pendingDateRangeInputs.style.setProperty('visibility', 'visible', 'important');
+                pendingDateRangeInputs.style.setProperty('opacity', '1', 'important');
+            } else {
+                filterPendingLeads(filterType);
+            }
+        });
+    });
+
+    if (applyPendingDateRange) {
+        applyPendingDateRange.addEventListener('click', function() {
+            const startDate = pendingStartDate.value;
+            const endDate = pendingEndDate.value;
+
+            if (!startDate || !endDate) {
+                alert('Please select both start and end dates');
+                return;
+            }
+
+            if (startDate > endDate) {
+                alert('Start date cannot be later than end date');
+                return;
+            }
+
+            filterPendingLeads('range', startDate, endDate);
+            saveFilterState('pending', 'range');
+        });
+    }
+
+    function filterPsAssignedLeads(filterType, startDate = null, endDate = null) {
+        const today = getCurrentDate(); // Use the function to get current date
+        console.log('PS Assigned Filter - Type:', filterType, 'Today:', today);
+        console.log('Date Range - Start:', startDate, 'End:', endDate);
+
+        let visibleCount = 0;
+
+        psRows.forEach(row => {
+            const psAssignedDate = row.getAttribute('data-ps-assigned-date');
+            console.log('PS Assigned Lead - PS Assigned Date:', psAssignedDate, 'Today:', today);
+
+            if (!psAssignedDate && filterType !== 'all') {
+                row.style.display = 'none';
+                return;
+            }
+
+            let showRow = false;
+
+            switch(filterType) {
+                case 'today':
+                    showRow = psAssignedDate === today;
+                    console.log('PS Assigned Today filter - Match:', showRow, 'for date:', psAssignedDate);
+                    break;
+                case 'all':
+                    showRow = true;
+                    console.log('PS Assigned All Time filter - Showing all leads');
+                    break;
+                case 'range':
+                    if (startDate && endDate && psAssignedDate) {
+                        showRow = psAssignedDate >= startDate && psAssignedDate <= endDate;
+                        console.log('PS Assigned Range filter - Match:', showRow, 'for date:', psAssignedDate, 'in range:', startDate, 'to', endDate);
+                    } else {
+                        showRow = false;
+                        console.log('PS Assigned Range filter - Invalid range or date, hiding');
+                    }
+                    break;
+                default:
+                    showRow = true;
+            }
+
+            // Apply branch and PS name filters
+            if (showRow) {
+                const branchCell = row.querySelector('td:nth-child(6)'); // Branch column
+                const psNameCell = row.querySelector('td:nth-child(5)'); // PS Name column
+                const categoryCell = row.querySelector('td:nth-child(7)'); // Category column
+                
+                if (branchCell && psNameCell && categoryCell) {
+                    const branchText = branchCell.textContent.trim();
+                    const psNameText = psNameCell.textContent.trim();
+                    const categoryText = categoryCell.textContent.trim();
+
+                    // Check branch filter
+                    if (currentPsBranchFilter !== 'all') {
+                        showRow = branchText === currentPsBranchFilter;
+                    }
+
+                    // Check PS name filter
+                    if (showRow && currentPsNameFilter !== 'all') {
+                        showRow = psNameText === currentPsNameFilter;
+                    }
+
+                    // Check category filter
+                    if (showRow && currentPsCategoryFilter !== 'all') {
+                        showRow = categoryText === currentPsCategoryFilter;
+                    }
+                }
+            }
+
+            row.style.display = showRow ? '' : 'none';
+            
+            if (showRow) {
+                visibleCount++;
+            }
+        });
+
+        console.log('PS Assigned Filter Result - Visible rows:', visibleCount);
+        updatePsAssignedCount();
+    }
+
+    psTimeFilters.forEach(filter => {
+        filter.addEventListener('click', function(e) {
+            e.preventDefault();
+            console.log('PS time filter clicked:', this.getAttribute('data-filter'));
+            hideAllDateRangeInputs();
+            const filterType = this.getAttribute('data-filter');
+            psTimeFilterText.textContent = this.textContent;
+            saveFilterState('ps', filterType);
+
+            if (filterType === 'range') {
+                console.log('Showing psDateRangeInputs');
+                psDateRangeInputs.style.setProperty('display', 'flex', 'important');
+                psDateRangeInputs.style.setProperty('visibility', 'visible', 'important');
+                psDateRangeInputs.style.setProperty('opacity', '1', 'important');
+                psDateRangeInputs.style.setProperty('position', 'static', 'important');
+                psDateRangeInputs.style.setProperty('z-index', 'auto', 'important');
+            } else {
+                console.log('Hiding psDateRangeInputs, filtering with type:', filterType);
+                // Force hide date range inputs for non-range filters
+                forceHidePsDateRangeInputs();
+                filterPsAssignedLeads(filterType);
+            }
+        });
+    });
+
+    if (applyPsDateRange) {
+        applyPsDateRange.addEventListener('click', function() {
+            const startDate = psStartDate.value;
+            const endDate = psEndDate.value;
+
+            if (!startDate || !endDate) {
+                alert('Please select both start and end dates');
+                return;
+            }
+
+            if (startDate > endDate) {
+                alert('Start date cannot be later than end date');
+                return;
+            }
+
+            console.log('Applying PS Assigned date range filter:', startDate, 'to', endDate);
+            
+            // Apply date filter first, then apply branch and PS filters
+            filterPsAssignedLeads('range', startDate, endDate);
+            saveFilterState('ps', 'range');
+            
+            // Update the filter text to show "Date Range"
+            if (psTimeFilterText) {
+                psTimeFilterText.textContent = 'Date Range';
+            }
+        });
+    }
+
+    // Ensure date range inputs are hidden by default
+    console.log('Hiding date range inputs by default...');
+    if (freshDateRangeInputs) freshDateRangeInputs.style.display = 'none';
+    if (pendingDateRangeInputs) pendingDateRangeInputs.style.display = 'none';
+    if (psDateRangeInputs) psDateRangeInputs.style.display = 'none';
+
+    // Apply saved filter states on page load instead of defaulting to "Today"
+    console.log('Applying saved filter states on page load...');
+    
+    // Set filter text based on saved state (with null checks)
+    if (freshTimeFilterText) {
+    freshTimeFilterText.textContent = filterState.fresh === 'today' ? 'Today' : 
+                                   filterState.fresh === 'all' ? 'All Time' : 'Date Range';
+    }
+    if (pendingTimeFilterText) {
+    pendingTimeFilterText.textContent = filterState.pending === 'today' ? 'Today' : 
+                                      filterState.pending === 'all' ? 'All Time' : 'Date Range';
+    }
+    if (psTimeFilterText) {
+    psTimeFilterText.textContent = filterState.ps === 'today' ? 'Today' : 
+                                 filterState.ps === 'all' ? 'All Time' : 'Date Range';
+    }
+    if (wonTimeFilterText) {
+    wonTimeFilterText.textContent = filterState.won === 'today' ? 'Today' : 
+                                  filterState.won === 'all' ? 'All Time' : 'Date Range';
+    }
+
+    // Apply the saved filters and ensure date inputs are hidden for non-range filters
+    if (filterState.fresh !== 'range') {
+        if (freshDateRangeInputs) freshDateRangeInputs.style.display = 'none';
+    }
+    if (filterState.pending !== 'range') {
+        if (pendingDateRangeInputs) pendingDateRangeInputs.style.display = 'none';
+    }
+    if (filterState.ps !== 'range') {
+        if (psDateRangeInputs) psDateRangeInputs.style.display = 'none';
+    }
+    if (filterState.won !== 'range') {
+
+    }
+    
+    // Only call filter functions if elements exist
+    if (document.querySelectorAll('#untouchedLeadsTable tbody tr').length > 0 || document.querySelectorAll('#calledLeadsTable tbody tr').length > 0) {
+    filterFreshLeads(filterState.fresh);
+    }
+    if (document.querySelectorAll('.pending-lead-row').length > 0) {
+    filterPendingLeads(filterState.pending);
+    }
+    if (document.querySelectorAll('.ps-lead-row').length > 0) {
+    // For PS Assigned, ensure "All Time" filter is applied by default if no saved state
+    const psFilterToApply = filterState.ps || 'all';
+    filterPsAssignedLeads(psFilterToApply);
+    }
+    if (document.querySelectorAll('.won-lead-row').length > 0) {
+    filterWonLeads(filterState.won);
+    }
+
+    // Initialize counts (with null checks)
+    // updateFreshLeadsCount();
+    if (document.querySelectorAll('.pending-lead-row').length > 0) {
+    updatePendingLeadsCount();
+    }
+    if (document.querySelectorAll('.ps-lead-row').length > 0) {
+    updatePsAssignedCount();
+    }
+    if (document.querySelectorAll('.won-lead-row').length > 0) {
+    updateWonLeadsCount();
+    }
+
+    // SocketIO notifications removed - no longer receiving notifications between PS and CRE
+
+    const callHistoryModal = new bootstrap.Modal(document.getElementById('callHistoryModal'));
+    const callHistoryTableContainer = document.getElementById('callHistoryTableContainer');
+    document.querySelectorAll('.view-call-history-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            const uid = this.getAttribute('data-uid');
+            callHistoryTableContainer.innerHTML = '<div class="text-center text-muted">Loading...</div>';
+            document.getElementById('callHistoryTotal').innerHTML = '';
+            callHistoryModal.show();
+            fetch(`/cre_call_attempt_history_json/${uid}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.history.length > 0) {
+                        // Count RNR calls
+                        const rnrCount = data.history.filter(row => row.status && row.status.trim().toUpperCase() === 'RNR').length;
+                        const busyCount = data.history.filter(row => row.status && row.status.trim().toLowerCase() === 'busy on another call').length;
+                        const callMeBackCount = data.history.filter(row => row.status && row.status.trim().toLowerCase() === 'call me back').length;
+                        const callNotConnectedCount = data.history.filter(row => row.status && row.status.trim().toLowerCase() === 'call not connected').length;
+                        const excludedStatuses = ['rnr', 'busy on another call', 'call me back', 'call not connected'];
+                        const connectedCallsCount = data.history.filter(row =>
+                             row.status && !excludedStatuses.includes(row.status.trim().toLowerCase())
+                        ).length;
+                        document.getElementById('callHistoryTotal').innerHTML = 
+                            `<strong>Total Calls Made:</strong> ${data.history.length} &nbsp; | &nbsp; <strong>RNR Calls:</strong> ${rnrCount} &nbsp; | &nbsp; <strong>Busy on another Call:</strong> ${busyCount} &nbsp; | &nbsp; <strong>Call me Back:</strong> ${callMeBackCount} &nbsp; | &nbsp; <strong>Call not Connected:</strong> ${callNotConnectedCount} &nbsp; | &nbsp; <strong>Connected Calls:</strong> ${connectedCallsCount}`;
+                        let table = `<div class='table-responsive'><table class='table table-bordered table-striped'><thead><tr><th>UID</th><th>Call No</th><th>Attempt</th><th>Status</th><th>CRE Name</th><th>Update TS</th></tr></thead><tbody>`;
+                        data.history.forEach(row => {
+                            table += `<tr><td>${row.uid}</td><td>${row.call_no}</td><td>${row.attempt}</td><td>${row.status}</td><td>${row.cre_name}</td><td>${row.update_ts ? row.update_ts.replace('T', ' ').slice(0, 19) : ''}</td></tr>`;
+                        });
+                        table += '</tbody></table></div>';
+                        callHistoryTableContainer.innerHTML = table;
+                    } else {
+                        document.getElementById('callHistoryTotal').innerHTML = '';
+                        callHistoryTableContainer.innerHTML = '<div class="alert alert-info">No call attempt history found for this lead.</div>';
+                    }
+                })
+                .catch(() => {
+                    document.getElementById('callHistoryTotal').innerHTML = '';
+                    callHistoryTableContainer.innerHTML = '<div class="alert alert-danger">Failed to load call attempt history.</div>';
+                });
+        });
+    });
+
+    // Won/Lost Leads Toggle Functionality - AJAX Version (same as PS dashboard)
+    console.log('Setting up CRE Won/Lost toggle...');
+    const wonLostToggle = document.getElementById('wonLostToggle');
+    const wonLostTabContent = document.getElementById('won-leads');
+    
+    console.log('Toggle element found:', wonLostToggle);
+    console.log('Tab content found:', wonLostTabContent);
+
+    if (wonLostToggle && wonLostTabContent) {
+        console.log('Adding change event listener to toggle...');
+        
+        // Add a click test
+        wonLostToggle.addEventListener('click', function() {
+            console.log('Toggle clicked!');
+        });
+        
+        wonLostToggle.addEventListener('change', function() {
+            console.log('Toggle changed! Checked:', this.checked);
+            const status = this.checked ? 'won' : 'lost';
+            console.log('Status:', status);
+            
+            // Show loading state
+            const tableContainer = wonLostTabContent.querySelector('.table-responsive') || wonLostTabContent.querySelector('.text-center');
+            if (tableContainer) {
+                tableContainer.innerHTML = '<div class="text-center py-5"><i class="fas fa-spinner fa-spin fa-2x text-primary"></i><p class="mt-2">Loading...</p></div>';
+            }
+            
+            // Update the header text
+            const headerText = wonLostTabContent.querySelector('h5');
+            if (headerText) {
+                headerText.textContent = `${status === 'won' ? 'Won' : 'Lost'} Leads (Loading...)`;
+            }
+            
+            // Fetch new data via AJAX
+            console.log('Making AJAX call to:', `/cre_dashboard_leads?status=${status}`);
+            fetch(`/cre_dashboard_leads?status=${status}`)
+                .then(response => {
+                    console.log('AJAX response received:', response.status);
+                    return response.text();
+                })
+                .then(html => {
+                    // Replace the table content
+                    const tableContainer = wonLostTabContent.querySelector('.table-responsive') || wonLostTabContent.querySelector('.text-center');
+                    if (tableContainer) {
+                        tableContainer.outerHTML = html;
+                    }
+                    
+                    // Update the header text with count
+                    const newTable = wonLostTabContent.querySelector('#wonLostLeadsTable');
+                    const newEmptyMessage = wonLostTabContent.querySelector('.text-center');
+                    const count = newTable ? newTable.querySelectorAll('tbody tr').length : 0;
+                    
+                    if (headerText) {
+                        headerText.textContent = `${status === 'won' ? 'Won' : 'Lost'} Leads (${count})`;
+                    }
+                    
+                    // Re-initialize search functionality for the new table
+                    const searchInput = document.getElementById('wonLostLeadSearchInput');
+                    const searchButton = document.getElementById('wonLostLeadSearchButton');
+                    const clearButton = document.getElementById('wonLostLeadClearButton');
+                    
+                    if (searchInput && searchButton && clearButton) {
+                        setupSearch('wonLostLeadSearchInput', 'wonLostLeadSearchButton', 'wonLostLeadClearButton', 'wonLostLeadsTable');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching leads:', error);
+                    const tableContainer = wonLostTabContent.querySelector('.table-responsive') || wonLostTabContent.querySelector('.text-center');
+                    if (tableContainer) {
+                        tableContainer.innerHTML = '<div class="alert alert-danger">Error loading leads. Please try again.</div>';
+                    }
+                });
+        });
+
+        // Set initial toggle state
+        const currentStatus = window.location.search.includes('status=won') ? 'won' : 'lost';
+        wonLostToggle.checked = currentStatus === 'won';
+    }
+
+    function updatePendingLeadsCount() {
+        const visibleRows = document.querySelectorAll('.pending-lead-row[style=""], .pending-lead-row:not([style*="display: none"])');
+        if (pendingLeadsCount) {
+            pendingLeadsCount.textContent = visibleRows.length;
+        }
+    }
+
+    function updatePsAssignedCount() {
+        const visibleRows = document.querySelectorAll('.ps-lead-row[style=""], .ps-lead-row:not([style*="display: none"])');
+        const psAssignedCount = document.getElementById('psAssignedCount');
+        if (psAssignedCount) {
+            psAssignedCount.textContent = visibleRows.length;
+        }
+    }
+
+    // Initialize the search functionality
+    setupPendingSearch();
+
+    // Handle tab and sub_tab redirection on page load
+    const returnTab = '{{ return_tab }}';
+    const returnSubTab = '{{ return_sub_tab }}';
+    
+    console.log('Tab redirection - returnTab:', returnTab, 'returnSubTab:', returnSubTab);
+    
+    if (returnTab) {
+        console.log('Attempting to activate tab:', returnTab);
+        
+        // Function to activate tab
+        function activateTab() {
+            // Activate the main tab first
+            const mainTab = document.querySelector(`[data-bs-target="#${returnTab}"]`);
+            console.log('Found main tab element:', mainTab);
+            if (mainTab) {
+                const tab = new bootstrap.Tab(mainTab);
+                tab.show();
+                console.log('Activated main tab:', returnTab);
+                
+                // If there's also a sub_tab, activate it after a delay
+                if (returnSubTab) {
+                    console.log('Will activate sub-tab after delay:', returnSubTab);
+                    setTimeout(() => {
+                        const subTab = document.querySelector(`[data-bs-target="#${returnSubTab}"]`);
+                        console.log('Found sub-tab element:', subTab);
+                        if (subTab) {
+                            const subTabInstance = new bootstrap.Tab(subTab);
+                            subTabInstance.show();
+                            console.log('Activated sub-tab:', returnSubTab);
+                        }
+                    }, 200);
+                }
+                return true;
+            } else {
+                console.log('Main tab element not found for:', returnTab);
+                return false;
+            }
+        }
+        
+        // Try immediately
+        if (!activateTab()) {
+            // If failed, try again after a delay
+            setTimeout(() => {
+                if (!activateTab()) {
+                    // If still failed, try one more time
+                    setTimeout(activateTab, 1000);
+                }
+            }, 500);
+        }
+    } else {
+        console.log('No returnTab specified');
+    }
+
+    // Ensure all date range inputs are hidden by default
+    console.log('Initializing date range inputs to hidden state');
+    console.log('freshDateRangeInputs element:', freshDateRangeInputs);
+    console.log('pendingDateRangeInputs element:', pendingDateRangeInputs);
+    console.log('psDateRangeInputs element:', psDateRangeInputs);
+    
+    // Test if elements exist
+    const testFresh = document.getElementById('freshDateRangeInputs');
+    const testPending = document.getElementById('pendingDateRangeInputs');
+    const testPs = document.getElementById('psDateRangeInputs');
+    console.log('Direct element test - fresh:', testFresh);
+    console.log('Direct element test - pending:', testPending);
+    console.log('Direct element test - ps:', testPs);
+    
+    // Manual test to hide elements
+    if (testFresh) {
+        testFresh.style.display = 'none';
+        console.log('Manually hid freshDateRangeInputs');
+    }
+    if (testPending) {
+        testPending.style.display = 'none';
+        console.log('Manually hid pendingDateRangeInputs');
+    }
+    if (testPs) {
+        testPs.style.display = 'none';
+        console.log('Manually hid psDateRangeInputs');
+    }
+    
+    // Force hide PS date range inputs specifically
+    const psDateRangeElement = document.getElementById('psDateRangeInputs');
+    if (psDateRangeElement) {
+        psDateRangeElement.style.setProperty('display', 'none', 'important');
+        psDateRangeElement.style.setProperty('visibility', 'hidden', 'important');
+        psDateRangeElement.style.setProperty('opacity', '0', 'important');
+        psDateRangeElement.style.setProperty('position', 'absolute', 'important');
+        psDateRangeElement.style.setProperty('z-index', '-1', 'important');
+        console.log('Force hid psDateRangeInputs with multiple properties');
+    }
+    
+    // Function to force hide PS date range inputs
+    function forceHidePsDateRangeInputs() {
+        const psDateRangeElement = document.getElementById('psDateRangeInputs');
+        if (psDateRangeElement) {
+            psDateRangeElement.style.setProperty('display', 'none', 'important');
+            psDateRangeElement.style.setProperty('visibility', 'hidden', 'important');
+            psDateRangeElement.style.setProperty('opacity', '0', 'important');
+            psDateRangeElement.style.setProperty('position', 'absolute', 'important');
+            psDateRangeElement.style.setProperty('z-index', '-1', 'important');
+            console.log('Force hid psDateRangeInputs using function');
+        }
+    }
+    
+    // Call the function immediately
+    forceHidePsDateRangeInputs();
+    
+    hideAllDateRangeInputs();
+
+    // PS Assigned Branch and PS Name Filter Functionality
+    const psBranchFilters = document.querySelectorAll('.ps-branch-filter');
+    const psNameFilters = document.querySelectorAll('.ps-name-filter');
+    const psBranchFilterText = document.getElementById('psBranchFilterText');
+    const psNameFilterText = document.getElementById('psNameFilterText');
+
+    function filterPsAssignedByBranchAndPS() {
+        const psRows = document.querySelectorAll('.ps-lead-row');
+        let visibleCount = 0;
+
+        psRows.forEach(row => {
+            const branchCell = row.querySelector('td:nth-child(6)'); // Branch column
+            const psNameCell = row.querySelector('td:nth-child(5)'); // PS Name column
+            const categoryCell = row.querySelector('td:nth-child(7)'); // Category column
+            
+            if (!branchCell || !psNameCell || !categoryCell) {
+                row.style.display = 'none';
+                return;
+            }
+
+            const branchText = branchCell.textContent.trim();
+            const psNameText = psNameCell.textContent.trim();
+            const categoryText = categoryCell.textContent.trim();
+
+            // Check branch filter
+            let showByBranch = true;
+            if (currentPsBranchFilter !== 'all') {
+                showByBranch = branchText === currentPsBranchFilter;
+            }
+
+            // Check PS name filter
+            let showByPS = true;
+            if (currentPsNameFilter !== 'all') {
+                showByPS = psNameText === currentPsNameFilter;
+            }
+
+            // Check category filter
+            let showByCategory = true;
+            if (currentPsCategoryFilter !== 'all') {
+                showByCategory = categoryText === currentPsCategoryFilter;
+            }
+
+            // Check date filter (if any date filter is active)
+            let showByDate = true;
+            const psAssignedDate = row.getAttribute('data-ps-assigned-date');
+            const currentDateFilter = filterState.ps;
+            
+            if (currentDateFilter === 'today' && psAssignedDate) {
+                const today = getCurrentDate();
+                showByDate = psAssignedDate === today;
+            } else if (currentDateFilter === 'range') {
+                // For range filter, we'll let the date range apply button handle it
+                // This function will be called after date filtering
+                showByDate = true;
+            }
+
+            // Show row only if all filters match
+            const shouldShow = showByBranch && showByPS && showByCategory && showByDate;
+            row.style.display = shouldShow ? '' : 'none';
+            
+            if (shouldShow) {
+                visibleCount++;
+            }
+        });
+
+        // Update count
+        const psAssignedCount = document.getElementById('psAssignedCount');
+        if (psAssignedCount) {
+            psAssignedCount.textContent = visibleCount;
+        }
+    }
+
+    // Branch filter event listeners
+    psBranchFilters.forEach(filter => {
+        filter.addEventListener('click', function(e) {
+            e.preventDefault();
+            const branch = this.getAttribute('data-branch');
+            currentPsBranchFilter = branch;
+            psBranchFilterText.textContent = this.textContent;
+            filterPsAssignedByBranchAndPS();
+        });
+    });
+
+    // PS name filter event listeners
+    psNameFilters.forEach(filter => {
+        filter.addEventListener('click', function(e) {
+            e.preventDefault();
+            const psName = this.getAttribute('data-ps');
+            currentPsNameFilter = psName;
+            psNameFilterText.textContent = this.textContent;
+            filterPsAssignedByBranchAndPS();
+        });
+    });
+
+    // PS Assigned Category Filter Functionality
+    const psCategoryFilters = document.querySelectorAll('.ps-category-filter');
+
+    function updatePsCategoryFilterButtons() {
+        // Remove active class from all buttons
+        psCategoryFilters.forEach(btn => {
+            btn.classList.remove('active');
+            btn.classList.remove('btn-danger', 'btn-warning', 'btn-info', 'btn-secondary');
+            btn.classList.add('btn-outline-danger', 'btn-outline-warning', 'btn-outline-info', 'btn-outline-secondary');
+        });
+
+        // Add active class to selected button
+        const activeButton = document.querySelector(`[data-category="${currentPsCategoryFilter}"]`);
+        if (activeButton) {
+            activeButton.classList.add('active');
+            activeButton.classList.remove('btn-outline-danger', 'btn-outline-warning', 'btn-outline-info', 'btn-outline-secondary');
+            
+            // Add solid color based on category
+            if (currentPsCategoryFilter === 'Hot') {
+                activeButton.classList.add('btn-danger');
+            } else if (currentPsCategoryFilter === 'Warm') {
+                activeButton.classList.add('btn-warning');
+            } else if (currentPsCategoryFilter === 'Cold') {
+                activeButton.classList.add('btn-info');
+            } else {
+                // "All Categories" - use secondary color
+                activeButton.classList.add('btn-secondary');
+            }
+        }
+    }
+
+    // Category filter event listeners
+    psCategoryFilters.forEach(filter => {
+        filter.addEventListener('click', function(e) {
+            e.preventDefault();
+            const category = this.getAttribute('data-category');
+            currentPsCategoryFilter = category;
+            updatePsCategoryFilterButtons();
+            filterPsAssignedByBranchAndPS();
+        });
+    });
+
+    // PS Assigned tab click handler to ensure "All Time" filter is applied on first visit
+    const psAssignedTab = document.querySelector('[data-bs-target="#ps-assigned"]');
+    if (psAssignedTab) {
+        psAssignedTab.addEventListener('click', function() {
+            // Force hide PS date range inputs on tab visit
+            forceHidePsDateRangeInputs();
+            
+            // Check if PS filter has been initialized
+            if (!filterState.ps || filterState.ps === 'all') {
+                // Apply "All Time" filter if not already applied
+                const psRows = document.querySelectorAll('.ps-lead-row');
+                if (psRows.length > 0) {
+                    console.log('PS Assigned tab clicked - applying All Time filter');
+                    filterPsAssignedLeads('all');
+                    saveFilterState('ps', 'all');
+                }
+            }
+        });
+    }
+
+    // Ensure date range inputs are hidden by default
+    hideAllDateRangeInputs();
+    
+    // Additional timeout to ensure PS date range inputs are hidden
+    setTimeout(() => {
+        forceHidePsDateRangeInputs();
+    }, 100);
+
+    // Call the function immediately
+    forceHidePsDateRangeInputs();
+    
+    // Initialize PS Assigned category filter buttons
+    updatePsCategoryFilterButtons();
+    
+    // Ensure date range inputs are hidden for non-range filters
+    if (filterState.ps !== 'range') {
+        forceHidePsDateRangeInputs();
+    }
+    
+    hideAllDateRangeInputs();
+});
+
+// Request browser notification permission on page load
+if (window.Notification && Notification.permission !== 'granted') {
+    Notification.requestPermission();
+}
+
+function showFollowupToast(lead) {
+    // Bootstrap Toast with clickable area
+    const toastHtml = `
+        <div class="toast align-items-center text-bg-warning border-0 show followup-toast" role="alert" aria-live="assertive" aria-atomic="true" style="min-width: 300px; margin-bottom: 10px; cursor: pointer;" data-uid="${lead.uid}">
+            <div class="d-flex">
+                <div class="toast-body">
+                    <strong>Upcoming Follow-up!</strong><br>
+                    Lead: <b>${lead.customer_name}</b> (${lead.customer_mobile_number})<br>
+                    Due at: <b>${lead.follow_up_date}</b>
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        </div>
+    `;
+    document.getElementById('followup-toast-container').insertAdjacentHTML('beforeend', toastHtml);
+    // Play sound
+    const audio = document.getElementById('followup-audio');
+    if (audio) { audio.currentTime = 0; audio.play(); }
+    // Browser notification
+    if (window.Notification && Notification.permission === 'granted') {
+        new Notification('Upcoming Follow-up!', {
+            body: `Lead: ${lead.customer_name} (${lead.customer_mobile_number})\nDue at: ${lead.follow_up_date}`,
+            icon: '/static/images/raam-ather-logo.png',
+            data: { url: lead.update_url }
+        }).onclick = function(e) {
+            window.open(lead.update_url, '_blank');
+        };
+    }
+    // Vibrate (mobile)
+    if (window.navigator && window.navigator.vibrate) window.navigator.vibrate(200);
+}
+
+function parseISODateTime(dt) {
+    if (!dt) return null;
+    // Accepts 'YYYY-MM-DD HH:mm' or 'YYYY-MM-DDTHH:mm'
+    return new Date(dt.replace(' ', 'T'));
+}
+
+function checkUpcomingFollowups() {
+    // Only check the "Today's Follow-ups" tab
+    const tab = document.getElementById('followups');
+    if (!tab || tab.style.display === 'none') return;
+    tab.querySelectorAll('tbody tr').forEach(row => {
+        const badge = row.querySelector('.badge.bg-warning');
+        if (!badge) return;
+        const followupText = badge.textContent.trim();
+        const followupDate = parseISODateTime(followupText);
+        if (!followupDate) return;
+        const now = new Date();
+        const diffMs = followupDate - now;
+        const diffMin = diffMs / 60000;
+        if (diffMin > 0 && diffMin <= 2 && !row.dataset.notified) {
+            const uid = row.querySelector('td .badge.bg-primary')?.textContent.trim();
+            const lead = {
+                customer_name: row.querySelector('td:nth-child(2)').textContent.trim(),
+                customer_mobile_number: row.querySelector('td:nth-child(3)').textContent.trim(),
+                follow_up_date: followupText,
+                uid: uid,
+                update_url: `/update_lead/${uid}`
+            };
+            showFollowupToast(lead);
+            row.dataset.notified = 'true';
+        }
+    });
+}
+
+// Check every 30 seconds
+setInterval(checkUpcomingFollowups, 30000);
+// Also check immediately on page load
+checkUpcomingFollowups();
+
+// Make toast clickable to go to update page
+// Delegate event to container
+
+document.getElementById('followup-toast-container').addEventListener('click', function(e) {
+    let toast = e.target.closest('.followup-toast');
+    if (toast && toast.dataset.uid) {
+        window.location.href = `/update_lead/${toast.dataset.uid}`;
+    }
+});
+
+// Pending Leads Category Toggle Functionality
+let activeCategoryFilter = null;
+const categoryToggles = document.querySelectorAll('.category-toggle');
+
+categoryToggles.forEach(toggle => {
+    toggle.addEventListener('click', function() {
+        const category = this.getAttribute('data-category');
+        
+        // Toggle active state
+        if (this.classList.contains('active')) {
+            // Deactivate filter
+            this.classList.remove('active');
+            this.classList.remove('btn-danger', 'btn-warning', 'btn-info');
+            this.classList.add('btn-outline-danger', 'btn-outline-warning', 'btn-outline-info');
+            activeCategoryFilter = null;
+        } else {
+            // Deactivate other toggles
+            categoryToggles.forEach(t => {
+                t.classList.remove('active');
+                t.classList.remove('btn-danger', 'btn-warning', 'btn-info');
+                t.classList.add('btn-outline-danger', 'btn-outline-warning', 'btn-outline-info');
+            });
+            
+            // Activate current toggle
+            this.classList.add('active');
+            this.classList.remove('btn-outline-danger', 'btn-outline-warning', 'btn-outline-info');
+            
+            if (category === 'Hot') {
+                this.classList.add('btn-danger');
+            } else if (category === 'Warm') {
+                this.classList.add('btn-warning');
+            } else if (category === 'Cold') {
+                this.classList.add('btn-info');
+            }
+            
+            activeCategoryFilter = category;
+        }
+        
+        // Filter the table
+        filterPendingLeadsByCategory();
+    });
+});
+
+function filterPendingLeadsByCategory() {
+    const tableRows = document.querySelectorAll('#pendingLeadsTable tbody tr');
+    
+    tableRows.forEach(row => {
+        const categoryCell = row.querySelector('td:nth-child(7)'); // Category column
+        if (categoryCell) {
+            const categoryText = categoryCell.textContent.trim();
+            
+            if (!activeCategoryFilter || categoryText.includes(activeCategoryFilter)) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        }
+    });
+    
+    updatePendingLeadsCount();
+}
+
+// Update the existing search function to work with category filter
+function setupPendingSearch() {
+    const searchInput = document.getElementById('pendingSearchInput');
+    const searchButton = document.getElementById('pendingSearchButton');
+    const clearButton = document.getElementById('pendingClearButton');
+    
+    function performSearch() {
+        const searchTerm = searchInput.value.toLowerCase();
+        const tableRows = document.querySelectorAll('#pendingLeadsTable tbody tr');
+        
+        tableRows.forEach(row => {
+            const searchData = row.getAttribute('data-search');
+            const categoryCell = row.querySelector('td:nth-child(7)');
+            
+            // Check search term
+            const shouldShowBySearch = !searchTerm || searchData.includes(searchTerm);
+            
+            // Check category filter
+            let shouldShowByCategory = true;
+            if (activeCategoryFilter && categoryCell) {
+                const categoryText = categoryCell.textContent.trim();
+                shouldShowByCategory = categoryText.includes(activeCategoryFilter);
+            }
+            
+            if (shouldShowBySearch && shouldShowByCategory) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+        
+        updatePendingLeadsCount();
+    }
+    
+    function clearSearch() {
+        searchInput.value = '';
+        performSearch();
+    }
+    
+    searchButton.addEventListener('click', performSearch);
+    clearButton.addEventListener('click', clearSearch);
+    
+    searchInput.addEventListener('keyup', function(e) {
+        if (e.key === 'Enter') {
+            performSearch();
+        }
+    });
+    
+    // Real-time search as user types
+    searchInput.addEventListener('input', performSearch);
+}
+
+// Initialize the search functionality
+setupPendingSearch();
+</script>
+{% endblock %}

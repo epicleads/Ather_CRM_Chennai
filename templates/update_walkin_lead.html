@@ -1,0 +1,614 @@
+{% extends "base.html" %}
+
+{% block title %}Update Walk-in Lead - Ather CRM{% endblock %}
+
+{% block content %}
+<style>
+  .update-card {
+    background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
+    border: none;
+    border-radius: 20px;
+    box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+    overflow: hidden;
+    margin-bottom: 2rem;
+  }
+  
+  .update-card .card-header {
+    background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+    color: white;
+    border: none;
+    padding: 2rem;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .update-card .card-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(45deg, rgba(255,255,255,0.1) 0%, transparent 50%, rgba(255,255,255,0.1) 100%);
+    animation: shimmer 3s infinite;
+  }
+  
+  @keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+  
+  .update-card .card-header h3 {
+    position: relative;
+    z-index: 1;
+    font-weight: 700;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+  }
+  
+  .form-label {
+    font-weight: 600;
+    color: #2c3e50;
+    margin-bottom: 0.75rem;
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+  }
+  
+  .form-label i {
+    color: #dc3545;
+    margin-right: 0.5rem;
+  }
+  
+  .form-control, .form-select {
+    border: 2px solid #e9ecef;
+    border-radius: 12px;
+    padding: 0.875rem 1.25rem;
+    transition: all 0.3s ease;
+    background: #ffffff;
+    font-weight: 500;
+    color: #2c3e50;
+  }
+  
+  .form-control:focus, .form-select:focus {
+    border-color: #dc3545;
+    box-shadow: 0 0 0 0.25rem rgba(220, 53, 69, 0.15);
+    background: white;
+    transform: translateY(-1px);
+  }
+  
+  .btn-submit {
+    background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+    border: none;
+    border-radius: 30px;
+    padding: 1rem 2.5rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    transition: all 0.3s ease;
+    box-shadow: 0 6px 20px rgba(220, 53, 69, 0.4);
+    color: white;
+  }
+  
+  .btn-submit:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 25px rgba(220, 53, 69, 0.6);
+    color: white;
+  }
+  
+  .btn-outline-secondary {
+    border: 2px solid #6c757d;
+    border-radius: 30px;
+    padding: 1rem 2.5rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    transition: all 0.3s ease;
+    color: #6c757d;
+  }
+  
+  .btn-outline-secondary:hover {
+    background: #6c757d;
+    border-color: #6c757d;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(108, 117, 125, 0.4);
+  }
+  
+  .lead-info {
+    background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+    border-radius: 20px;
+    padding: 2rem;
+    margin-bottom: 2.5rem;
+    border: none;
+    box-shadow: 0 10px 30px rgba(220, 53, 69, 0.2);
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .lead-info::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(45deg, rgba(255,255,255,0.1) 0%, transparent 50%, rgba(255,255,255,0.1) 100%);
+    animation: shimmer 4s infinite;
+  }
+  
+  .lead-info h5 {
+    color: white;
+    font-weight: 700;
+    margin-bottom: 1.5rem;
+    position: relative;
+    z-index: 1;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+  }
+  
+  .lead-info .row {
+    position: relative;
+    z-index: 1;
+  }
+  
+  .lead-info p {
+    color: white;
+    font-weight: 500;
+    margin-bottom: 0.75rem;
+    font-size: 1rem;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+  }
+  
+  .lead-info strong {
+    color: #f8f9fa;
+    font-weight: 700;
+    margin-right: 0.5rem;
+  }
+  
+  .lead-info .badge {
+    font-weight: 600;
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  
+  .call-history {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-radius: 15px;
+    padding: 1.5rem;
+    margin-top: 2rem;
+    border: 2px solid #dc3545;
+    box-shadow: 0 5px 15px rgba(220, 53, 69, 0.1);
+  }
+  
+  .call-history h6 {
+    color: #2c3e50;
+    font-weight: 700;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+  }
+  
+  .call-history h6 i {
+    color: #dc3545;
+    margin-right: 0.5rem;
+  }
+  
+  .field-group {
+    background: #ffffff;
+    border-radius: 15px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.05);
+    border: 1px solid #e9ecef;
+    transition: all 0.3s ease;
+  }
+  
+  .field-group:hover {
+    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+  }
+  
+  .text-success {
+    color: #28a745 !important;
+    font-weight: 600;
+  }
+  
+  .text-muted {
+    color: #6c757d !important;
+  }
+  
+  .small {
+    font-size: 0.875rem;
+  }
+  
+  .info-item {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    transition: all 0.3s ease;
+  }
+  
+  .info-item:hover {
+    background: rgba(255, 255, 255, 0.15);
+    transform: translateX(5px);
+  }
+  
+  .info-item p {
+    margin-bottom: 0;
+    display: flex;
+    align-items: center;
+  }
+  
+  .info-item strong {
+    display: flex;
+    align-items: center;
+    min-width: 120px;
+  }
+  
+  .info-item strong i {
+    color: #f8f9fa;
+    margin-right: 0.5rem;
+    width: 16px;
+    text-align: center;
+  }
+  
+  .badge {
+    font-size: 0.75rem;
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  }
+  
+  .bg-success {
+    background: linear-gradient(135deg, #28a745 0%, #20c997 100%) !important;
+  }
+  
+  .bg-warning {
+    background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%) !important;
+    color: #212529 !important;
+  }
+  
+  .bg-danger {
+    background: linear-gradient(135deg, #dc3545 0%, #e83e8c 100%) !important;
+  }
+  
+  .bg-secondary {
+    background: linear-gradient(135deg, #6c757d 0%, #495057 100%) !important;
+  }
+  
+  .call-history .col-md-6 {
+    transition: all 0.3s ease;
+  }
+  
+  .call-history .col-md-6:hover {
+    transform: translateY(-2px);
+  }
+  
+  .call-history .text-warning {
+    color: #ffc107 !important;
+    font-weight: 600;
+  }
+</style>
+
+<div class="container mt-4">
+  <div class="row justify-content-center">
+    <div class="col-lg-10">
+      <div class="card update-card">
+        <div class="card-header">
+          <h3 class="mb-0">
+            <i class="fas fa-edit me-2"></i>Update Walk-in Lead
+          </h3>
+        </div>
+        <div class="card-body p-4">
+          
+          <!-- Lead Information -->
+          <div class="lead-info">
+            <h5><i class="fas fa-user-circle me-2"></i>Customer Information</h5>
+                        <div class="row">
+              <div class="col-md-6">
+                <div class="info-item">
+                  <p><strong><i class="fas fa-id-card me-2"></i>UID:</strong> {{ walkin_lead.uid }}</p>
+                </div>
+                <div class="info-item">
+                  <p><strong><i class="fas fa-user me-2"></i>Name:</strong> {{ walkin_lead.customer_name }}</p>
+                </div>
+                <div class="info-item">
+                  <p><strong><i class="fas fa-phone me-2"></i>Mobile:</strong> {{ walkin_lead.mobile_number }}</p>
+                </div>
+              </div>
+              <div class="col-md-6">
+                <div class="info-item">
+                  <p><strong><i class="fas fa-flag me-2"></i>Status:</strong> 
+                    <span class="badge {% if walkin_lead.status == 'Won' %}bg-success{% elif walkin_lead.status == 'Lost' %}bg-danger{% else %}bg-warning{% endif %}">
+                      {{ walkin_lead.status }}
+                    </span>
+                  </p>
+                </div>
+                <div class="info-item">
+                  <p><strong><i class="fas fa-info-circle me-2"></i>Lead Status:</strong> 
+                    <span class="badge bg-info">
+                      {{ walkin_lead.lead_status or 'Not Set' }}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Update Form -->
+          <form method="POST">
+            <div class="row">
+              <div class="col-md-6">
+                <div class="mb-3">
+                  <label class="form-label">
+                    <i class="fas fa-phone me-2"></i>Follow-up Number
+                  </label>
+                  <select class="form-select" name="followup_no" required>
+                    {% for call in available_calls %}
+                      <option value="{{ call.number }}" selected>
+                        {{ call.display }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                  <small class="text-muted">
+                    <i class="fas fa-info-circle me-1"></i>
+                    Only the next available call can be recorded. Previous calls are locked.
+                  </small>
+                </div>
+              </div>
+              <div class="col-md-6">
+                <div class="mb-3">
+                  <label class="form-label">
+                    <i class="fas fa-calendar me-2"></i>Call Date
+                  </label>
+                  <input type="datetime-local" class="form-control" name="call_date" required>
+                </div>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">
+                <i class="fas fa-comment me-2"></i>Call Remarks
+              </label>
+              <textarea class="form-control" name="call_remark" rows="3" placeholder="Enter call remarks..." required></textarea>
+            </div>
+
+            <div class="row">
+              <div class="col-md-3">
+                <div class="mb-3">
+                  <label class="form-label">
+                    <i class="fas fa-flag me-2"></i>Status
+                  </label>
+                  <select class="form-select" name="status" required>
+                    <option value="Pending" {% if walkin_lead.status == 'Pending' %}selected{% endif %}>Pending</option>
+                    <option value="Won" {% if walkin_lead.status == 'Won' %}selected{% endif %}>Won</option>
+                    <option value="Lost" {% if walkin_lead.status == 'Lost' %}selected{% endif %}>Lost</option>
+                  </select>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <div class="mb-3">
+                  <label class="form-label">
+                    <i class="fas fa-fire me-2"></i>Lead Category
+                  </label>
+                  <select class="form-select" name="lead_category" required>
+                    <option value="Hot" {% if walkin_lead.lead_category == 'Hot' %}selected{% endif %}>🔥 Hot</option>
+                    <option value="Warm" {% if walkin_lead.lead_category == 'Warm' %}selected{% endif %}>🌡️ Warm</option>
+                    <option value="Cold" {% if walkin_lead.lead_category == 'Cold' %}selected{% endif %}>❄️ Cold</option>
+                  </select>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <div class="mb-3">
+                  <label class="form-label">
+                    <i class="fas fa-car-side me-2"></i>Test Drive Done?
+                    <span class="text-danger">*</span>
+                  </label>
+                  <select class="form-select" name="test_drive_done" required>
+                    <option value="" {% if not walkin_lead.test_drive_done %}selected{% endif %}>Select</option>
+                    <option value="Yes" {% if walkin_lead.test_drive_done == 'Yes' %}selected{% endif %}>Yes</option>
+                    <option value="No" {% if walkin_lead.test_drive_done == 'No' %}selected{% endif %}>No</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="col-md-6">
+                <div class="mb-3">
+                  <label class="form-label">
+                    <i class="fas fa-car me-2"></i>Model Interested
+                  </label>
+                  <select class="form-select" name="model_interested" required>
+                    {% for model in models %}
+                      <option value="{{ model }}" {% if walkin_lead.model_interested == model %}selected{% endif %}>{{ model }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </div>
+              <div class="col-md-6">
+                <div class="mb-3">
+                  <label class="form-label">
+                    <i class="fas fa-info-circle me-2"></i>Lead Status
+                  </label>
+                  <select class="form-select" name="lead_status" required>
+                    <option value="" disabled {% if not walkin_lead.lead_status %}selected{% endif %}>Select Lead Status</option>
+                    <option value="Call not Connected" {% if walkin_lead.lead_status == 'Call not Connected' %}selected{% endif %}>Call not Connected</option>
+                    <option value="Retailed" {% if walkin_lead.lead_status == 'Retailed' %}selected{% endif %}>Retailed</option>
+                    <option value="Discount Issue" {% if walkin_lead.lead_status == 'Discount Issue' %}selected{% endif %}>Discount Issue</option>
+                    <option value="Delayed" {% if walkin_lead.lead_status == 'Delayed' %}selected{% endif %}>Delayed</option>
+                    <option value="Booked" {% if walkin_lead.lead_status == 'Booked' %}selected{% endif %}>Booked</option>
+                    <option value="Test Drive" {% if walkin_lead.lead_status == 'Test Drive' %}selected{% endif %}>Test Drive</option>
+                    <option value="Planning in Next Month" {% if walkin_lead.lead_status == 'Planning in Next Month' %}selected{% endif %}>Planning in Next Month</option>
+                    <option value="Interested" {% if walkin_lead.lead_status == 'Interested' %}selected{% endif %}>Interested</option>
+                    <option value="Lost to Competition" {% if walkin_lead.lead_status == 'Lost to Competition' %}selected{% endif %}>Lost to Competition</option>
+                    <option value="Finance Rejected" {% if walkin_lead.lead_status == 'Finance Rejected' %}selected{% endif %}>Finance Rejected</option>
+                    <option value="Dropped" {% if walkin_lead.lead_status == 'Dropped' %}selected{% endif %}>Dropped</option>
+                    <option value="Lost to codealer" {% if walkin_lead.lead_status == 'Lost to codealer' %}selected{% endif %}>Lost to codealer</option>
+                    <option value="Busy on another call" {% if walkin_lead.lead_status == 'Busy on another call' %}selected{% endif %}>Busy on another call</option>
+                    <option value="RNR" {% if walkin_lead.lead_status == 'RNR' %}selected{% endif %}>RNR</option>
+                    <option value="Call me Back" {% if walkin_lead.lead_status == 'Call me Back' %}selected{% endif %}>Call me Back</option>
+                    <option value="Not Interested" {% if walkin_lead.lead_status == 'Not Interested' %}selected{% endif %}>Not Interested</option>
+                    <option value="Call Disconnected" {% if walkin_lead.lead_status == 'Call Disconnected' %}selected{% endif %}>Call Disconnected</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="col-md-4">
+                <div class="mb-3">
+                  <label class="form-label">
+                    <i class="fas fa-calendar-plus me-2"></i>Next Follow-up Date
+                    <span class="text-danger">*</span>
+                  </label>
+                  <input type="datetime-local" class="form-control" name="next_followup_date" 
+                         placeholder="Required unless status is Won/Lost" required>
+                  <small class="text-muted">
+                    <i class="fas fa-info-circle me-1"></i>
+                    <span id="followup-date-hint">Required for Pending status. Not needed for Won/Lost status.</span>
+                  </small>
+                </div>
+              </div>
+              <!-- Removed call progress display -->
+            </div>
+
+            <div class="text-center mt-4">
+              <button type="submit" class="btn btn-submit btn-lg">
+                <i class="fas fa-save me-2"></i>Update Walk-in Lead
+              </button>
+              <a href="{{ url_for('ps_dashboard') }}" class="btn btn-outline-secondary btn-lg ms-2">
+                <i class="fas fa-arrow-left me-2"></i>Back to Dashboard
+              </a>
+            </div>
+          </form>
+
+          <!-- Call History (moved below form) -->
+          <div class="call-history mt-4" style="background: linear-gradient(135deg, #e0eafc 0%, #cfdef3 100%); border: 2px solid #4facfe; box-shadow: 0 2px 8px rgba(79,172,254,0.08);">
+            <h6><i class="fas fa-history me-2"></i>Call History</h6>
+            <div class="row">
+              {% for i in range(1, 8) %}
+                {% set call_num = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh'][i-1] %}
+                {% set call_date = walkin_lead.get(call_num + '_call_date') %}
+                {% set call_remark = walkin_lead.get(call_num + '_call_remark') %}
+                <div class="col-md-6 mb-2">
+                  <small class="text-muted">
+                    {{ i }}{% if i == 1 %}st{% elif i == 2 %}nd{% elif i == 3 %}rd{% else %}th{% endif %} Call:
+                    {% if call_date %}
+                      <span class="badge bg-success">✓ Completed</span>
+                    {% elif next_call == call_num %}
+                      <span class="badge bg-warning">⏳ Next</span>
+                    {% else %}
+                      <span class="badge bg-secondary">🔒 Locked</span>
+                    {% endif %}
+                  </small>
+                  {% if call_date %}
+                    <div class="text-success">{{ call_date }}</div>
+                    {% if call_remark %}
+                      <div class="text-muted small">{{ call_remark }}</div>
+                    {% endif %}
+                  {% elif next_call == call_num %}
+                    <div class="text-warning">Ready to record</div>
+                  {% else %}
+                    <div class="text-muted">Not available yet</div>
+                  {% endif %}
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Auto-fill current date/time for call date
+  document.addEventListener('DOMContentLoaded', function() {
+    const now = new Date();
+    const localDateTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    document.querySelector('input[name="call_date"]').value = localDateTime;
+    
+    // Initialize next followup date requirement based on current status
+    const statusSelect = document.querySelector('select[name="status"]');
+    const nextFollowupField = document.querySelector('input[name="next_followup_date"]');
+    const hintElement = document.getElementById('followup-date-hint');
+    const requiredIndicator = document.querySelector('label:has(input[name="next_followup_date"]) .text-danger');
+    
+    if (statusSelect.value === 'Won' || statusSelect.value === 'Lost') {
+      nextFollowupField.disabled = true;
+      nextFollowupField.removeAttribute('required');
+      hintElement.textContent = 'Not needed for Won/Lost status.';
+      if (requiredIndicator) requiredIndicator.style.display = 'none';
+    } else {
+      nextFollowupField.setAttribute('required', 'required');
+      hintElement.textContent = 'Required for Pending status.';
+      if (requiredIndicator) requiredIndicator.style.display = 'inline';
+    }
+  });
+  
+  // Auto-hide next followup date if status is Won/Lost
+  document.querySelector('select[name="status"]').addEventListener('change', function() {
+    const nextFollowupField = document.querySelector('input[name="next_followup_date"]');
+    const hintElement = document.getElementById('followup-date-hint');
+    const requiredIndicator = document.querySelector('label[for="next_followup_date"] .text-danger, label:has(input[name="next_followup_date"]) .text-danger');
+    
+    if (this.value === 'Won' || this.value === 'Lost') {
+      nextFollowupField.value = '';
+      nextFollowupField.disabled = true;
+      nextFollowupField.removeAttribute('required');
+      hintElement.textContent = 'Not needed for Won/Lost status.';
+      if (requiredIndicator) requiredIndicator.style.display = 'none';
+    } else {
+      nextFollowupField.disabled = false;
+      nextFollowupField.setAttribute('required', 'required');
+      hintElement.textContent = 'Required for Pending status.';
+      if (requiredIndicator) requiredIndicator.style.display = 'inline';
+    }
+  });
+  
+  // Auto-update final status based on lead status
+  document.querySelector('select[name="lead_status"]').addEventListener('change', function() {
+    const statusSelect = document.querySelector('select[name="status"]');
+    const leadStatus = this.value;
+    
+    // Define status mappings
+    const wonStatuses = ['Booked', 'Retailed'];
+    const lostStatuses = ['Lost to Competition', 'Lost to codealer', 'Dropped', 'Not Interested'];
+    
+    if (wonStatuses.includes(leadStatus)) {
+      statusSelect.value = 'Won';
+      // Disable next followup date for Won status
+      const nextFollowupField = document.querySelector('input[name="next_followup_date"]');
+      nextFollowupField.value = '';
+      nextFollowupField.disabled = true;
+      nextFollowupField.removeAttribute('required');
+    } else if (lostStatuses.includes(leadStatus)) {
+      statusSelect.value = 'Lost';
+      // Disable next followup date for Lost status
+      const nextFollowupField = document.querySelector('input[name="next_followup_date"]');
+      nextFollowupField.value = '';
+      nextFollowupField.disabled = true;
+      nextFollowupField.removeAttribute('required');
+    } else {
+      // For other lead statuses, keep current status or set to Pending
+      if (statusSelect.value === 'Won' || statusSelect.value === 'Lost') {
+        statusSelect.value = 'Pending';
+      }
+      // Enable next followup date for Pending status
+      const nextFollowupField = document.querySelector('input[name="next_followup_date"]');
+      nextFollowupField.disabled = false;
+      nextFollowupField.setAttribute('required', 'required');
+    }
+  });
+</script>
+{% endblock %} 

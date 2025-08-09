@@ -1,0 +1,435 @@
+{% extends "base.html" %}
+
+{% block title %}Add New Lead - Ather CRM{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h2><i class="fas fa-plus text-success"></i> Add New Lead</h2>
+                <p class="text-muted">Fill in the details to add a new lead</p>
+            </div>
+            <div>
+                <a href="{{ url_for('cre_dashboard') }}" class="btn btn-secondary">
+                    <i class="fas fa-arrow-left"></i> Back to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="card shadow">
+    <div class="card-header">
+        <h5>Lead Information</h5>
+    </div>
+    <div class="card-body">
+        <form method="POST" id="addLeadForm">
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="customer_name" class="form-label">Customer Name</label>
+                        <input type="text" class="form-control" id="customer_name" name="customer_name" required>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="customer_mobile_number" class="form-label">Mobile Number</label>
+                        <input type="text" class="form-control" id="customer_mobile_number" name="customer_mobile_number" required maxlength="15">
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="source" class="form-label">Source <span class="text-danger">*</span></label>
+                        <select class="form-select" id="source" name="source" required onchange="updateSubsource()">
+                            <option value="">Select Source</option>
+                            <option value="META">META</option>
+                            <option value="GOOGLE">GOOGLE</option>
+                            <option value="BTL">BTL</option>
+                            <option value="OEM">OEM</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="subsource" class="form-label">Subsource <span class="text-danger">*</span></label>
+                        <select class="form-select" id="subsource" name="subsource" required>
+                            <option value="">Select Source First</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="lead_status" class="form-label">Lead Status <span class="text-danger">*</span></label>
+                        <select class="form-select" id="lead_status" name="lead_status" required>
+                            <option value="">Select Status</option>
+                            <option value="Busy on another Call">Busy on another Call</option>
+                            <option value="RNR">RNR</option>
+                            <option value="Call me Back">Call me Back</option>
+                            <option value="Interested">Interested</option>
+                            <option value="Not Interested">Not Interested</option>
+                            <option value="Did Not Inquire">Did Not Inquire</option>
+                            <option value="Lost to Competition">Lost to Competition</option>
+                            <option value="Lost to Co Dealer">Lost to Co Dealer</option>
+                            <option value="Call Disconnected">Call Disconnected</option>
+                            <option value="Lead Already Assigned">Lead Already Assigned</option>
+                            <option value="Wrong Number">Wrong Number</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="lead_category" class="form-label">Lead Category</label>
+                        <select class="form-select" id="lead_category" name="lead_category">
+                            <option value="">Select Category</option>
+                            <option value="Hot">Hot</option>
+                            <option value="Cold">Cold</option>
+                            <option value="Warm">Warm</option>
+                            <option value="Not Interested">Not Interested</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="model_type" class="form-label">Model Type</label>
+                        <select class="form-select" id="model_type" onchange="updateModels()">
+                            <option value="">Select Model Type</option>
+                            <option value="rizta">Rizta</option>
+                            <option value="450x">450X</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="model_interested" class="form-label">Model Interested</label>
+                        <select class="form-select" id="model_interested" name="model_interested">
+                            <option value="">Select Model</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="branch" class="form-label">Branch</label>
+                        <select class="form-select" id="branch" name="branch" onchange="updatePS()">
+                            <option value="">Select Branch</option>
+                            {% for branch in branches %}
+                            <option value="{{ branch }}">{{ branch }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="ps_name" class="form-label">Product Specialist</label>
+                        <select class="form-select" id="ps_name" name="ps_name">
+                            <option value="">Select PS</option>
+                            <option value="">Unassigned</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="final_status" class="form-label">Final Status</label>
+                        <select class="form-select" id="final_status" name="final_status">
+                            <option value="Pending">Pending</option>
+                            <option value="Won">Won</option>
+                            <option value="Lost">Lost</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="follow_up_date" class="form-label">Follow-up Date <span id="follow_up_required" class="text-danger" style="display: none;">*</span></label>
+                        <input type="datetime-local" class="form-control" id="follow_up_date" name="follow_up_date">
+                        <div id="follow_up_help" class="form-text" style="display: none;">
+                            <i class="fas fa-info-circle text-info"></i> Follow-up date is required when status is Pending
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="mb-3">
+                        <label for="remark" class="form-label">Remark</label>
+                        <textarea class="form-control" id="remark" name="remark" rows="3" placeholder="Enter any remarks..."></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+                <a href="{{ url_for('cre_dashboard') }}" class="btn btn-secondary me-md-2">
+                    <i class="fas fa-arrow-left"></i> Back
+                </a>
+                <button type="submit" class="btn btn-success" onclick="return checkDuplicateLead(event)">
+                    <i class="fas fa-save"></i> Add Lead
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Duplicate Lead Alert Modal -->
+<div class="modal fade" id="duplicateLeadModal" tabindex="-1" aria-labelledby="duplicateLeadModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="duplicateLeadModalLabel">
+                    <i class="fas fa-exclamation-triangle text-warning"></i> Duplicate Lead Detected
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="duplicateLeadDetails">
+                    <!-- Duplicate lead details will be populated here -->
+                </div>
+                <div class="alert alert-info mt-3">
+                    <i class="fas fa-info-circle"></i>
+                    <strong>Note:</strong> After clicking "Add as New Source", this lead will be  redirected to the Admin Dashboard → Manage Leads → Duplicate Leads section to view and manage the duplicate lead.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning" onclick="proceedWithDuplicate()">Add as New Source</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Model arrays
+const riztaModels = [
+    'Rizta S Mono (2.9 kWh)',
+    'Rizta S Super Matte (2.9 kWh)',
+    'Rizta Z Mono (2.9 kWh)',
+    'Rizta Z Duo (2.9 kWh)',
+    'Rizta Z Super Matte (2.9 kWh)',
+    'Rizta Z Mono (3.7 kWh)',
+    'Rizta Z Duo (3.7 kWh)',
+    'Rizta Z Super Matte (3.7 kWh)'
+];
+const x450Models = [
+    '450 X (2.9 kWh)',
+    '450 X (3.7 kWh)',
+    '450 X (2.9 kWh) Pro Pack',
+    '450 X (3.7 kWh) Pro Pack',
+    '450 Apex STD'
+];
+
+// Source to Subsource mapping
+const sourceSubsourceMap = {
+    'GOOGLE': ['Google Know'],
+    'META': ['Meta Know'],
+    'BTL': ['BTL Know'],
+    'OEM': ['Web', 'Tele', 'Affiliate Bikewale', 'Affiliate Bikedekho', 'Affiliate 91 Wheels']
+};
+
+const psUsers = [
+    {% for ps in ps_users %}
+    {
+        name: "{{ ps.name }}",
+        branch: "{{ ps.branch }}"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+];
+
+function updateSubsource() {
+    const sourceSelect = document.getElementById('source');
+    const subsourceSelect = document.getElementById('subsource');
+    const selectedSource = sourceSelect.value;
+    
+    // Clear current options
+    subsourceSelect.innerHTML = '<option value="">Select Subsource</option>';
+    
+    if (selectedSource && sourceSubsourceMap[selectedSource]) {
+        sourceSubsourceMap[selectedSource].forEach(subsource => {
+            const option = document.createElement('option');
+            option.value = subsource;
+            option.textContent = subsource;
+            subsourceSelect.appendChild(option);
+        });
+    }
+}
+
+function normalizePhoneNumber(phone) {
+    // Remove all non-digit characters
+    return phone.replace(/\D/g, '');
+}
+
+async function checkDuplicateLead(event) {
+    event.preventDefault();
+    
+    const phoneNumber = document.getElementById('customer_mobile_number').value;
+    const source = document.getElementById('source').value;
+    const subsource = document.getElementById('subsource').value;
+    
+    if (!phoneNumber || !source || !subsource) {
+        // If required fields are missing, let the form validation handle it
+        return true;
+    }
+    
+    const normalizedPhone = normalizePhoneNumber(phoneNumber);
+    
+    try {
+        const response = await fetch('/check_duplicate_lead', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                phone_number: normalizedPhone,
+                source: source,
+                subsource: subsource
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.is_duplicate) {
+            // Show duplicate lead modal
+            const modal = new bootstrap.Modal(document.getElementById('duplicateLeadModal'));
+            const detailsDiv = document.getElementById('duplicateLeadDetails');
+            
+            let detailsHtml = `
+                <div class="alert alert-warning">
+                    <strong>Phone Number:</strong> ${phoneNumber}<br>
+                    <strong>Source:</strong> ${source}<br>
+                    <strong>Subsource:</strong> ${subsource}
+                </div>
+                <div class="alert alert-info">
+                    <strong>Existing Lead Details:</strong><br>
+                    <strong>UID:</strong> ${result.existing_lead.uid}<br>
+                    <strong>Customer Name:</strong> ${result.existing_lead.customer_name}<br>
+                    <strong>Assigned CRE:</strong> ${result.existing_lead.cre_name || 'Unassigned'}<br>
+                    <strong>Status:</strong> ${result.existing_lead.lead_status || 'N/A'}
+                </div>
+            `;
+            
+            if (result.existing_sources && result.existing_sources.length > 0) {
+                detailsHtml += `
+                    <div class="alert alert-secondary">
+                        <strong>Existing Sources:</strong><br>
+                        ${result.existing_sources.map(s => `${s.source} - ${s.subsource}`).join('<br>')}
+                    </div>
+                `;
+            }
+            
+            detailsDiv.innerHTML = detailsHtml;
+            modal.show();
+            return false;
+        } else {
+            // No duplicate found, proceed with form submission
+            document.getElementById('addLeadForm').submit();
+            return true;
+        }
+    } catch (error) {
+        console.error('Error checking duplicate lead:', error);
+        // If there's an error, proceed with form submission
+        return true;
+    }
+}
+
+function proceedWithDuplicate() {
+    // Add a hidden field to indicate this is a duplicate with new source
+    const form = document.getElementById('addLeadForm');
+    const hiddenField = document.createElement('input');
+    hiddenField.type = 'hidden';
+    hiddenField.name = 'is_duplicate_new_source';
+    hiddenField.value = 'true';
+    form.appendChild(hiddenField);
+    
+    // Show success message about redirect
+    alert('✅ Lead will be added as a new source. You will be redirected to Admin Dashboard → Manage Leads → Duplicate Leads section to view and manage the duplicate lead.');
+    
+    // Close modal and submit form
+    const modal = bootstrap.Modal.getInstance(document.getElementById('duplicateLeadModal'));
+    modal.hide();
+    form.submit();
+}
+
+function updateModels() {
+    const modelType = document.getElementById('model_type').value;
+    const modelSelect = document.getElementById('model_interested');
+    const currentValue = modelSelect.value;
+    modelSelect.innerHTML = '<option value="">Select Model</option>';
+    let models = [];
+    if (modelType === 'rizta') {
+        models = riztaModels;
+    } else if (modelType === '450x') {
+        models = x450Models;
+    }
+    models.forEach(model => {
+        const option = document.createElement('option');
+        option.value = model;
+        option.textContent = model;
+        if (model === currentValue) {
+            option.selected = true;
+        }
+        modelSelect.appendChild(option);
+    });
+}
+
+function updatePS() {
+    const selectedBranch = document.getElementById('branch').value;
+    const psSelect = document.getElementById('ps_name');
+    const currentValue = psSelect.value;
+    psSelect.innerHTML = '<option value="">Select PS</option><option value="">Unassigned</option>';
+    const filteredPS = psUsers.filter(ps => ps.branch === selectedBranch);
+    filteredPS.forEach(ps => {
+        const option = document.createElement('option');
+        option.value = ps.name;
+        option.textContent = ps.name;
+        if (ps.name === currentValue) {
+            option.selected = true;
+        }
+        psSelect.appendChild(option);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Set minimum date for follow-up to today
+    const today = new Date().toISOString().slice(0, 16);
+    const followUpDate = document.getElementById('follow_up_date');
+    if (followUpDate) followUpDate.min = today;
+
+    // Add event listener for final_status change to show/hide follow-up date requirement
+    const finalStatusSelect = document.getElementById('final_status');
+    const followUpRequiredSpan = document.getElementById('follow_up_required');
+    const followUpHelpText = document.getElementById('follow_up_help');
+
+    function toggleFollowUpRequired() {
+        const selectedFinalStatus = finalStatusSelect.value;
+        if (selectedFinalStatus === 'Pending') {
+            followUpRequiredSpan.style.display = 'inline-block';
+            followUpHelpText.style.display = 'block';
+            // Add required attribute to the input field
+            if (followUpDate) {
+                followUpDate.setAttribute('required', 'required');
+            }
+        } else {
+            followUpRequiredSpan.style.display = 'none';
+            followUpHelpText.style.display = 'none';
+            // Remove the required attribute
+            if (followUpDate) {
+                followUpDate.removeAttribute('required');
+            }
+        }
+    }
+
+    // Add event listener for final_status change
+    if (finalStatusSelect) {
+        finalStatusSelect.addEventListener('change', toggleFollowUpRequired);
+        // Initial check
+        toggleFollowUpRequired();
+    }
+});
+</script>
+{% endblock %} 
+
