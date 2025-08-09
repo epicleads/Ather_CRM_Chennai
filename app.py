@@ -2941,8 +2941,8 @@ def cre_dashboard():
         if lead.get('ps_name'):
             assigned_to_ps.append(lead)
 
-        # Pending Leads: any lead with final_status == 'Pending'
-        if final_status == 'Pending':
+        # Pending Leads: final_status == 'Pending' AND has first_call_date
+        if final_status == 'Pending' and has_first_call:
             attended_leads.append(lead)
 
         # Untouched Leads (Fresh leads that are still pending)
