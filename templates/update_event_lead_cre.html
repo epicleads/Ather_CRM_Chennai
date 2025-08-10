@@ -42,7 +42,7 @@
                                         <div class="badge bg-success mb-2 w-100">
                                             <i class="fas fa-check"></i> {{ call.title() }} Call
                                         </div>
-                                        <small class="text-muted d-block">{{ lead['cre_' + call + '_call_date'] or 'No date' }}</small>
+                                        <small class="text-muted d-block">{{ ((lead['cre_' + call + '_call_date'])|string)[:10] if lead['cre_' + call + '_call_date'] else 'No date' }}</small>
                                     {% elif call == next_call %}
                                         <div class="badge bg-warning mb-2 w-100">
                                             <i class="fas fa-clock"></i> {{ call.title() }} Call
@@ -264,7 +264,7 @@
                         <div class="col-md-6 mb-3">
                             <div class="border rounded p-3">
                                 <h6 class="text-success">{{ call.title() }} Call</h6>
-                                <p class="mb-1"><strong>Date:</strong> {{ lead['cre_' + call + '_call_date'] or 'Not recorded' }}</p>
+                                <p class="mb-1"><strong>Date:</strong> {{ ((lead['cre_' + call + '_call_date'])|string)[:10] if lead['cre_' + call + '_call_date'] else 'Not recorded' }}</p>
                                 <p class="mb-0"><strong>Remark:</strong> {{ lead['cre_' + call + '_call_remark'] or 'No remarks' }}</p>
                             </div>
                         </div>

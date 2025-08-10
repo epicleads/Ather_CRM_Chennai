@@ -36,7 +36,7 @@
                                 <div class="badge bg-success mb-2 w-100">
                                     <i class="fas fa-check"></i> {{ 'Qualifying' if call == 'first' else call.title() }}
                                 </div>
-                                <small class="text-muted d-block">{{ lead[call + '_call_date'] or 'No date' }}</small>
+                                <small class="text-muted d-block">{{ ((lead[call + '_call_date'])|string)[:10] if lead[call + '_call_date'] else 'No date' }}</small>
                             {% elif call == next_call %}
                                 <div class="badge bg-warning mb-2 w-100">
                                     <i class="fas fa-clock"></i> {{ 'Qualifying' if call == 'first' else call.title() }}
@@ -295,7 +295,7 @@
                     <div class="col-md-6">
                         <div class="mb-3">
                             <label for="call_date" class="form-label fw-semibold">{{ 'Qualifying' if next_call == 'first' else next_call.title() }} Call Date <span class="text-danger">*</span></label>
-                            <input type="date" class="form-control border-2" id="call_date" name="call_date" value="{{ lead[next_call + '_call_date'] or today }}" style="font-size: 1rem; padding: 0.75rem;">
+                            <input type="date" class="form-control border-2" id="call_date" name="call_date" value="{{ ((lead[next_call + '_call_date'])|string)[:10] if lead[next_call + '_call_date'] else today }}" style="font-size: 1rem; padding: 0.75rem;">
                         </div>
                     </div>
                     <div class="col-md-6">
@@ -376,7 +376,7 @@
                     </div>
                     <div class="col-md-3">
                         <small class="text-muted">Date:</small>
-                        <div class="fw-semibold">{{ lead[call + '_call_date'] or 'Not recorded' }}</div>
+                        <div class="fw-semibold">{{ ((lead[call + '_call_date'])|string)[:10] if lead[call + '_call_date'] else 'Not recorded' }}</div>
                     </div>
                     <div class="col-md-7">
                         <small class="text-muted">Remark:</small>

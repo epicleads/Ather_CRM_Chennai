@@ -604,7 +604,7 @@ for phone, lead_data in leads_by_phone.items():
         'assigned': 'Yes' if lead_data['cre_name'] else 'No',
         'lead_status': None,  # Set to null instead of mapped lead_status
         'follow_up_date': None,
-        'first_call_date': today_date,  # Set first_call_date to today
+        'first_call_date': datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] + '+05:30',  # Set first_call_date to current timestamp with microseconds
         'first_remark': lead_data['first_remark'],  # Only first follow-up remark
         'second_call_date': None,
         'second_remark': None,

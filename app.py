@@ -63,6 +63,32 @@ log.setLevel(logging.WARNING)
 # Note: Using Flask's built-in tojson filter instead of custom one
 
 # Utility functions
+def get_ist_timestamp():
+    """Get current timestamp in Indian Standard Time with explicit timezone"""
+    ist_time = datetime.now(pytz.timezone('Asia/Kolkata'))
+    # Format with explicit timezone offset
+    return ist_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] + '+05:30'
+
+def normalize_call_dates(update_data: dict) -> dict:
+    """Ensure all *_call_date fields are stored as full IST timestamps.
+    If any call date fields are present with any value, overwrite with current IST timestamp.
+    """
+    try:
+        call_keys = [
+            'first_call_date', 'second_call_date', 'third_call_date',
+            'fourth_call_date', 'fifth_call_date', 'sixth_call_date', 'seventh_call_date'
+        ]
+        for key in call_keys:
+            if key in update_data and update_data[key] is not None:
+                # Always overwrite with current timestamp, regardless of what was there
+                print(f"DEBUG: Normalizing {key} from '{update_data[key]}' to '{get_ist_timestamp()}'")
+                update_data[key] = get_ist_timestamp()
+    except Exception as e:
+        # Be resilient; on any issue, leave data as-is
+        print(f"DEBUG: Error in normalize_call_dates: {e}")
+        pass
+    return update_data
+
 def is_valid_date(date_string):
     """Validate date string format (YYYY-MM-DD)"""
     try:
@@ -2337,7 +2363,7 @@ def add_lead():
             'updated_at': datetime.now().isoformat(),
             'first_remark': remark,
             'cre_name': cre_name,
-            'first_call_date': date_now
+            'first_call_date': get_ist_timestamp()
         }
         try:
             # If this is a duplicate with new source, add to duplicate_leads table
@@ -2501,7 +2527,7 @@ def add_lead_optimized():
             'updated_at': datetime.now().isoformat(),
             'first_remark': remark,
             'cre_name': cre_name,
-            'first_call_date': date_now
+            'first_call_date': get_ist_timestamp()
         }
         
         # Get PS branch if PS is assigned
@@ -3158,8 +3184,15 @@ def update_lead(uid):
                 # For all 7 calls, use the correct schema columns
                 call_names = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
                 if next_call in call_names:
-                    update_data[f'{next_call}_call_date'] = request.form['call_date']
+                    # Always use current timestamp, ignore the form date input
+                    timestamp = get_ist_timestamp()
+                    print(f"DEBUG: Setting {next_call}_call_date to '{timestamp}'")
+                    update_data[f'{next_call}_call_date'] = timestamp
                     update_data[f'{next_call}_remark'] = combined_remark
+                    
+                    # Set first_call_date when the first call is made
+                    if next_call == 'first' and not lead_data.get('first_call_date'):
+                        update_data['first_call_date'] = get_ist_timestamp()
                 # Notification removed - no longer sending notifications between PS and CRE
 
             try:
@@ -3179,6 +3212,7 @@ def update_lead(uid):
                     )
 
                 if update_data:
+                    update_data = normalize_call_dates(update_data)
                     supabase.table('lead_master').update(update_data).eq('uid', uid).execute()
 
                     # Keep ps_followup_master.final_status in sync if final_status is updated and PS followup exists
@@ -3823,25 +3857,25 @@ def update_walkin_lead(walkin_id):
             
             # Set the specific call date and remark fields
             if followup_no == 1:
-                update_data['first_call_date'] = call_date
+                update_data['first_call_date'] = get_ist_timestamp() if call_date else None
                 update_data['first_call_remark'] = call_remark
             elif followup_no == 2:
-                update_data['second_call_date'] = call_date
+                update_data['second_call_date'] = get_ist_timestamp() if call_date else None
                 update_data['second_call_remark'] = call_remark
             elif followup_no == 3:
-                update_data['third_call_date'] = call_date
+                update_data['third_call_date'] = get_ist_timestamp() if call_date else None
                 update_data['third_call_remark'] = call_remark
             elif followup_no == 4:
-                update_data['fourth_call_date'] = call_date
+                update_data['fourth_call_date'] = get_ist_timestamp() if call_date else None
                 update_data['fourth_call_remark'] = call_remark
             elif followup_no == 5:
-                update_data['fifth_call_date'] = call_date
+                update_data['fifth_call_date'] = get_ist_timestamp() if call_date else None
                 update_data['fifth_call_remark'] = call_remark
             elif followup_no == 6:
-                update_data['sixth_call_date'] = call_date
+                update_data['sixth_call_date'] = get_ist_timestamp() if call_date else None
                 update_data['sixth_call_remark'] = call_remark
             elif followup_no == 7:
-                update_data['seventh_call_date'] = call_date
+                update_data['seventh_call_date'] = get_ist_timestamp() if call_date else None
                 update_data['seventh_call_remark'] = call_remark
             
             # Set next followup date if provided
@@ -3998,7 +4032,7 @@ def update_ps_lead(uid):
                     'Call me Back'
                 ]
                 if request.form.get('call_date') and lead_status not in skip_first_call_statuses:
-                    update_data[f'{next_call}_call_date'] = request.form['call_date']
+                    update_data[f'{next_call}_call_date'] = get_ist_timestamp()
                 if call_remark:
                     combined_remark = f"{lead_status}, {call_remark}"
                     update_data[f'{next_call}_call_remark'] = combined_remark
@@ -4233,8 +4267,12 @@ def update_lead_optimized(uid):
                 combined_remark = f"{lead_status}, {call_remark}"
                 call_names = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
                 if next_call in call_names:
-                    update_data[f'{next_call}_call_date'] = request.form['call_date']
+                    update_data[f'{next_call}_call_date'] = get_ist_timestamp()
                     update_data[f'{next_call}_remark'] = combined_remark
+                    
+                    # Set first_call_date when the first call is made
+                    if next_call == 'first' and not lead_data.get('first_call_date'):
+                        update_data['first_call_date'] = get_ist_timestamp()
 
             # Track call attempt (non-blocking)
             if lead_status:
@@ -4254,6 +4292,7 @@ def update_lead_optimized(uid):
 
             # Use optimized update operation
             if update_data:
+                update_data = normalize_call_dates(update_data)
                 result = optimized_ops.update_lead_optimized(
                     uid=uid,
                     update_data=update_data,
@@ -4404,7 +4443,7 @@ def update_ps_lead_optimized(uid):
             ]
 
             if request.form.get('call_date') and lead_status not in skip_first_call_statuses:
-                update_data[f'{next_call}_call_date'] = request.form['call_date']
+                update_data[f'{next_call}_call_date'] = get_ist_timestamp()
             if call_remark:
                 combined_remark = f"{lead_status}, {call_remark}"
                 update_data[f'{next_call}_call_remark'] = combined_remark
@@ -4655,7 +4694,20 @@ def analytics():
             if lead.get('first_call_date') and lead.get('date'):
                 try:
                     lead_date = datetime.strptime(lead['date'], '%Y-%m-%d').date()
-                    call_date = datetime.strptime(lead['first_call_date'], '%Y-%m-%d').date()
+                    
+                    # Handle both old date format and new timestamp format
+                    first_call_date_str = lead['first_call_date']
+                    if 'T' in first_call_date_str or ':' in first_call_date_str:
+                        # New timestamp format (ISO format with timezone)
+                        try:
+                            call_date = datetime.fromisoformat(first_call_date_str).date()
+                        except ValueError:
+                            # Fallback for old format without timezone
+                            call_date = datetime.fromisoformat(first_call_date_str.replace('Z', '+00:00')).date()
+                    else:
+                        # Old date format
+                        call_date = datetime.strptime(first_call_date_str, '%Y-%m-%d').date()
+                    
                     response_times.append((call_date - lead_date).days)
                 except (ValueError, TypeError):
                     continue
@@ -6125,6 +6177,15 @@ def export_leads_csv():
 
         # Write data rows
         for lead in filtered_leads:
+            # Format call dates to YYYY-MM-DD if present
+            first_cd = str(lead.get('first_call_date', '') or '')[:10]
+            second_cd = str(lead.get('second_call_date', '') or '')[:10]
+            third_cd = str(lead.get('third_call_date', '') or '')[:10]
+            fourth_cd = str(lead.get('fourth_call_date', '') or '')[:10]
+            fifth_cd = str(lead.get('fifth_call_date', '') or '')[:10]
+            sixth_cd = str(lead.get('sixth_call_date', '') or '')[:10]
+            seventh_cd = str(lead.get('seventh_call_date', '') or '')[:10]
+
             row = [
                 lead.get('uid', ''),
                 lead.get('date', ''),
@@ -6139,19 +6200,19 @@ def export_leads_csv():
                 lead.get('lead_status', ''),
                 lead.get('final_status', ''),
                 lead.get('follow_up_date', ''),
-                lead.get('first_call_date', ''),
+                first_cd,
                 lead.get('first_remark', ''),
-                lead.get('second_call_date', ''),
+                second_cd,
                 lead.get('second_remark', ''),
-                lead.get('third_call_date', ''),
+                third_cd,
                 lead.get('third_remark', ''),
-                lead.get('fourth_call_date', ''),
+                fourth_cd,
                 lead.get('fourth_remark', ''),
-                lead.get('fifth_call_date', ''),
+                fifth_cd,
                 lead.get('fifth_remark', ''),
-                lead.get('sixth_call_date', ''),
+                sixth_cd,
                 lead.get('sixth_remark', ''),
-                lead.get('seventh_call_date', ''),
+                seventh_cd,
                 lead.get('seventh_remark', ''),
                 lead.get('assigned', '')
             ]
@@ -6321,6 +6382,15 @@ def export_leads_by_date_csv():
 
         # Write data rows
         for lead in filtered_leads:
+            # Format call dates to YYYY-MM-DD if present
+            first_cd = str(lead.get('first_call_date', '') or '')[:10]
+            second_cd = str(lead.get('second_call_date', '') or '')[:10]
+            third_cd = str(lead.get('third_call_date', '') or '')[:10]
+            fourth_cd = str(lead.get('fourth_call_date', '') or '')[:10]
+            fifth_cd = str(lead.get('fifth_call_date', '') or '')[:10]
+            sixth_cd = str(lead.get('sixth_call_date', '') or '')[:10]
+            seventh_cd = str(lead.get('seventh_call_date', '') or '')[:10]
+
             row = [
                 lead.get('uid', ''),
                 lead.get('date', ''),
@@ -6335,19 +6405,19 @@ def export_leads_by_date_csv():
                 lead.get('lead_status', ''),
                 lead.get('final_status', ''),
                 lead.get('follow_up_date', ''),
-                lead.get('first_call_date', ''),
+                first_cd,
                 lead.get('first_remark', ''),
-                lead.get('second_call_date', ''),
+                second_cd,
                 lead.get('second_remark', ''),
-                lead.get('third_call_date', ''),
+                third_cd,
                 lead.get('third_remark', ''),
-                lead.get('fourth_call_date', ''),
+                fourth_cd,
                 lead.get('fourth_remark', ''),
-                lead.get('fifth_call_date', ''),
+                fifth_cd,
                 lead.get('fifth_remark', ''),
-                lead.get('sixth_call_date', ''),
+                sixth_cd,
                 lead.get('sixth_remark', ''),
-                lead.get('seventh_call_date', ''),
+                seventh_cd,
                 lead.get('seventh_remark', ''),
                 lead.get('assigned', ''),
                 lead.get('created_at', '')
@@ -9986,7 +10056,7 @@ def api_bulk_transfer_ps_leads():
         try:
             activity_result = supabase.table('activity_leads').update({
                 'ps_name': to_ps_name,
-                'location': target_branch
+                 'location': target_branch
             }).eq('ps_name', from_ps_name).eq('final_status', 'Pending').execute()
             activity_count = len(activity_result.data) if activity_result.data else 0
         except Exception as e:

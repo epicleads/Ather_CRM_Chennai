@@ -629,8 +629,8 @@
                                 </td>
                                 <td>{{ lead.customer_name }}</td>
                                 <td>{{ lead.customer_mobile_number }}</td>
-                                <td>{{ lead.first_call_date or 'N/A' }}</td>
-                                <td>{{ lead.seventh_call_date or lead.sixth_call_date or lead.fifth_call_date or lead.fourth_call_date or lead.third_call_date or lead.second_call_date or lead.first_call_date or 'N/A' }}</td>
+                                <td>{{ (lead.first_call_date|string)[:10] if lead.first_call_date else 'N/A' }}</td>
+                                <td>{{ ((lead.seventh_call_date or lead.sixth_call_date or lead.fifth_call_date or lead.fourth_call_date or lead.third_call_date or lead.second_call_date or lead.first_call_date)|string)[:10] if (lead.seventh_call_date or lead.sixth_call_date or lead.fifth_call_date or lead.fourth_call_date or lead.third_call_date or lead.second_call_date or lead.first_call_date) else 'N/A' }}</td>
                                 <td>
                                     {% if lead.lead_category == 'Hot' %}
                                         <span class="badge bg-danger">{{ lead.lead_category }}</span>
