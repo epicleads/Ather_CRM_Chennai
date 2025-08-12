@@ -808,13 +808,61 @@ def unified_login() -> Response:
     password = request.form.get('password', '').strip()
     user_type = request.form.get('user_type', '').strip().lower()
 
-    valid_user_types = ['admin', 'cre', 'ps', 'rec']
+    valid_user_types = ['admin', 'cre', 'ps', 'bh', 'rec']
     if user_type not in valid_user_types:
-        flash('Please select a valid role (Admin, CRE, PS, or Receptionist)', 'error')
+        flash('Please select a valid role (Admin, CRE, PS, Branch Head, or Receptionist)', 'error')
         return redirect(url_for('index'))
 
     # Branch Head login removed
 
+    elif user_type == 'bh':
+        # Branch Head authentication
+        bh_user = supabase.table('branch_head_users').select('*').eq('username', username).execute().data
+        if not bh_user:
+            flash('Invalid username or password', 'error')
+            return redirect(url_for('index'))
+        bh_user = bh_user[0]
+        if not bh_user.get('is_active', True):
+            flash('User is inactive', 'error')
+            return redirect(url_for('index'))
+        # Check password using werkzeug
+        try:
+            print(f"DEBUG: Attempting to verify password for Branch Head {username}")
+            print(f"DEBUG: Password hash format: {bh_user['password_hash'][:20]}...")
+            print(f"DEBUG: Using check_password_hash with hash and password")
+            if not check_password_hash(bh_user['password_hash'], password):
+                print(f"DEBUG: Password verification failed for Branch Head {username}")
+                flash('Incorrect password', 'error')
+                return redirect(url_for('index'))
+            print(f"DEBUG: Password verification successful for Branch Head {username}")
+        except Exception as e:
+            print(f"DEBUG: Error checking password hash for Branch Head {username}: {str(e)}")
+            print(f"DEBUG: Error type: {type(e).__name__}")
+            print(f"DEBUG: Full error details: {e}")
+            # Fallback: check if plain password matches (for backward compatibility)
+            if bh_user.get('password') != password:
+                print(f"DEBUG: Plain password fallback also failed for Branch Head {username}")
+                flash('Incorrect password', 'error')
+                return redirect(url_for('index'))
+            print(f"DEBUG: Plain password fallback successful for Branch Head {username}")
+            # If plain password matches, update to new hash format
+            try:
+                new_password_hash = generate_password_hash(password)
+                print(f"DEBUG: Generated new password hash for Branch Head {username}")
+                supabase.table('branch_head_users').update({
+                    'password_hash': new_password_hash
+                }).eq('id', bh_user['id']).execute()
+                print(f"DEBUG: Updated password hash for Branch Head {username}")
+            except Exception as update_error:
+                print(f"DEBUG: Failed to update password hash for Branch Head {username}: {str(update_error)}")
+        session.clear()
+        session['bh_user_id'] = bh_user['id']
+        session['bh_branch'] = bh_user['branch']
+        session['bh_name'] = bh_user.get('name', username)
+        session['user_type'] = 'bh'
+        session['username'] = username
+        flash('Welcome! Logged in as Branch Head', 'success')
+        return redirect(url_for('bh_dashboard'))
     elif user_type == 'rec':
         # Receptionist authentication
         rec_user = supabase.table('rec_users').select('*').eq('username', username).execute().data
@@ -826,9 +874,35 @@ def unified_login() -> Response:
             flash('User is inactive', 'error')
             return redirect(url_for('index'))
         # Check password using werkzeug
-        if not check_password_hash(rec_user['password_hash'], password):
-            flash('Incorrect password', 'error')
-            return redirect(url_for('index'))
+        try:
+            print(f"DEBUG: Attempting to verify password for Receptionist {username}")
+            print(f"DEBUG: Password hash format: {rec_user['password_hash'][:20]}...")
+            print(f"DEBUG: Using check_password_hash with hash and password")
+            if not check_password_hash(rec_user['password_hash'], password):
+                print(f"DEBUG: Password verification failed for Receptionist {username}")
+                flash('Incorrect password', 'error')
+                return redirect(url_for('index'))
+            print(f"DEBUG: Password verification successful for Receptionist {username}")
+        except Exception as e:
+            print(f"DEBUG: Error checking password hash for Receptionist {username}: {str(e)}")
+            print(f"DEBUG: Error type: {type(e).__name__}")
+            print(f"DEBUG: Full error details: {e}")
+            # Fallback: check if plain password matches (for backward compatibility)
+            if rec_user.get('password') != password:
+                print(f"DEBUG: Plain password fallback also failed for Receptionist {username}")
+                flash('Incorrect password', 'error')
+                return redirect(url_for('index'))
+            print(f"DEBUG: Plain password fallback successful for Receptionist {username}")
+            # If plain password matches, update to new hash format
+            try:
+                new_password_hash = generate_password_hash(password)
+                print(f"DEBUG: Generated new password hash for Receptionist {username}")
+                supabase.table('rec_users').update({
+                    'password_hash': new_password_hash
+                }).eq('id', rec_user['id']).execute()
+                print(f"DEBUG: Updated password hash for Receptionist {username}")
+            except Exception as update_error:
+                print(f"DEBUG: Failed to update password hash for Receptionist {username}: {str(update_error)}")
         session.clear()
         session['rec_user_id'] = rec_user['id']
         session['rec_branch'] = rec_user['branch']
@@ -1213,15 +1287,16 @@ def admin_dashboard():
         # Get actual counts from database with proper queries
         cre_count = get_accurate_count('cre_users')
         ps_count = get_accurate_count('ps_users')
+        bh_count = get_accurate_count('branch_head_users')
         leads_count = get_accurate_count('lead_master')
         unassigned_leads = get_accurate_count('lead_master', {'assigned': 'No'})
 
         print(
-            f"Dashboard counts - CRE: {cre_count}, PS: {ps_count}, Total Leads: {leads_count}, Unassigned: {unassigned_leads}")
+            f"Dashboard counts - CRE: {cre_count}, PS: {ps_count}, Branch Heads: {bh_count}, Total Leads: {leads_count}, Unassigned: {unassigned_leads}")
 
     except Exception as e:
         print(f"Error getting dashboard counts: {e}")
-        cre_count = ps_count = leads_count = unassigned_leads = 0
+        cre_count = ps_count = bh_count = leads_count = unassigned_leads = 0
 
     # Log dashboard access
     user_id = session.get('user_id')
@@ -1237,8 +1312,31 @@ def admin_dashboard():
     return render_template('admin_dashboard.html',
                            cre_count=cre_count,
                            ps_count=ps_count,
+                           bh_count=bh_count,
                            leads_count=leads_count,
                            unassigned_leads=unassigned_leads)
+
+
+@app.route('/bh_dashboard')
+def bh_dashboard():
+    """Branch Head dashboard"""
+    # Check if user is logged in as Branch Head
+    if session.get('user_type') != 'bh':
+        flash('Access denied. Branch Head access only.', 'error')
+        return redirect(url_for('index'))
+    
+    # Log dashboard access
+    user_id = session.get('bh_user_id')
+    user_type = session.get('user_type')
+    if user_id and user_type:
+        auth_manager.log_audit_event(
+            user_id=user_id,
+            user_type=user_type,
+            action='DASHBOARD_ACCESS',
+            resource='bh_dashboard'
+        )
+    
+    return render_template('bh_dashboard.html')
 
 
 @app.route('/upload_data', methods=['GET', 'POST'])
@@ -1520,8 +1618,8 @@ def add_cre():
                 flash('Username already exists', 'error')
                 return render_template('add_cre.html')
 
-            # Hash password
-            password_hash, salt = auth_manager.hash_password(password)
+            # Hash password using werkzeug (compatible with check_password_hash)
+            password_hash = generate_password_hash(password)
 
             # Replace the existing cre_data creation with this:
             cre_data = {
@@ -1529,7 +1627,6 @@ def add_cre():
                 'username': username,
                 'password': password,  # Keep for backward compatibility
                 'password_hash': password_hash,
-                'salt': salt,
                 'phone': phone,
                 'email': email,
                 'is_active': True,
@@ -1587,8 +1684,8 @@ def add_ps():
                 flash('Username already exists', 'error')
                 return render_template('add_ps.html', branches=branches)
 
-            # Hash password
-            password_hash, salt = auth_manager.hash_password(password)
+            # Hash password using werkzeug (compatible with check_password_hash)
+            password_hash = generate_password_hash(password)
 
             # Replace the existing ps_data creation with this:
             ps_data = {
@@ -1596,7 +1693,6 @@ def add_ps():
                 'username': username,
                 'password': password,  # Keep for backward compatibility
                 'password_hash': password_hash,
-                'salt': salt,
                 'phone': phone,
                 'email': email,
                 'branch': branch,
@@ -1625,6 +1721,73 @@ def add_ps():
     return render_template('add_ps.html', branches=branches)
 
 
+@app.route('/add_bh', methods=['GET', 'POST'])
+@require_admin
+def add_bh():
+    branches = ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
+
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        phone = request.form.get('phone', '').strip()
+        email = request.form.get('email', '').strip()
+        branch = request.form.get('branch', '').strip()
+
+        if not all([name, username, password, phone, email, branch]):
+            flash('All fields are required', 'error')
+            return render_template('add_bh.html', branches=branches)
+
+        if not auth_manager.validate_password_strength(password):
+            flash(
+                'Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character',
+                'error')
+            return render_template('add_bh.html', branches=branches)
+
+        try:
+            # Check if username already exists
+            existing = supabase.table('branch_head_users').select('username').eq('username', username).execute()
+            if existing.data:
+                flash('Username already exists', 'error')
+                return render_template('add_bh.html', branches=branches)
+
+            # Hash password using werkzeug (compatible with check_password_hash)
+            password_hash = generate_password_hash(password)
+
+            # Create branch head data
+            bh_data = {
+                'name': name,
+                'username': username,
+                'password': password,  # Keep for backward compatibility
+                'password_hash': password_hash,
+                'phone': phone,
+                'email': email,
+                'branch': branch,
+                'is_active': True,
+                'role': 'bh',
+                'failed_login_attempts': 0
+            }
+
+            result = supabase.table('branch_head_users').insert(bh_data).execute()
+
+            # Log Branch Head creation
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='BRANCH_HEAD_CREATED',
+                resource='branch_head_users',
+                resource_id=str(result.data[0]['id']) if result.data else None,
+                details={'bh_name': name, 'username': username, 'branch': branch}
+            )
+
+            flash('Branch Head added successfully', 'success')
+            return redirect(url_for('manage_bh'))
+        except Exception as e:
+            flash(f'Error adding Branch Head: {str(e)}', 'error')
+
+    return render_template('add_bh.html', branches=branches)
+
+
 @app.route('/manage_cre')
 @require_admin
 def manage_cre():
@@ -1634,6 +1797,91 @@ def manage_cre():
     except Exception as e:
         flash(f'Error loading CRE users: {str(e)}', 'error')
         return render_template('manage_cre.html', cre_users=[])
+
+
+@app.route('/manage_bh')
+@require_admin
+def manage_bh():
+    try:
+        bh_users = safe_get_data('branch_head_users')
+        return render_template('manage_bh.html', bh_users=bh_users)
+    except Exception as e:
+        flash(f'Error loading Branch Head users: {str(e)}', 'error')
+        return render_template('manage_bh.html', bh_users=[])
+
+
+@app.route('/delete_bh/<int:bh_id>', methods=['DELETE'])
+@require_admin
+def delete_bh(bh_id):
+    print(f"DEBUG: delete_bh route called with bh_id: {bh_id}")
+    try:
+        # Get the Branch Head details first
+        bh_result = supabase.table('branch_head_users').select('*').eq('id', bh_id).execute()
+        print(f"DEBUG: bh_result data: {bh_result.data}")
+        if not bh_result.data:
+            print(f"DEBUG: Branch Head not found for id: {bh_id}")
+            flash('Branch Head not found', 'error')
+            return redirect(url_for('manage_bh'))
+        
+        bh = bh_result.data[0]
+        bh_name = bh.get('name')
+        print(f"DEBUG: Found Branch Head: {bh_name}")
+        
+        # Check if Branch Head has any associated data that would prevent deletion
+        # For now, we'll allow deletion but you can add checks here if needed
+        
+        # Delete the Branch Head user
+        delete_result = supabase.table('branch_head_users').delete().eq('id', bh_id).execute()
+        print(f"DEBUG: Delete result: {delete_result}")
+        
+        # Log the deletion
+        auth_manager.log_audit_event(
+            user_id=session.get('user_id'),
+            user_type=session.get('user_type'),
+            action='BRANCH_HEAD_DELETED',
+            resource='branch_head_users',
+            resource_id=str(bh_id),
+            details={'bh_name': bh_name}
+        )
+        
+        print(f"DEBUG: Branch Head {bh_name} deleted successfully")
+        return jsonify({'success': True, 'message': f'Branch Head {bh_name} deleted successfully'})
+        
+    except Exception as e:
+        print(f"DEBUG: Error in delete_bh: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/toggle_bh_status/<int:bh_id>', methods=['POST'])
+@require_admin
+def toggle_bh_status(bh_id):
+    try:
+        data = request.get_json()
+        active_status = data.get('active', True)
+
+        # Update Branch Head status
+        result = supabase.table('branch_head_users').update({
+            'is_active': active_status
+        }).eq('id', bh_id).execute()
+
+        if result.data:
+            # Log status change
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='BRANCH_HEAD_STATUS_CHANGED',
+                resource='branch_head_users',
+                resource_id=str(bh_id),
+                details={'new_status': 'active' if active_status else 'inactive'}
+            )
+
+            return jsonify({'success': True, 'message': 'Branch Head status updated successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Branch Head not found'})
+
+    except Exception as e:
+        print(f"Error toggling Branch Head status: {e}")
+        return jsonify({'success': False, 'message': str(e)})
 
 
 @app.route('/manage_ps')
@@ -1676,6 +1924,54 @@ def toggle_ps_status(ps_id):
 
     except Exception as e:
         print(f"Error toggling PS status: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/edit_bh/<int:bh_id>', methods=['POST'])
+@require_admin
+def edit_bh(bh_id):
+    try:
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip()
+        phone = data.get('phone', '').strip()
+        branch = data.get('branch', '').strip()
+
+        if not all([name, username, email, phone, branch]):
+            return jsonify({'success': False, 'message': 'All fields are required'})
+
+        # Check if username already exists for other users
+        existing = supabase.table('branch_head_users').select('username').eq('username', username).neq('id', bh_id).execute()
+        if existing.data:
+            return jsonify({'success': False, 'message': 'Username already exists'})
+
+        # Update the Branch Head
+        result = supabase.table('branch_head_users').update({
+            'name': name,
+            'username': username,
+            'email': email,
+            'phone': phone,
+            'branch': branch
+        }).eq('id', bh_id).execute()
+
+        if result.data:
+            # Log the update
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='BRANCH_HEAD_UPDATED',
+                resource='branch_head_users',
+                resource_id=str(bh_id),
+                details={'bh_name': name, 'username': username, 'branch': branch}
+            )
+
+            return jsonify({'success': True, 'message': 'Branch Head updated successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Branch Head not found'})
+
+    except Exception as e:
+        print(f"Error updating Branch Head: {e}")
         return jsonify({'success': False, 'message': str(e)})
 
 
@@ -8621,10 +8917,18 @@ def convert_duplicate_to_fresh(uid):
 def check_username():
     username = request.args.get('username', '').strip()
     user_type = request.args.get('type', '').strip().lower()
-    if not username or user_type not in ['cre', 'ps']:
+    if not username or user_type not in ['cre', 'ps', 'bh']:
         return jsonify({'error': 'Invalid parameters'}), 400
     try:
-        table = 'cre_users' if user_type == 'cre' else 'ps_users'
+        if user_type == 'cre':
+            table = 'cre_users'
+        elif user_type == 'ps':
+            table = 'ps_users'
+        elif user_type == 'bh':
+            table = 'branch_head_users'
+        else:
+            return jsonify({'error': 'Invalid user type'}), 400
+            
         result = supabase.table(table).select('username').eq('username', username).execute()
         exists = bool(result.data)
         return jsonify({'exists': exists})
@@ -9792,6 +10096,10 @@ def api_transfer_options():
         ps_result = supabase.table('ps_users').select('id, name, username, email, phone, branch, is_active').eq('is_active', True).execute()
         ps_options = ps_result.data if ps_result.data else []
         
+        # Get all Branch Heads for transfer options - Branch Head has branch
+        bh_result = supabase.table('branch_head_users').select('id, name, username, email, phone, branch, is_active').eq('is_active', True).execute()
+        bh_options = bh_result.data if bh_result.data else []
+        
         # Sanitize the data to ensure no problematic characters
         for cre in cre_options:
             if isinstance(cre.get('name'), str):
@@ -9806,15 +10114,58 @@ def api_transfer_options():
                 ps['username'] = ps['username'].strip()
             if isinstance(ps.get('branch'), str):
                 ps['branch'] = ps['branch'].strip()
+                
+        for bh in bh_options:
+            if isinstance(bh.get('name'), str):
+                bh['name'] = bh['name'].strip()
+            if isinstance(bh.get('username'), str):
+                bh['username'] = bh['username'].strip()
+            if isinstance(bh.get('branch'), str):
+                bh['branch'] = bh['branch'].strip()
         
         return jsonify({
             'success': True,
             'cre_options': cre_options,
-            'ps_options': ps_options
+            'ps_options': ps_options,
+            'bh_options': bh_options
         })
     except Exception as e:
         print(f"Error in api_transfer_options: {str(e)}")
         return jsonify({'success': False, 'message': 'Error fetching transfer options'})
+
+@app.route('/api/bh_dashboard_stats')
+def api_bh_dashboard_stats():
+    """API to get Branch Head dashboard statistics"""
+    try:
+        # Check if user is logged in as Branch Head
+        if session.get('user_type') != 'bh':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        branch = session.get('bh_branch')
+        if not branch:
+            return jsonify({'success': False, 'message': 'Branch information not found'})
+        
+        # Get counts for the specific branch
+        cre_count = get_accurate_count('cre_users')  # CREs don't have branch, so total
+        ps_count = get_accurate_count('ps_users', {'branch': branch})
+        leads_count = get_accurate_count('lead_master')  # Total leads
+        unassigned_leads = get_accurate_count('lead_master', {'assigned': 'No'})
+        
+        stats = {
+            'cre_count': cre_count,
+            'ps_count': ps_count,
+            'leads_count': leads_count,
+            'unassigned_leads': unassigned_leads
+        }
+        
+        return jsonify({
+            'success': True,
+            'stats': stats
+        })
+        
+    except Exception as e:
+        print(f"Error in api_bh_dashboard_stats: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error fetching dashboard statistics'})
 
 @app.route('/api/branches')
 @require_admin
