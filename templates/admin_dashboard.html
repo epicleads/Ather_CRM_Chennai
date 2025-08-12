@@ -397,77 +397,7 @@
             display: block;
         }
 
-        /* Zoho Dashboard Styles */
-        .dashboard-card {
-            background: var(--airbnb-white);
-            border: 1px solid var(--airbnb-gray-200);
-            border-radius: var(--airbnb-border-radius);
-            box-shadow: var(--airbnb-shadow);
-            margin-bottom: 2rem;
-            overflow: hidden;
-            transition: all 0.3s ease;
-            min-height: 850px;
-        }
 
-        .dashboard-card:hover {
-            box-shadow: var(--airbnb-shadow-hover);
-            transform: translateY(-2px);
-        }
-
-        .dashboard-card .card-header {
-            background: var(--airbnb-gray-100);
-            border-bottom: 1px solid var(--airbnb-gray-200);
-            padding: 1rem 1.5rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .dashboard-card .card-header h6 {
-            margin: 0;
-            color: var(--airbnb-gray-700);
-            font-weight: 600;
-        }
-
-        .dashboard-card .card-header small {
-            color: var(--airbnb-gray-500);
-            font-size: 0.85rem;
-        }
-
-        .dashboard-card .card-body {
-            padding: 0;
-        }
-
-        .dashboard-card iframe {
-            width: 100%;
-            height: 800px;
-            border: none;
-            background: var(--airbnb-white);
-        }
-
-        .dashboard-loading {
-            text-align: center;
-            padding: 2rem;
-            color: var(--airbnb-gray-500);
-        }
-
-        .dashboard-loading i {
-            font-size: 3rem;
-            margin-bottom: 1rem;
-            color: var(--airbnb-gray-400);
-        }
-
-        .dashboard-error {
-            text-align: center;
-            padding: 2rem;
-            color: #dc3545;
-        }
-
-        .dashboard-error i {
-            font-size: 3rem;
-            margin-bottom: 1rem;
-            color: #dc3545;
-        }
     </style>
 </head>
 <body>
@@ -565,12 +495,7 @@
                         <span>View Analytics</span>
                     </a>
                 </li>
-                <li class="sidebar-nav-item">
-                    <a href="{{ url_for('manage_dashboards') }}" class="sidebar-nav-link">
-                        <i class="fas fa-tachometer-alt sidebar-nav-icon"></i>
-                        <span>Manage Dashboards</span>
-                    </a>
-                </li>
+
                 <li class="sidebar-nav-item">
                     <a href="{{ url_for('security_audit') }}" class="sidebar-nav-link">
                         <i class="fas fa-shield-alt sidebar-nav-icon"></i>
@@ -647,15 +572,7 @@
                 </div>
             </div>
 
-            <!-- Zoho Dashboards Section -->
-            <div class="mb-5" style="min-height: 900px;">
-                <h5 style="color: var(--airbnb-red); font-weight: 600; margin-bottom: 1.5rem; font-size: 1.3rem;">
-                    <i class="fas fa-tachometer-alt" style="color: var(--airbnb-red);"></i> Zoho Dashboards
-                </h5>
-                <div id="adminDashboardsContainer">
-                    <!-- Admin dashboards will be loaded here -->
-                </div>
-            </div>
+
         </div>
     </div>
 
@@ -742,54 +659,7 @@
         // Initial fetch
         fetchHotLeads();
 
-        // Load admin dashboards
-        function loadAdminDashboards() {
-            console.log('Loading admin dashboards...'); // Debug log
-            fetch('/api/dashboards')
-                .then(response => response.json())
-                .then(data => {
-                    console.log('Admin Dashboards data:', data); // Debug log
-                    if (data.success && data.dashboards.admin) {
-                        const container = document.getElementById('adminDashboardsContainer');
-                        let html = '';
-                        
-                        data.dashboards.admin.forEach(dashboard => {
-                            html += `
-                                <div class="dashboard-card">
-                                    <div class="card-header">
-                                        <h6>${dashboard.name}</h6>
-                                        <small>Added: ${new Date(dashboard.created_at).toLocaleDateString()}</small>
-                                    </div>
-                                    <div class="card-body">
-                                        <iframe src="${dashboard.url}" 
-                                                frameborder="0">
-                                        </iframe>
-                                    </div>
-                                </div>
-                            `;
-                        });
-                        
-                        if (html === '') {
-                            html = '<div class="dashboard-loading"><i class="fas fa-chart-bar"></i><p>No admin dashboards configured yet.</p></div>';
-                        }
-                        
-                        container.innerHTML = html;
-                    } else {
-                        const container = document.getElementById('adminDashboardsContainer');
-                        container.innerHTML = '<div class="dashboard-loading"><i class="fas fa-chart-bar"></i><p>No admin dashboards configured yet.</p></div>';
-                    }
-                })
-                .catch(error => {
-                    console.error('Error loading admin dashboards:', error);
-                    const container = document.getElementById('adminDashboardsContainer');
-                    container.innerHTML = '<div class="dashboard-error"><i class="fas fa-exclamation-triangle"></i><p>Error loading dashboards. Please try again.</p></div>';
-                });
-        }
-        
-        // Load dashboards on page load
-        document.addEventListener('DOMContentLoaded', function() {
-            loadAdminDashboards();
-        });
+
     </script>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
