@@ -414,13 +414,28 @@ class OptimizedLeadOperations:
                 main_update_data = {'final_status': update_data['final_status']}
 
                 # Add timestamps for won/lost statuses
+                won_timestamp = None
+                lost_timestamp = None
                 if update_data['final_status'] == 'Won':
-                    main_update_data['won_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    won_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    main_update_data['won_timestamp'] = won_timestamp
                 elif update_data['final_status'] == 'Lost':
-                    main_update_data['lost_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    lost_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    main_update_data['lost_timestamp'] = lost_timestamp
 
                 lead_update = self.supabase.table('lead_master').update(main_update_data).eq('uid', uid)
                 operations.append(('lead_master', lead_update))
+                
+                # Also add timestamp sync operations to ps_followup_master
+                if won_timestamp or lost_timestamp:
+                    ps_timestamp_update = {}
+                    if won_timestamp:
+                        ps_timestamp_update['won_timestamp'] = won_timestamp
+                    if lost_timestamp:
+                        ps_timestamp_update['lost_timestamp'] = lost_timestamp
+                    
+                    ps_timestamp_op = self.supabase.table('ps_followup_master').update(ps_timestamp_update).eq('lead_uid', uid)
+                    operations.append(('ps_followup_master_timestamps', ps_timestamp_op))
 
             # 3. Execute all operations
             results = {}

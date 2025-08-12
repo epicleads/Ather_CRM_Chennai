@@ -89,6 +89,84 @@ def normalize_call_dates(update_data: dict) -> dict:
         pass
     return update_data
 
+def sync_timestamps_between_tables(uid: str, final_status: str, won_timestamp: str = None, lost_timestamp: str = None):
+    """
+    Synchronize won_timestamp and lost_timestamp between lead_master and ps_followup_master tables.
+    
+    Args:
+        uid: Lead UID
+        final_status: The final status ('Won' or 'Lost')
+        won_timestamp: Timestamp for won status (if applicable)
+        lost_timestamp: Timestamp for lost status (if applicable)
+    """
+    try:
+        if final_status == 'Won' and won_timestamp:
+            # Update both tables with won_timestamp
+            supabase.table('lead_master').update({'won_timestamp': won_timestamp}).eq('uid', uid).execute()
+            supabase.table('ps_followup_master').update({'won_timestamp': won_timestamp}).eq('lead_uid', uid).execute()
+            print(f"DEBUG: Synced won_timestamp '{won_timestamp}' for lead {uid} in both tables")
+            
+        elif final_status == 'Lost' and lost_timestamp:
+            # Update both tables with lost_timestamp
+            supabase.table('lead_master').update({'lost_timestamp': lost_timestamp}).eq('uid', uid).execute()
+            supabase.table('ps_followup_master').update({'lost_timestamp': lost_timestamp}).eq('lead_uid', uid).execute()
+            print(f"DEBUG: Synced lost_timestamp '{lost_timestamp}' for lead {uid} in both tables")
+            
+        elif final_status not in ['Won', 'Lost']:
+            # Clear timestamps if status is neither Won nor Lost
+            supabase.table('lead_master').update({
+                'won_timestamp': None,
+                'lost_timestamp': None
+            }).eq('uid', uid).execute()
+            supabase.table('ps_followup_master').update({
+                'won_timestamp': None,
+                'lost_timestamp': None
+            }).eq('lead_uid', uid).execute()
+            print(f"DEBUG: Cleared timestamps for lead {uid} as status is '{final_status}'")
+            
+    except Exception as e:
+        print(f"ERROR: Failed to sync timestamps for lead {uid}: {str(e)}")
+        # Don't raise the exception - we want the main operation to continue
+
+def sync_all_existing_timestamps():
+    """
+    Synchronize timestamps for all existing leads that might have mismatched timestamps.
+    This function can be run manually or as a maintenance task.
+    """
+    try:
+        print("Starting timestamp synchronization for all existing leads...")
+        
+        # Get all leads with final_status Won or Lost
+        won_leads = supabase.table('lead_master').select('uid, won_timestamp').eq('final_status', 'Won').not_.is_('won_timestamp', 'null').execute()
+        lost_leads = supabase.table('lead_master').select('uid, lost_timestamp').eq('final_status', 'Lost').not_.is_('lost_timestamp', 'null').execute()
+        
+        synced_count = 0
+        
+        # Sync Won leads
+        for lead in won_leads.data:
+            try:
+                supabase.table('ps_followup_master').update({'won_timestamp': lead['won_timestamp']}).eq('lead_uid', lead['uid']).execute()
+                synced_count += 1
+                print(f"Synced won_timestamp for lead {lead['uid']}")
+            except Exception as e:
+                print(f"Failed to sync won_timestamp for lead {lead['uid']}: {str(e)}")
+        
+        # Sync Lost leads
+        for lead in lost_leads.data:
+            try:
+                supabase.table('ps_followup_master').update({'lost_timestamp': lead['lost_timestamp']}).eq('lead_uid', lead['uid']).execute()
+                synced_count += 1
+                print(f"Synced lost_timestamp for lead {lead['uid']}")
+            except Exception as e:
+                print(f"Failed to sync lost_timestamp for lead {lead['uid']}: {str(e)}")
+        
+        print(f"Timestamp synchronization completed. Synced {synced_count} leads.")
+        return synced_count
+        
+    except Exception as e:
+        print(f"ERROR in sync_all_existing_timestamps: {str(e)}")
+        return 0
+
 def is_valid_date(date_string):
     """Validate date string format (YYYY-MM-DD)"""
     try:
@@ -3498,9 +3576,11 @@ def update_lead(uid):
                 final_status = request.form['final_status']
                 update_data['final_status'] = final_status
                 if final_status == 'Won':
-                    update_data['won_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    won_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    update_data['won_timestamp'] = won_timestamp
                 elif final_status == 'Lost':
-                    update_data['lost_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    lost_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    update_data['lost_timestamp'] = lost_timestamp
 
             # Handle call dates and remarks - record for all statuses including RNR
             if request.form.get('call_date') and call_remark:
@@ -3544,6 +3624,15 @@ def update_lead(uid):
                         ps_result = supabase.table('ps_followup_master').select('lead_uid').eq('lead_uid', uid).execute()
                         if ps_result.data:
                             supabase.table('ps_followup_master').update({'final_status': update_data['final_status']}).eq('lead_uid', uid).execute()
+                    
+                    # Synchronize timestamps between tables
+                    if 'final_status' in update_data:
+                        sync_timestamps_between_tables(
+                            uid=uid,
+                            final_status=update_data['final_status'],
+                            won_timestamp=update_data.get('won_timestamp'),
+                            lost_timestamp=update_data.get('lost_timestamp')
+                        )
 
                     # Log lead update
                     auth_manager.log_audit_event(
@@ -4328,7 +4417,8 @@ def update_ps_lead(uid):
                     # Auto-set final_status to Won for Booked with another number
                     if lead_status == 'Booked with another number':
                         update_data['final_status'] = 'Won'
-                        update_data['won_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        won_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        update_data['won_timestamp'] = won_timestamp
                         
                 if lead_category:
                     update_data['lead_category'] = lead_category
@@ -4345,9 +4435,11 @@ def update_ps_lead(uid):
                     final_status = request.form['final_status']
                     update_data['final_status'] = final_status
                     if final_status == 'Won':
-                        update_data['won_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        won_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        update_data['won_timestamp'] = won_timestamp
                     elif final_status == 'Lost':
-                        update_data['lost_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        lost_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        update_data['lost_timestamp'] = lost_timestamp
                 # Handle call dates and remarks for the next available call
                 skip_first_call_statuses = [
                     'Call not Connected',
@@ -4394,6 +4486,15 @@ def update_ps_lead(uid):
                             elif final_status == 'Lost':
                                 main_update_data['lost_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             supabase.table('lead_master').update(main_update_data).eq('uid', uid).execute()
+                        
+                        # Synchronize timestamps between tables
+                        if 'final_status' in update_data:
+                            sync_timestamps_between_tables(
+                                uid=uid,
+                                final_status=update_data['final_status'],
+                                won_timestamp=update_data.get('won_timestamp'),
+                                lost_timestamp=update_data.get('lost_timestamp')
+                            )
                         # Log PS lead update
                         auth_manager.log_audit_event(
                             user_id=session.get('user_id'),
@@ -10166,6 +10267,114 @@ def api_bh_dashboard_stats():
     except Exception as e:
         print(f"Error in api_bh_dashboard_stats: {str(e)}")
         return jsonify({'success': False, 'message': 'Error fetching dashboard statistics'})
+
+@app.route('/admin/sync_timestamps', methods=['POST'])
+@require_admin
+def admin_sync_timestamps():
+    """Admin endpoint to manually synchronize timestamps between tables"""
+    try:
+        synced_count = sync_all_existing_timestamps()
+        return jsonify({
+            'success': True,
+            'message': f'Successfully synchronized timestamps for {synced_count} leads',
+            'synced_count': synced_count
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Error synchronizing timestamps: {str(e)}'
+        })
+
+@app.route('/api/bh_ps_performance')
+def api_bh_ps_performance():
+    """API to get PS performance data for Branch Head dashboard"""
+    try:
+        # Check if user is logged in as Branch Head
+        if session.get('user_type') != 'bh':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        branch = session.get('bh_branch')
+        if not branch:
+            return jsonify({'success': False, 'message': 'Branch information not found'})
+        
+        # Get current month (first day and last day)
+        from datetime import datetime
+        current_date = datetime.now()
+        first_day_of_month = current_date.replace(day=1).strftime('%Y-%m-%d')
+        
+        # Get last day of current month
+        if current_date.month == 12:
+            next_month = current_date.replace(year=current_date.year + 1, month=1, day=1)
+        else:
+            next_month = current_date.replace(month=current_date.month + 1, day=1)
+        last_day_of_month = (next_month - timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        # Get all PS users from the branch
+        ps_result = supabase.table('ps_users').select('name').eq('branch', branch).eq('is_active', True).execute()
+        if not ps_result.data:
+            return jsonify({'success': False, 'message': 'No PS users found in this branch'})
+        
+        ps_names = [ps['name'] for ps in ps_result.data]
+        performance_data = []
+        
+        for ps_name in ps_names:
+            # Get total leads assigned to this PS in current month
+            total_leads_result = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_name', ps_name).gte('ps_assigned_at', first_day_of_month).lte('ps_assigned_at', last_day_of_month).execute()
+            total_leads = total_leads_result.count or 0
+            
+            # Get F1-F7 call counts for leads assigned in current month
+            f1_count = 0
+            f2_count = 0
+            f3_count = 0
+            f4_count = 0
+            f5_count = 0
+            f6_count = 0
+            f7_count = 0
+            
+            if total_leads > 0:
+                # Get leads with call dates for current month
+                leads_result = supabase.table('ps_followup_master').select('first_call_date, second_call_date, third_call_date, fourth_call_date, fifth_call_date, sixth_call_date, seventh_call_date').eq('ps_name', ps_name).gte('ps_assigned_at', first_day_of_month).lte('ps_assigned_at', last_day_of_month).execute()
+                
+                for lead in leads_result.data:
+                    if lead.get('first_call_date'):
+                        f1_count += 1
+                    if lead.get('second_call_date'):
+                        f2_count += 1
+                    if lead.get('third_call_date'):
+                        f3_count += 1
+                    if lead.get('fourth_call_date'):
+                        f4_count += 1
+                    if lead.get('fifth_call_date'):
+                        f5_count += 1
+                    if lead.get('sixth_call_date'):
+                        f6_count += 1
+                    if lead.get('seventh_call_date'):
+                        f7_count += 1
+            
+            performance_data.append({
+                'ps_name': ps_name,
+                'total_leads_assigned': total_leads,
+                'f1': f1_count,
+                'f2': f2_count,
+                'f3': f3_count,
+                'f4': f4_count,
+                'f5': f5_count,
+                'f6': f6_count,
+                'f7': f7_count,
+                'lost_mtd': 0,  # Placeholder for now
+                'won_mtd': 0    # Placeholder for now
+            })
+        
+        return jsonify({
+            'success': True,
+            'branch': branch,
+            'current_month': current_date.strftime('%B %Y'),
+            'performance_data': performance_data
+        })
+        
+    except Exception as e:
+        print(f"Error in api_bh_ps_performance: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error fetching PS performance data'})
 
 @app.route('/api/branches')
 @require_admin
