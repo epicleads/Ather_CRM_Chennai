@@ -668,8 +668,17 @@
     </div>
   </div>
 
-  <div class="text-end mt-2">
-    <button id="assignButton" class="btn btn-primary btn-lg" style="font-weight:600;letter-spacing:0.5px;"><i class="fas fa-paper-plane"></i> Assign Leads</button>
+  <div class="d-flex justify-content-between align-items-center mt-2">
+    <div>
+      <a href="{{ url_for('auto_assign_history_page') }}" class="btn btn-info">
+        <i class="fas fa-history me-2"></i>View Auto-Assign History
+      </a>
+    </div>
+    <div>
+      <button id="assignButton" class="btn btn-primary btn-lg" style="font-weight:600;letter-spacing:0.5px;">
+        <i class="fas fa-paper-plane"></i> Assign Leads
+      </button>
+    </div>
   </div>
 
   <!-- Assignment Summary -->
@@ -1435,7 +1444,7 @@
         // Show progress alert
         showAlert(`🔄 Saving auto-assign configuration for "${source}" and assigning existing leads...`, 'info');
         
-        // First save the configuration
+        // Save the configuration (this will also trigger auto-assign)
         fetch('/save_auto_assign_config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1446,24 +1455,12 @@
         })
         .then(response => response.json())
         .then(data => {
-          if (data.success) {
-            // Then trigger auto-assignment for existing leads
-            return fetch(`/trigger_auto_assign/${encodeURIComponent(source)}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' }
-            });
-          } else {
-            throw new Error(data.message);
-          }
-        })
-        .then(response => response.json())
-        .then(data => {
           saveBtn.disabled = false;
           saveBtn.innerHTML = '<i class="fas fa-save"></i> Save & Auto-Assign';
           
           if (data.success) {
-            if (data.assigned_count > 0) {
-              showAlert(`✅ Configuration saved successfully! ${data.assigned_count} leads were auto-assigned to ${creNames.join(', ')}.`, 'success');
+            if (data.auto_assigned_count > 0) {
+              showAlert(`✅ Configuration saved successfully! ${data.auto_assigned_count} leads were auto-assigned to ${creNames.join(', ')}.`, 'success');
             } else {
               showAlert(`✅ Configuration saved successfully! No unassigned leads found to assign.`, 'success');
             }

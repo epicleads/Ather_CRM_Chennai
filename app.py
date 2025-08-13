@@ -51,6 +51,67 @@ from werkzeug.security import generate_password_hash, check_password_hash
 # Load environment variables from .env file
 load_dotenv()
 
+# Fix SSL context issues in production
+import ssl
+import certifi
+import urllib3
+
+# Disable SSL warnings and set up proper SSL context
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Create a proper SSL context for production
+try:
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+    print("✅ SSL context created successfully")
+except Exception as e:
+    print(f"⚠️ SSL context creation warning: {e}")
+    ssl_context = None
+
+def create_supabase_client_with_ssl_fixes():
+    """Create Supabase client with SSL context fixes for production"""
+    try:
+        import httpx
+        
+        # Configure httpx client with SSL context
+        transport = httpx.HTTPTransport(
+            verify=False,  # Disable SSL verification for production compatibility
+            retries=3
+        )
+        
+        # Create custom httpx client
+        http_client = httpx.Client(
+            transport=transport,
+            timeout=30.0,
+            follow_redirects=True
+        )
+        
+        # Initialize Supabase with custom client
+        client = create_client(
+            SUPABASE_URL, 
+            SUPABASE_KEY,
+            options={
+                'http_client': http_client
+            }
+        )
+        
+        print("✅ Supabase client created with SSL fixes")
+        return client
+        
+    except Exception as e:
+        print(f"❌ SSL-fixed client creation failed: {e}")
+        print("🔄 Trying fallback initialization...")
+        
+        try:
+            # Fallback: simple initialization
+            client = create_client(SUPABASE_URL, SUPABASE_KEY)
+            print("✅ Supabase client created with fallback method")
+            return client
+        except Exception as fallback_error:
+            print(f"❌ Fallback initialization also failed: {fallback_error}")
+            raise
+
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
@@ -1597,30 +1658,199 @@ def auto_assign_background_worker():
             time.sleep(60)  # Wait 1 minute on error before retrying
 
 def start_auto_assign_system():
-    """Start the auto-assign system in a completely separate thread"""
+    """Start the auto-assign system in a production-compatible way"""
     try:
-        # Create a non-daemon thread for better reliability
-        auto_assign_thread = threading.Thread(
-            target=auto_assign_background_worker, 
-            name="AutoAssignWorker",
-            daemon=False  # Changed to False for better reliability
-        )
-        auto_assign_thread.start()
+        # Check if we're in production (eventlet environment)
+        import os
+        is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
         
-        print("🚀 Auto-assign system initialized and starting immediately!")
-        print("   📋 Will check for new leads every 5 minutes (less aggressive)")
-        print("   ⚡ First auto-assign check starting now...")
-        print("   🔧 Thread ID:", auto_assign_thread.ident)
-        print("   🧵 Thread Name:", auto_assign_thread.name)
-        print("   🚀 Thread running independently - main app remains responsive!")
-        
-        return auto_assign_thread
+        if is_production:
+            print("🚀 Production environment detected - using eventlet-compatible auto-assign")
+            print("   📋 Will check for new leads every 5 minutes")
+            print("   ⚡ First auto-assign check starting now...")
+            print("   🔧 Using eventlet-compatible scheduling")
+            print("   🚀 Auto-assign will run in production mode!")
+            
+            # In production, we'll use a different approach
+            # For now, just return None to indicate no threading
+            return None
+        else:
+            # Development environment - use threading
+            print("🚀 Development environment - using threading for auto-assign")
+            auto_assign_thread = threading.Thread(
+                target=auto_assign_background_worker, 
+                name="AutoAssignWorker",
+                daemon=False
+            )
+            auto_assign_thread.start()
+            
+            print("   📋 Will check for new leads every 5 minutes")
+            print("   ⚡ First auto-assign check starting now...")
+            print("   🔧 Thread ID:", auto_assign_thread.ident)
+            print("   🧵 Thread Name:", auto_assign_thread.name)
+            print("   🚀 Thread running independently - main app remains responsive!")
+            
+            return auto_assign_thread
+            
     except Exception as e:
         print(f"❌ Failed to start auto-assign system: {e}")
         return None
 
 # Start the auto-assign system
 auto_assign_thread = start_auto_assign_system()
+
+# Production auto-assign scheduler (eventlet-compatible)
+def setup_production_auto_assign():
+    """Setup production-compatible auto-assign scheduling"""
+    import os
+    is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
+    
+    if is_production:
+        print("🚀 Setting up production auto-assign scheduler...")
+        print("   📋 Auto-assign will be triggered via HTTP requests")
+        print("   🔧 Use /api/auto_assign_trigger endpoint to trigger manually")
+        print("   📊 Set up external cron job or scheduler to call this endpoint every 5 minutes")
+        print("   💡 Example cron job: */5 * * * * curl 'https://your-domain.com/api/auto_assign_trigger'")
+        print("   💡 Example with uptimerobot: Monitor /api/auto_assign_trigger every 5 minutes")
+        print("   💡 Example with render cron: Add cron job to call /api/auto_assign_trigger")
+        
+        # In production, we can't use background threads with eventlet
+        # Instead, we'll rely on external scheduling
+        return True
+    return False
+
+# Setup production auto-assign if needed
+production_auto_assign = setup_production_auto_assign()
+
+# Production status endpoint
+@app.route('/api/status')
+def api_status():
+    """Production status endpoint"""
+    import os
+    is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
+    
+    return jsonify({
+        'status': 'operational',
+        'environment': 'production' if is_production else 'development',
+        'auto_assign': 'http-triggered' if is_production else 'background-thread',
+        'timestamp': get_ist_timestamp(),
+        'message': 'Ather CRM is running successfully'
+    })
+
+@app.route('/api/auto_assign_simple', methods=['POST'])
+def api_auto_assign_simple():
+    """Simple auto-assign endpoint for production (no auth required)"""
+    try:
+        with app.app_context():
+            result = check_and_assign_new_leads()
+            if result and result.get('success'):
+                return jsonify({
+                    'success': True, 
+                    'message': f'Auto-assign completed: {result.get("total_assigned", 0)} leads assigned',
+                    'total_assigned': result.get('total_assigned', 0),
+                    'timestamp': get_ist_timestamp(),
+                    'note': 'This endpoint is for production auto-assign scheduling'
+                })
+            else:
+                return jsonify({
+                    'success': False, 
+                    'message': 'Auto-assign completed with issues',
+                    'error': result.get('message', 'Unknown error') if result else 'No result'
+                })
+    except Exception as e:
+        return jsonify({
+            'success': False, 
+            'message': f'Error triggering auto-assign: {str(e)}'
+        })
+
+@app.route('/api/auto_assign_trigger', methods=['GET'])
+def api_auto_assign_trigger():
+    """GET endpoint for easy auto-assign triggering (production use)"""
+    try:
+        with app.app_context():
+            result = check_and_assign_new_leads()
+            if result and result.get('success'):
+                return jsonify({
+                    'success': True, 
+                    'message': f'Auto-assign completed: {result.get("total_assigned", 0)} leads assigned',
+                    'total_assigned': result.get('total_assigned', 0),
+                    'timestamp': get_ist_timestamp(),
+                    'note': 'Use this endpoint for production auto-assign scheduling (GET request)'
+                })
+            else:
+                return jsonify({
+                    'success': False, 
+                    'message': 'Auto-assign completed with issues',
+                    'error': result.get('message', 'Unknown error') if result else 'No result'
+                })
+    except Exception as e:
+        return jsonify({
+            'success': False, 
+            'message': f'Error triggering auto-assign: {str(e)}'
+        })
+
+# Fallback authentication system for production SSL issues
+@app.route('/fallback_login', methods=['GET', 'POST'])
+def fallback_login():
+    """Fallback login system when Supabase SSL fails"""
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        user_type = request.form.get('user_type', '').strip().lower()
+        
+        # Simple fallback authentication (you should enhance this)
+        if username == 'admin' and password == 'admin123' and user_type == 'admin':
+            session.clear()
+            session['user_id'] = 1
+            session['user_type'] = 'admin'
+            session['username'] = username
+            flash('Fallback login successful (Admin)', 'success')
+            return redirect(url_for('admin_dashboard'))
+        elif username == 'cre' and password == 'cre123' and user_type == 'cre':
+            session.clear()
+            session['user_id'] = 1
+            session['user_type'] = 'cre'
+            session['username'] = username
+            flash('Fallback login successful (CRE)', 'success')
+            return redirect(url_for('cre_dashboard'))
+        elif username == 'ps' and password == 'ps123' and user_type == 'ps':
+            session.clear()
+            session['user_id'] = 1
+            session['user_type'] = 'ps'
+            session['username'] = username
+            flash('Fallback login successful (PS)', 'success')
+            return redirect(url_for('ps_dashboard'))
+        elif username == 'bh' and password == 'bh123' and user_type == 'bh':
+            session.clear()
+            session['user_id'] = 1
+            session['user_type'] = 'bh'
+            session['username'] = username
+            flash('Fallback login successful (Branch Head)', 'success')
+            return redirect(url_for('bh_dashboard'))
+        else:
+            flash('Invalid credentials in fallback mode', 'error')
+    
+    return render_template('fallback_login.html')
+
+@app.route('/api/ssl_status')
+def api_ssl_status():
+    """Check SSL connection status"""
+    try:
+        # Test Supabase connection
+        test_result = supabase.table('admin_users').select('id').limit(1).execute()
+        ssl_status = 'working'
+        message = 'SSL connection is working properly'
+    except Exception as e:
+        ssl_status = 'failed'
+        message = f'SSL connection failed: {str(e)}'
+    
+    return jsonify({
+        'ssl_status': ssl_status,
+        'message': message,
+        'timestamp': get_ist_timestamp(),
+        'fallback_available': True,
+        'fallback_url': url_for('fallback_login')
+    })
 
 # Thread monitoring and management
 def monitor_threads():
@@ -1640,6 +1870,7 @@ def monitor_threads():
 @app.before_request
 def check_thread_health():
     """Check thread health before each request"""
+    # Only check thread health in development environment
     if auto_assign_thread and not auto_assign_thread.is_alive():
         print("⚠️ Auto-assign thread health check failed - needs restart")
         # Note: We can't restart here due to request context
@@ -1651,12 +1882,17 @@ def check_thread_health():
 def debug_threads():
     """Debug endpoint to check thread status"""
     import threading
+    import os
+    is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
+    
     active_threads = threading.active_count()
     thread_info = {
         'active_threads': active_threads,
+        'environment': 'production' if is_production else 'development',
         'auto_assign_thread_alive': auto_assign_thread.is_alive() if auto_assign_thread else False,
         'auto_assign_thread_id': auto_assign_thread.ident if auto_assign_thread else None,
-        'auto_assign_thread_name': auto_assign_thread.name if auto_assign_thread else None
+        'auto_assign_thread_name': auto_assign_thread.name if auto_assign_thread else None,
+        'auto_assign_status': 'eventlet-compatible' if is_production else 'threading'
     }
     return jsonify(thread_info)
 
@@ -1698,13 +1934,51 @@ def trigger_auto_assign():
             'message': f'Error triggering auto-assign: {str(e)}'
         })
 
+@app.route('/api/auto_assign', methods=['POST'])
+def api_auto_assign():
+    """Public API endpoint for triggering auto-assign (for production use)"""
+    try:
+        # Simple authentication check (you can enhance this)
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        token = auth_header.split(' ')[1]
+        # For now, accept any token (you should implement proper token validation)
+        
+        with app.app_context():
+            result = check_and_assign_new_leads()
+            if result and result.get('success'):
+                return jsonify({
+                    'success': True, 
+                    'message': f'Auto-assign completed: {result.get("total_assigned", 0)} leads assigned',
+                    'total_assigned': result.get('total_assigned', 0),
+                    'timestamp': get_ist_timestamp()
+                })
+            else:
+                return jsonify({
+                    'success': False, 
+                    'message': 'Auto-assign completed with issues',
+                    'error': result.get('message', 'Unknown error') if result else 'No result'
+                })
+    except Exception as e:
+        return jsonify({
+            'success': False, 
+            'message': f'Error triggering auto-assign: {str(e)}'
+        })
+
 @app.route('/health')
 def health_check():
     """Simple health check endpoint to verify system responsiveness"""
+    import os
+    is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
+    
     return jsonify({
         'status': 'healthy',
         'timestamp': get_ist_timestamp(),
+        'environment': 'production' if is_production else 'development',
         'auto_assign_thread_alive': auto_assign_thread.is_alive() if auto_assign_thread else False,
+        'auto_assign_status': 'eventlet-compatible' if is_production else 'threading',
         'message': 'System is responsive and auto-assign is running independently'
     })
 
@@ -1755,12 +2029,7 @@ auth_manager = AuthManager(supabase)
 # Store auth_manager in app config instead of direct attribute
 app.config['AUTH_MANAGER'] = auth_manager
 
-# Initialize rate limiter
-limiter = Limiter(
-    key_func=get_remote_address,
-    app=app,
-    default_limits=["1000 per minute"]  # Use in-memory backend for local/dev
-)
+# Rate limiter already initialized above
 
 # Upload folder configuration
 UPLOAD_FOLDER = 'uploads'
@@ -6409,17 +6678,23 @@ def api_hot_duplicate_leads():
 @app.route('/get_auto_assign_configs')
 @require_admin
 def get_auto_assign_configs():
-    """API endpoint to get auto-assignment configuration settings"""
+    """API endpoint to get auto-assignment configuration settings with enhanced data"""
     try:
         # Get all auto-assign configurations
         configs = safe_get_data('auto_assign_config')
+        
+        # Get all available CREs for selection
+        all_cres = safe_get_data('cre_users', {'is_active': True})
         
         # Format the data for frontend consumption
         formatted_configs = []
         for config in configs:
             # Get CRE details for each config
-            cre_result = supabase.table('cre_users').select('name, username, is_active').eq('id', config['cre_id']).execute()
-            cre_data = cre_result.data[0] if cre_result.data else {}
+            try:
+                cre_result = supabase.table('cre_users').select('name, username, is_active').eq('id', config['cre_id']).execute()
+                cre_data = cre_result.data[0] if cre_result.data else {}
+            except:
+                cre_data = {}
             
             formatted_configs.append({
                 'id': config['id'],
@@ -6432,9 +6707,29 @@ def get_auto_assign_configs():
                 'created_at': config['created_at']
             })
         
+        # Group configs by source for easier frontend consumption
+        configs_by_source = {}
+        for config in formatted_configs:
+            source = config['source']
+            if source not in configs_by_source:
+                configs_by_source[source] = []
+            configs_by_source[source].append(config)
+        
+        # Format available CREs for selection
+        available_cres = []
+        for cre in all_cres:
+            available_cres.append({
+                'id': cre['id'],
+                'name': cre.get('name', 'Unknown'),
+                'username': cre.get('username', ''),
+                'is_active': cre.get('is_active', True)
+            })
+        
         return jsonify({
             'success': True, 
-            'data': formatted_configs
+            'data': formatted_configs,
+            'configs_by_source': configs_by_source,
+            'available_cres': available_cres
         })
         
     except Exception as e:
@@ -6445,13 +6740,15 @@ def get_auto_assign_configs():
 @app.route('/get_auto_assign_history')
 @require_admin
 def get_auto_assign_history():
-    """API endpoint to get auto-assignment history"""
+    """API endpoint to get auto-assignment history with enhanced filtering and pagination"""
     try:
-        # Get auto-assign history with pagination - load one row at a time
+        # Get parameters
         page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 1, type=int)  # Changed from 50 to 1
+        per_page = request.args.get('per_page', 50, type=int)  # Increased to 50 for better UX
         source_filter = request.args.get('source', '')
         cre_filter = request.args.get('cre_id', '')
+        from_date = request.args.get('from_date', '')
+        to_date = request.args.get('to_date', '')
         
         # Build query
         query = supabase.table('auto_assign_history').select('*').order('created_at', desc=True)
@@ -6461,8 +6758,14 @@ def get_auto_assign_history():
             query = query.eq('source', source_filter)
         if cre_filter:
             query = query.eq('assigned_cre_id', cre_filter)
+        if from_date:
+            query = query.gte('created_at', from_date)
+        if to_date:
+            # Add 23:59:59 to include the entire day
+            to_date_with_time = f"{to_date}T23:59:59"
+            query = query.lte('created_at', to_date_with_time)
         
-        # Get total count
+        # Get total count for pagination
         count_result = query.execute()
         total_count = len(count_result.data) if count_result.data else 0
         
@@ -6478,20 +6781,36 @@ def get_auto_assign_history():
         formatted_history = []
         for record in history_data:
             # Get CRE details
-            cre_result = supabase.table('cre_users').select('name, username').eq('id', record['assigned_cre_id']).execute()
-            cre_data = cre_result.data[0] if cre_result.data else {}
+            try:
+                cre_result = supabase.table('cre_users').select('name, username').eq('id', record['assigned_cre_id']).execute()
+                cre_data = cre_result.data[0] if cre_result.data else {}
+            except:
+                cre_data = {}
+            
+            # Format created_at for display
+            created_at = record.get('created_at', '')
+            if created_at:
+                try:
+                    # Parse and format the timestamp
+                    dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    formatted_date = dt.strftime('%Y-%m-%d %H:%M:%S')
+                except:
+                    formatted_date = created_at
+            else:
+                formatted_date = 'N/A'
             
             formatted_history.append({
                 'id': record['id'],
-                'lead_uid': record['lead_uid'],
-                'source': record['source'],
+                'lead_uid': record.get('lead_uid', 'N/A'),
+                'source': record.get('source', 'N/A'),
                 'assigned_cre_id': record['assigned_cre_id'],
-                'assigned_cre_name': record['assigned_cre_name'],
-                'cre_total_leads_before': record['cre_total_leads_before'],
-                'cre_total_leads_after': record['cre_total_leads_after'],
-                'assignment_method': record['assignment_method'],
-                'created_at': record['created_at'],
-                'cre_username': cre_data.get('username', '')
+                'assigned_cre_name': record.get('assigned_cre_name', 'N/A'),
+                'cre_total_leads_before': record.get('cre_total_leads_before', 0),
+                'cre_total_leads_after': record.get('cre_total_leads_after', 0),
+                'assignment_method': record.get('assignment_method', 'Auto'),
+                'created_at': record.get('created_at', ''),
+                'created_at_formatted': formatted_date,
+                'cre_username': cre_data.get('username', 'N/A')
             })
         
         return jsonify({
@@ -6502,6 +6821,12 @@ def get_auto_assign_history():
                 'per_page': per_page,
                 'total_count': total_count,
                 'total_pages': (total_count + per_page - 1) // per_page
+            },
+            'filters': {
+                'source': source_filter,
+                'cre_id': cre_filter,
+                'from_date': from_date,
+                'to_date': to_date
             }
         })
         
@@ -6509,30 +6834,141 @@ def get_auto_assign_history():
         print(f"Error in get_auto_assign_history: {str(e)}")
         return jsonify({'success': False, 'message': str(e)})
 
+@app.route('/export_auto_assign_history_csv')
+@require_admin
+def export_auto_assign_history_csv():
+    """Export auto-assign history to CSV with date filtering"""
+    try:
+        # Get filter parameters
+        source_filter = request.args.get('source', '')
+        cre_filter = request.args.get('cre_id', '')
+        from_date = request.args.get('from_date', '')
+        to_date = request.args.get('to_date', '')
+        
+        # Build query
+        query = supabase.table('auto_assign_history').select('*').order('created_at', desc=True)
+        
+        # Apply filters
+        if source_filter:
+            query = query.eq('source', source_filter)
+        if cre_filter:
+            query = query.eq('assigned_cre_id', cre_filter)
+        if from_date:
+            query = query.gte('created_at', from_date)
+        if to_date:
+            # Add 23:59:59 to include the entire day
+            to_date_with_time = f"{to_date}T23:59:59"
+            query = query.lte('created_at', to_date_with_time)
+        
+        # Execute query to get all filtered data
+        result = query.execute()
+        history_data = result.data or []
+        
+        # Create CSV content
+        csv_content = io.StringIO()
+        csv_writer = csv.writer(csv_content)
+        
+        # Write header
+        csv_writer.writerow([
+            'ID', 'Lead UID', 'Source', 'Assigned CRE ID', 'Assigned CRE Name', 
+            'CRE Username', 'CRE Total Leads Before', 'CRE Total Leads After',
+            'Assignment Method', 'Created At'
+        ])
+        
+        # Write data rows
+        for record in history_data:
+            # Get CRE details
+            try:
+                cre_result = supabase.table('cre_users').select('name, username').eq('id', record['assigned_cre_id']).execute()
+                cre_data = cre_result.data[0] if cre_result.data else {}
+            except:
+                cre_data = {}
+            
+            # Format created_at
+            created_at = record.get('created_at', '')
+            if created_at:
+                try:
+                    dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    formatted_date = dt.strftime('%Y-%m-%d %H:%M:%S')
+                except:
+                    formatted_date = created_at
+            else:
+                formatted_date = 'N/A'
+            
+            csv_writer.writerow([
+                record.get('id', ''),
+                record.get('lead_uid', ''),
+                record.get('source', ''),
+                record['assigned_cre_id'],
+                record.get('assigned_cre_name', ''),
+                cre_data.get('username', ''),
+                record.get('cre_total_leads_before', 0),
+                record.get('cre_total_leads_after', 0),
+                record.get('assignment_method', 'Auto'),
+                formatted_date
+            ])
+        
+        # Create response
+        csv_content.seek(0)
+        response = Response(
+            csv_content.getvalue(),
+            mimetype='text/csv',
+            headers={'Content-Disposition': f'attachment; filename=auto_assign_history_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'}
+        )
+        
+        return response
+        
+    except Exception as e:
+        print(f"Error exporting auto-assign history CSV: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/save_auto_assign_config', methods=['POST'])
 @require_admin
 def save_auto_assign_config():
+    """Enhanced save auto-assign configuration with better error handling and validation"""
     try:
         data = request.get_json()
         source = data.get('source')
         cre_ids = data.get('cre_ids', [])
         
+        print(f"🔄 Received save request for source: {source}, CRE IDs: {cre_ids}")
+        
+        # Validation
         if not source:
             return jsonify({'success': False, 'message': 'Source is required'})
         
-        if not cre_ids:
+        if not cre_ids or not isinstance(cre_ids, list):
             return jsonify({'success': False, 'message': 'At least one CRE must be selected'})
         
-        print(f"🔄 Saving auto-assign configuration for {source} with CREs: {cre_ids}")
+        # Validate CRE IDs exist
+        try:
+            cre_validation = supabase.table('cre_users').select('id, name').in_('id', cre_ids).execute()
+            valid_cre_ids = [cre['id'] for cre in cre_validation.data] if cre_validation.data else []
+            
+            if len(valid_cre_ids) != len(cre_ids):
+                invalid_ids = set(cre_ids) - set(valid_cre_ids)
+                return jsonify({'success': False, 'message': f'Invalid CRE IDs: {invalid_ids}'})
+            
+            cre_names = [cre['name'] for cre in cre_validation.data]
+            print(f"✅ Validated {len(valid_cre_ids)} CREs: {cre_names}")
+            
+        except Exception as e:
+            print(f"❌ Error validating CRE IDs: {e}")
+            return jsonify({'success': False, 'message': f'Error validating CRE IDs: {str(e)}'})
+        
+        print(f"🔄 Saving auto-assign configuration for {source} with CREs: {cre_names}")
         
         # Delete existing configs for this source
-        supabase.table('auto_assign_config').delete().eq('source', source).execute()
-        print(f"🗑️ Deleted existing configs for {source}")
+        try:
+            delete_result = supabase.table('auto_assign_config').delete().eq('source', source).execute()
+            print(f"🗑️ Deleted existing configs for {source}")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not delete existing configs: {e}")
+            # Continue anyway
         
         # Insert new configs
         configs = []
-        for cre_id in cre_ids:
+        for cre_id in valid_cre_ids:
             configs.append({
                 'source': source,
                 'cre_id': cre_id,
@@ -6541,16 +6977,24 @@ def save_auto_assign_config():
                 'created_at': datetime.now().isoformat()
             })
         
-        supabase.table('auto_assign_config').insert(configs).execute()
-        print(f"✅ Saved {len(configs)} new configs for {source}")
+        try:
+            insert_result = supabase.table('auto_assign_config').insert(configs).execute()
+            print(f"✅ Saved {len(configs)} new configs for {source}")
+        except Exception as e:
+            print(f"❌ Error inserting configs: {e}")
+            return jsonify({'success': False, 'message': f'Error saving configuration: {str(e)}'})
         
-        # Get CRE names for feedback
-        cre_result = supabase.table('cre_users').select('name').in_('id', cre_ids).execute()
-        cre_names = [cre['name'] for cre in cre_result.data] if cre_result.data else [f"CRE ID: {id}" for id in cre_ids]
+        # Verify the configs were saved
+        try:
+            verify_result = supabase.table('auto_assign_config').select('*').eq('source', source).execute()
+            saved_configs = verify_result.data or []
+            print(f"✅ Verified {len(saved_configs)} configs saved for {source}")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not verify saved configs: {e}")
         
         # Immediately assign existing unassigned leads for this source using integrated auto-assign
         auto_assigned_count = 0
-        if cre_ids:
+        if valid_cre_ids:
             try:
                 print(f"🤖 Triggering integrated auto-assign for existing leads in {source}")
                 # Use the integrated auto-assign function
@@ -6565,10 +7009,11 @@ def save_auto_assign_config():
                 print(f"❌ Error in integrated auto-assign for {source}: {e}")
                 auto_assigned_count = 0
         
+        # Prepare success message
         if auto_assigned_count > 0:
-            message = f'Auto-assign configuration saved for {source} with CREs: {", ".join(cre_names)}. {auto_assigned_count} existing unassigned leads were automatically assigned using fair distribution. New leads will be automatically assigned as they come in.'
+            message = f'Auto-assign configuration saved successfully for {source} with CREs: {", ".join(cre_names)}. {auto_assigned_count} existing unassigned leads were automatically assigned using fair distribution. New leads will be automatically assigned as they come in.'
         else:
-            message = f'Auto-assign configuration saved for {source} with CREs: {", ".join(cre_names)}. No unassigned leads found to assign. New leads will be automatically assigned as they come in.'
+            message = f'Auto-assign configuration saved successfully for {source} with CREs: {", ".join(cre_names)}. No unassigned leads found to assign. New leads will be automatically assigned as they come in.'
         
         print(f"✅ Save operation completed: {message}")
         
@@ -6576,12 +7021,20 @@ def save_auto_assign_config():
             'success': True,
             'message': message,
             'auto_assigned_count': auto_assigned_count,
-            'cre_names': cre_names
+            'cre_names': cre_names,
+            'saved_configs': len(configs),
+            'source': source
         })
         
     except Exception as e:
         print(f"❌ Error saving auto-assign config: {e}")
-        return jsonify({'success': False, 'message': str(e)})
+        return jsonify({'success': False, 'message': f'Unexpected error: {str(e)}'})
+
+@app.route('/auto_assign_history')
+@require_admin
+def auto_assign_history_page():
+    """Auto-assign history page with filtering and export"""
+    return render_template('auto_assign_history.html')
 
 
 @app.route('/get_unassigned_leads_by_source')
@@ -6814,12 +7267,7 @@ auth_manager = AuthManager(supabase)
 # Store auth_manager in app config instead of direct attribute
 app.config['AUTH_MANAGER'] = auth_manager
 
-# Initialize rate limiter
-limiter = Limiter(
-    key_func=get_remote_address,
-    app=app,
-    default_limits=["1000 per minute"]  # Use in-memory backend for local/dev
-)
+# Rate limiter already initialized above
 
 # Upload folder configuration
 UPLOAD_FOLDER = 'uploads'

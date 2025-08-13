@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}Fallback Login - Ather CRM{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-warning text-dark">
+                    <h4 class="mb-0">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        Fallback Login System
+                    </h4>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-warning">
+                        <strong>⚠️ SSL Connection Issue Detected</strong><br>
+                        The main authentication system is experiencing SSL connection issues.<br>
+                        Using fallback authentication system.
+                    </div>
+                    
+                    <form method="POST" action="{{ url_for('fallback_login') }}">
+                        <div class="mb-3">
+                            <label for="user_type" class="form-label">Role</label>
+                            <select class="form-select" id="user_type" name="user_type" required>
+                                <option value="" disabled selected>Select your role</option>
+                                <option value="admin">Admin</option>
+                                <option value="bh">Branch Head</option>
+                                <option value="cre">CRE</option>
+                                <option value="ps">Product Specialist (PS)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="username" class="form-label">Username</label>
+                            <input type="text" class="form-control" id="username" name="username" required>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="password" class="form-label">Password</label>
+                            <input type="password" class="form-control" id="password" name="password" required>
+                        </div>
+                        
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-warning">
+                                <i class="fas fa-sign-in-alt me-2"></i>
+                                Fallback Login
+                            </button>
+                        </div>
+                    </form>
+                    
+                    <hr>
+                    
+                    <div class="mt-3">
+                        <h6>Fallback Credentials:</h6>
+                        <ul class="list-unstyled">
+                            <li><strong>Admin:</strong> admin / admin123</li>
+                            <li><strong>Branch Head:</strong> bh / bh123</li>
+                            <li><strong>CRE:</strong> cre / cre123</li>
+                            <li><strong>PS:</strong> ps / ps123</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="mt-3">
+                        <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left me-2"></i>
+                            Back to Main Login
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

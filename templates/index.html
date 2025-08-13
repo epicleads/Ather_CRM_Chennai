@@ -60,6 +60,13 @@
                         Forgot your password? <a href="{{ url_for('password_reset_request') }}">Reset it here</a>
                     </small>
                 </div>
+                
+                <div class="mt-2">
+                    <small class="text-muted">
+                        <i class="fas fa-exclamation-triangle me-1"></i>
+                        SSL issues? <a href="{{ url_for('fallback_login') }}" class="text-warning">Use fallback login</a>
+                    </small>
+                </div>
             </div>
         </div>
     </div>
