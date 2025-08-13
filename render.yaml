@@ -3,8 +3,30 @@ services:
     name: ather-crm-chennai
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -w 2 --timeout 120 --bind 0.0.0.0:$PORT app:app
+    buildCommand: |
+      pip install -r requirements.txt
+      echo "✅ Dependencies installed successfully"
+      echo "🔍 Checking for eventlet: $(pip list | grep eventlet || echo 'No eventlet found')"
+      echo "🔍 Checking gunicorn version: $(gunicorn --version)"
+      echo "🚫 Ensuring no eventlet workers are configured"
+      echo "🔧 Current working directory: $(pwd)"
+      echo "📁 Files in current directory: $(ls -la)"
+      echo "🧪 Testing Gunicorn configuration..."
+      python test_gunicorn.py
+      echo "✅ Gunicorn configuration test completed"
+    startCommand: |
+      echo "🚀 Starting with sync workers ONLY..."
+      echo "🔧 Worker class: sync (NOT eventlet)"
+      echo "👥 Workers: 2"
+      echo "⏱️ Timeout: 120"
+      echo "🚫 Explicitly disabling eventlet workers"
+      echo "🔍 Environment variables:"
+      echo "   GUNICORN_CMD_ARGS: $GUNICORN_CMD_ARGS"
+      echo "   GUNICORN_WORKER_CLASS: $GUNICORN_WORKER_CLASS"
+      echo "   GUNICORN_WORKERS: $GUNICORN_WORKERS"
+      echo "   GUNICORN_TIMEOUT: $GUNICORN_TIMEOUT"
+      echo "🚫 FORCING sync workers - no eventlet allowed"
+      exec gunicorn --worker-class sync --workers 2 --timeout 120 --bind 0.0.0.0:$PORT --preload app:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
@@ -20,5 +42,15 @@ services:
         value: ""
       - key: SSL_CERT_FILE
         value: ""
+      - key: GUNICORN_CMD_ARGS
+        value: "--worker-class sync --workers 2 --timeout 120 --preload"
+      - key: GUNICORN_WORKER_CLASS
+        value: "sync"
+      - key: GUNICORN_WORKERS
+        value: "2"
+      - key: GUNICORN_TIMEOUT
+        value: "120"
+      - key: GUNICORN_BIND
+        value: "0.0.0.0:8000"
 
 
