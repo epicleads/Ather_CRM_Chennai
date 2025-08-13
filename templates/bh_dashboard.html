@@ -36,9 +36,11 @@
                         </h5>
                         <small class="text-light opacity-75" id="current-month-display">Current Month: Loading...</small>
                     </div>
-                    <button class="btn btn-light btn-sm" onclick="refreshData()" title="Refresh Data">
-                        <i class="fas fa-sync-alt me-1"></i>Refresh
-                    </button>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-light btn-sm" onclick="refreshData()" title="Refresh Data">
+                            <i class="fas fa-sync-alt me-1"></i>Refresh
+                        </button>
+                    </div>
                 </div>
                 <div class="card-body">
                     <div class="table-responsive">
@@ -50,11 +52,16 @@
                                     <th>Total Leads Assigned<br><small class="text-light opacity-75">(Current Month)</small></th>
                                     <th>F1<br><small class="text-light opacity-75">(Current Month)</small></th>
                                     <th>F2<br><small class="text-light opacity-75">(Current Month)</small></th>
-                                    <th>F3<br><small class="text-light opacity-75">(Current Month)</small></th>
-                                    <th>F4<br><small class="text-light opacity-75">(Current Month)</small></th>
-                                    <th>F5<br><small class="text-light opacity-75">(Current Month)</small></th>
-                                    <th>F6<br><small class="text-light opacity-75">(Current Month)</small></th>
-                                    <th>F7<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                    <th class="position-relative">
+                                        F3<br><small class="text-light opacity-75">(Current Month)</small>
+                                        <button class="btn btn-sm btn-outline-light toggle-f4f7-btn position-absolute" onclick="toggleF4F7Columns()" title="Toggle F4-F7 Columns" id="toggle-f4f7-btn" style="width: 20px; height: 20px; padding: 0; font-size: 10px; border-radius: 50%; right: -10px; top: 50%; transform: translateY(-50%); z-index: 10;">
+                                            <i class="fas fa-plus"></i>
+                                        </button>
+                                    </th>
+                                    <th class="f4-f7-columns">F4<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                    <th class="f4-f7-columns">F5<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                    <th class="f4-f7-columns">F6<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                    <th class="f4-f7-columns">F7<br><small class="text-light opacity-75">(Current Month)</small></th>
                                     <th>Lost (MTD)</th>
                                     <th>Won (MTD)</th>
                                 </tr>
@@ -167,6 +174,20 @@
         background-color: #e3f2fd !important;
         color: #1976d2;
     }
+    
+    /* F4-F7 columns toggle functionality */
+    .f4-f7-columns {
+        display: none;
+    }
+    
+    .f4-f7-columns.show {
+        display: table-cell;
+    }
+    
+    .toggle-f4f7-btn:hover {
+        transform: scale(1.1);
+        transition: transform 0.2s ease;
+    }
 </style>
 {% endblock %}
 
@@ -269,10 +290,10 @@ function displayPSPerformance(performanceData, branch) {
                 <td class="text-center"><span class="f-count ${ps.f1 > 0 ? 'positive' : 'zero'}">${ps.f1}</span></td>
                 <td class="text-center"><span class="f-count ${ps.f2 > 0 ? 'positive' : 'zero'}">${ps.f2}</span></td>
                 <td class="text-center"><span class="f-count ${ps.f3 > 0 ? 'positive' : 'zero'}">${ps.f3}</span></td>
-                <td class="text-center"><span class="f-count ${ps.f4 > 0 ? 'positive' : 'zero'}">${ps.f4}</span></td>
-                <td class="text-center"><span class="f-count ${ps.f5 > 0 ? 'positive' : 'zero'}">${ps.f5}</span></td>
-                <td class="text-center"><span class="f-count ${ps.f6 > 0 ? 'positive' : 'zero'}">${ps.f6}</span></td>
-                <td class="text-center"><span class="f-count ${ps.f7 > 0 ? 'positive' : 'zero'}">${ps.f7}</span></td>
+                <td class="text-center f4-f7-columns"><span class="f-count ${ps.f4 > 0 ? 'positive' : 'zero'}">${ps.f4}</span></td>
+                <td class="text-center f4-f7-columns"><span class="f-count ${ps.f5 > 0 ? 'positive' : 'zero'}">${ps.f5}</span></td>
+                <td class="text-center f4-f7-columns"><span class="f-count ${ps.f6 > 0 ? 'positive' : 'zero'}">${ps.f6}</span></td>
+                <td class="text-center f4-f7-columns"><span class="f-count ${ps.f7 > 0 ? 'positive' : 'zero'}">${ps.f7}</span></td>
                 <td class="text-center text-danger fw-bold">${ps.lost_mtd}</td>
                 <td class="text-center text-success fw-bold">${ps.won_mtd}</td>
             </tr>`;
@@ -286,15 +307,41 @@ function displayPSPerformance(performanceData, branch) {
         <td class="text-center"><span class="f-count positive">${totalF1}</span></td>
         <td class="text-center"><span class="f-count positive">${totalF2}</span></td>
         <td class="text-center"><span class="f-count positive">${totalF3}</span></td>
-        <td class="text-center"><span class="f-count positive">${totalF4}</span></td>
-        <td class="text-center"><span class="f-count positive">${totalF5}</span></td>
-        <td class="text-center"><span class="f-count positive">${totalF6}</span></td>
-        <td class="text-center"><span class="f-count positive">${totalF7}</span></td>
+        <td class="text-center f4-f7-columns"><span class="f-count positive">${totalF4}</span></td>
+        <td class="text-center f4-f7-columns"><span class="f-count positive">${totalF5}</span></td>
+        <td class="text-center f4-f7-columns"><span class="f-count positive">${totalF6}</span></td>
+        <td class="text-center f4-f7-columns"><span class="f-count positive">${totalF7}</span></td>
         <td class="text-center text-danger fw-bold">${totalLostMTD}</td>
         <td class="text-center text-success fw-bold">${totalWonMTD}</td>
     </tr>`;
     
     tbody.innerHTML = html;
+}
+
+function toggleF4F7Columns() {
+    const toggleBtn = document.getElementById('toggle-f4f7-btn');
+    const f4f7Columns = document.querySelectorAll('.f4-f7-columns');
+    const isShowing = toggleBtn.classList.contains('showing');
+    
+    if (isShowing) {
+        // Hide F4-F7 columns
+        f4f7Columns.forEach(col => col.classList.remove('show'));
+        toggleBtn.classList.remove('showing');
+        toggleBtn.innerHTML = '<i class="fas fa-plus"></i>';
+        toggleBtn.title = 'Show F4-F7 Columns';
+        toggleBtn.style.backgroundColor = 'transparent';
+        toggleBtn.style.borderColor = '#f8f9fa';
+        toggleBtn.style.color = '#f8f9fa';
+    } else {
+        // Show F4-F7 columns
+        f4f7Columns.forEach(col => col.classList.add('show'));
+        toggleBtn.classList.add('showing');
+        toggleBtn.innerHTML = '<i class="fas fa-minus"></i>';
+        toggleBtn.title = 'Hide F4-F7 Columns';
+        toggleBtn.style.backgroundColor = '#dc3545';
+        toggleBtn.style.borderColor = '#dc3545';
+        toggleBtn.style.color = 'white';
+    }
 }
 
 function refreshData() {
