@@ -1,0 +1,318 @@
+{% extends "base.html" %}
+
+{% block title %}Branch Head Dashboard - Ather CRM{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1 class="h3 mb-0">
+                        <i class="fas fa-user-tie text-primary me-2"></i>Branch Head Dashboard
+                    </h2>
+                    <p class="text-muted mb-0">Welcome, {{ session.get('bh_name', 'Branch Head') }} - {{ session.get('bh_branch', 'Branch') }}</p>
+                </div>
+                <div>
+                    <a href="{{ url_for('logout') }}" class="btn btn-outline-danger">
+                        <i class="fas fa-sign-out-alt me-2"></i>Logout
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+
+    <!-- PS Performance Table -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-table me-2"></i>PS Performance Overview - {{ session.get('bh_branch', 'Branch') }}
+                        </h5>
+                        <small class="text-light opacity-75" id="current-month-display">Current Month: Loading...</small>
+                    </div>
+                    <button class="btn btn-light btn-sm" onclick="refreshData()" title="Refresh Data">
+                        <i class="fas fa-sync-alt me-1"></i>Refresh
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover performance-table" id="ps-performance-table">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Branch</th>
+                                    <th>PS Name</th>
+                                    <th>Total Leads Assigned<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                    <th>F1<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                    <th>F2<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                    <th>F3<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                    <th>F4<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                    <th>F5<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                    <th>F6<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                    <th>F7<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                    <th>Lost (MTD)</th>
+                                    <th>Won (MTD)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ps-performance-tbody">
+                                <tr>
+                                    <td colspan="12" class="text-center">
+                                        <div class="spinner-border text-primary" role="status">
+                                            <span class="visually-hidden">Loading...</span>
+                                        </div>
+                                        <p class="mt-2">Loading PS performance data...</p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="card-footer bg-light">
+                        <small class="text-muted">
+                            <i class="fas fa-info-circle me-1"></i>
+                            <strong>Note:</strong> All data shown above (Total Leads Assigned, F1-F7) is filtered for the current month based on the <code>ps_assigned_at</code> column. Lost(MTD) and Won(MTD) columns will be implemented in future updates.
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block head %}
+<style>
+    .performance-table th {
+        background-color: #343a40 !important;
+        color: white !important;
+        font-weight: 600;
+        text-align: center;
+        vertical-align: middle;
+        border: none;
+        padding: 12px 8px;
+        line-height: 1.2;
+    }
+    
+    .performance-table th small {
+        font-size: 0.75em;
+        font-weight: 400;
+        opacity: 0.8;
+        display: block;
+        margin-top: 2px;
+    }
+    
+    .performance-table td {
+        vertical-align: middle;
+        border: 1px solid #dee2e6;
+    }
+    
+    .performance-table tbody tr:hover {
+        background-color: #f8f9fa;
+        transform: scale(1.01);
+        transition: all 0.2s ease;
+    }
+    
+
+    
+    .f-count {
+        font-weight: 600;
+        min-width: 40px;
+        display: inline-block;
+        text-align: center;
+        padding: 4px 8px;
+        border-radius: 6px;
+        background-color: #e9ecef;
+        color: #495057;
+    }
+    
+    .f-count.positive {
+        background-color: #d4edda;
+        color: #155724;
+    }
+    
+    .f-count.zero {
+        background-color: #f8d7da;
+        color: #721c24;
+    }
+    
+    .branch-cell {
+        background-color: #e3f2fd !important;
+        color: #1976d2 !important;
+        font-weight: 700;
+        text-align: center;
+    }
+    
+    .ps-name-cell {
+        font-weight: 600;
+        color: #495057;
+    }
+    
+    .total-leads-cell {
+        font-weight: 700;
+        color: #28a745;
+        background-color: #f8fff9;
+    }
+    
+    .summary-row {
+        background-color: #e3f2fd !important;
+        font-weight: 700;
+        border-top: 2px solid #1976d2;
+    }
+    
+    .summary-row td {
+        background-color: #e3f2fd !important;
+        color: #1976d2;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Load PS performance data
+    loadPSPerformance();
+});
+
+
+
+function loadPSPerformance() {
+    // Show loading state
+    document.getElementById('ps-performance-tbody').innerHTML = `
+        <tr>
+            <td colspan="12" class="text-center">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-2">Loading PS performance data...</p>
+            </td>
+        </tr>
+    `;
+    
+    fetch('/api/bh_ps_performance')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Update current month display
+                if (data.current_month) {
+                    document.getElementById('current-month-display').textContent = `Current Month: ${data.current_month}`;
+                }
+                displayPSPerformance(data.performance_data, data.branch);
+            } else {
+                console.error('Error loading PS performance:', data.message);
+                document.getElementById('ps-performance-tbody').innerHTML = 
+                    '<tr><td colspan="12" class="text-center text-danger">Error loading data: ' + data.message + '</td></tr>';
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching PS performance:', error);
+            document.getElementById('ps-performance-tbody').innerHTML = 
+                '<tr><td colspan="12" class="text-center text-danger">Error loading data. Please try again.</td></tr>';
+        });
+}
+
+function displayPSPerformance(performanceData, branch) {
+    const tbody = document.getElementById('ps-performance-tbody');
+    
+    if (!performanceData || performanceData.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="12" class="text-center text-muted py-4">
+                    <i class="fas fa-info-circle fa-2x mb-3 text-muted"></i>
+                    <p class="mb-0">No PS users found in this branch.</p>
+                    <small class="text-muted">Please contact your administrator to add PS users to this branch.</small>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    let html = '';
+    let processedPS = new Set();
+    let totalLeads = 0;
+    let totalF1 = 0;
+    let totalF2 = 0;
+    let totalF3 = 0;
+    let totalF4 = 0;
+    let totalF5 = 0;
+    let totalF6 = 0;
+    let totalF7 = 0;
+    
+    performanceData.forEach((ps, index) => {
+        if (!processedPS.has(ps.ps_name)) {
+            processedPS.add(ps.ps_name);
+            
+            // Count how many rows this PS will have (should be 1 in our case, but keeping logic for future)
+            const psRows = 1;
+            
+            // Add to totals
+            totalLeads += ps.total_leads_assigned;
+            totalF1 += ps.f1;
+            totalF2 += ps.f2;
+            totalF3 += ps.f3;
+            totalF4 += ps.f4;
+            totalF5 += ps.f5;
+            totalF6 += ps.f6;
+            totalF7 += ps.f7;
+            
+            html += `<tr>
+                <td rowspan="${psRows}" class="align-middle branch-cell">${branch}</td>
+                <td class="ps-name-cell">${ps.ps_name}</td>
+                <td class="text-center total-leads-cell">${ps.total_leads_assigned}</td>
+                <td class="text-center"><span class="f-count ${ps.f1 > 0 ? 'positive' : 'zero'}">${ps.f1}</span></td>
+                <td class="text-center"><span class="f-count ${ps.f2 > 0 ? 'positive' : 'zero'}">${ps.f2}</span></td>
+                <td class="text-center"><span class="f-count ${ps.f3 > 0 ? 'positive' : 'zero'}">${ps.f3}</span></td>
+                <td class="text-center"><span class="f-count ${ps.f4 > 0 ? 'positive' : 'zero'}">${ps.f4}</span></td>
+                <td class="text-center"><span class="f-count ${ps.f5 > 0 ? 'positive' : 'zero'}">${ps.f5}</span></td>
+                <td class="text-center"><span class="f-count ${ps.f6 > 0 ? 'positive' : 'zero'}">${ps.f6}</span></td>
+                <td class="text-center"><span class="f-count ${ps.f7 > 0 ? 'positive' : 'zero'}">${ps.f7}</span></td>
+                <td class="text-center text-danger fw-bold">${ps.lost_mtd}</td>
+                <td class="text-center text-success fw-bold">${ps.won_mtd}</td>
+            </tr>`;
+        }
+    });
+    
+    // Add summary row
+    html += `<tr class="table-info fw-bold">
+        <td colspan="2" class="text-center">TOTAL (${branch})</td>
+        <td class="text-center total-leads-cell">${totalLeads}</td>
+        <td class="text-center"><span class="f-count positive">${totalF1}</span></td>
+        <td class="text-center"><span class="f-count positive">${totalF2}</span></td>
+        <td class="text-center"><span class="f-count positive">${totalF3}</span></td>
+        <td class="text-center"><span class="f-count positive">${totalF4}</span></td>
+        <td class="text-center"><span class="f-count positive">${totalF5}</span></td>
+        <td class="text-center"><span class="f-count positive">${totalF6}</span></td>
+        <td class="text-center"><span class="f-count positive">${totalF7}</span></td>
+        <td class="text-center text-danger fw-bold">-</td>
+        <td class="text-center text-success fw-bold">-</td>
+    </tr>`;
+    
+    tbody.innerHTML = html;
+}
+
+function refreshData() {
+    // Show loading state
+    const refreshBtn = document.querySelector('button[onclick="refreshData()"]');
+    const originalText = refreshBtn.innerHTML;
+    refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Refreshing...';
+    refreshBtn.disabled = true;
+    
+    // Refresh PS performance data
+    loadPSPerformance().finally(() => {
+        // Restore button state
+        setTimeout(() => {
+            refreshBtn.innerHTML = originalText;
+            refreshBtn.disabled = false;
+        }, 1000);
+    });
+}
+
+// Refresh data every 5 minutes
+setInterval(() => {
+    loadPSPerformance();
+}, 5 * 60 * 1000);
+</script>
+{% endblock %}

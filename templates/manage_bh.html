@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Branch Heads - Ather CRM{% endblock %}
+
+{% block content %}
+<!-- Version: 1.0 - Actual functionality implemented -->
+<!-- Last updated: 2024-01-XX - All demo messages removed, actual functionality implemented -->
+<div class="row mb-4">
+    <div class="col-12 d-flex justify-content-between align-items-center">
+        <div>
+            <h2 class="mb-0" style="color: var(--airbnb-gray-700); font-weight: 700;">
+                <i class="fas fa-user-tie" style="color: var(--airbnb-blue);"></i> Manage Branch Head Users
+            </h2>
+            <p class="text-muted">View and manage Branch Head users across all branches</p>
+        </div>
+        <div>
+            <a href="{{ url_for('admin_dashboard') }}" class="btn btn-secondary me-2">
+                <i class="fas fa-tachometer-alt"></i> Back to Dashboard
+            </a>
+            <a href="{{ url_for('add_bh') }}" class="btn btn-success">
+                <i class="fas fa-plus"></i> Add New Branch Head
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card shadow">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">
+                    <i class="fas fa-users me-2"></i>Branch Head Users
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if bh_users %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>ID</th>
+                                <th>Name</th>
+                                <th>Username</th>
+                                <th>Email</th>
+                                <th>Phone</th>
+                                <th>Branch</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for bh in bh_users %}
+                            <tr>
+                                <td>{{ bh.id }}</td>
+                                <td>
+                                    <strong>{{ bh.name }}</strong>
+                                </td>
+                                <td>
+                                    <code>{{ bh.username }}</code>
+                                </td>
+                                <td>
+                                    <a href="mailto:{{ bh.email }}" class="text-decoration-none">
+                                        {{ bh.email }}
+                                    </a>
+                                </td>
+                                <td>
+                                    <a href="tel:{{ bh.phone }}" class="text-decoration-none">
+                                        {{ bh.phone }}
+                                    </a>
+                                </td>
+                                <td>
+                                    <span class="badge bg-info">{{ bh.branch }}</span>
+                                </td>
+                                <td>
+                                    {% if bh.is_active %}
+                                    <span class="badge bg-success">Active</span>
+                                    {% else %}
+                                    <span class="badge bg-danger">Inactive</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="btn-group" role="group">
+                                        <button type="button" class="btn btn-sm btn-outline-primary" 
+                                                onclick="editBh({{ bh.id }}, '{{ bh.name }}', '{{ bh.username }}', '{{ bh.email }}', '{{ bh.phone }}', '{{ bh.branch }}')">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-outline-warning" 
+                                                onclick="toggleBhStatus({{ bh.id }}, {{ bh.is_active|lower }})">
+                                            {% if bh.is_active %}
+                                            <i class="fas fa-ban"></i>
+                                            {% else %}
+                                            <i class="fas fa-check"></i>
+                                            {% endif %}
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-outline-danger" 
+                                                onclick="deleteBh({{ bh.id }}, '{{ bh.name }}')">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5">
+                    <i class="fas fa-users fa-3x text-muted mb-3"></i>
+                    <h5 class="text-muted">No Branch Head users found</h5>
+                    <p class="text-muted">Click "Add New Branch Head" to create the first one.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Branch Head Modal -->
+<div class="modal fade" id="editBhModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title">
+                    <i class="fas fa-edit me-2"></i>Edit Branch Head
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editBhForm">
+                    <input type="hidden" id="editBhId">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="editBhName" class="form-label">Full Name</label>
+                            <input type="text" class="form-control" id="editBhName" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="editBhUsername" class="form-label">Username</label>
+                            <input type="text" class="form-control" id="editBhUsername" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="editBhEmail" class="form-label">Email</label>
+                            <input type="email" class="form-control" id="editBhEmail" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="editBhPhone" class="form-label">Phone</label>
+                            <input type="tel" class="form-control" id="editBhPhone" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="editBhBranch" class="form-label">Branch</label>
+                            <select class="form-select" id="editBhBranch" required>
+                                <option value="PORUR">PORUR</option>
+                                <option value="NUNGAMBAKKAM">NUNGAMBAKKAM</option>
+                                <option value="TIRUVOTTIYUR">TIRUVOTTIYUR</option>
+                            </select>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveBhEdit()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteBhModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">
+                    <i class="fas fa-exclamation-triangle me-2"></i>Confirm Delete
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete the Branch Head user <strong id="deleteBhName"></strong>?</p>
+                <p class="text-danger"><small>This action cannot be undone.</small></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" onclick="confirmDeleteBh()">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let bhToDelete = null;
+
+// Debug: Log when page loads
+console.log('Manage Branch Heads page loaded - version with actual functionality');
+
+function editBh(id, name, username, email, phone, branch) {
+    document.getElementById('editBhId').value = id;
+    document.getElementById('editBhName').value = name;
+    document.getElementById('editBhUsername').value = username;
+    document.getElementById('editBhEmail').value = email;
+    document.getElementById('editBhPhone').value = phone;
+    document.getElementById('editBhBranch').value = branch;
+    
+    new bootstrap.Modal(document.getElementById('editBhModal')).show();
+}
+
+function saveBhEdit() {
+    const id = document.getElementById('editBhId').value;
+    const name = document.getElementById('editBhName').value;
+    const username = document.getElementById('editBhUsername').value;
+    const email = document.getElementById('editBhEmail').value;
+    const phone = document.getElementById('editBhPhone').value;
+    const branch = document.getElementById('editBhBranch').value;
+    
+    console.log('Saving Branch Head edit:', { id, name, username, email, phone, branch });
+    
+    // Make AJAX call to update the user
+    fetch(`/edit_bh/${id}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            name: name,
+            username: username,
+            email: email,
+            phone: phone,
+            branch: branch
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        console.log('Edit response:', data);
+        if (data.success) {
+            // Close modal and reload page
+            bootstrap.Modal.getInstance(document.getElementById('editBhModal')).hide();
+            location.reload();
+        } else {
+            alert('Error updating Branch Head: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error during edit:', error);
+        alert('Error updating Branch Head. Please try again.');
+    });
+}
+
+function toggleBhStatus(id, currentStatus) {
+    const newStatus = !currentStatus;
+    const action = newStatus ? 'activate' : 'deactivate';
+    
+    console.log('Toggling Branch Head status:', { id, currentStatus, newStatus, action });
+    
+    if (confirm(`Are you sure you want to ${action} this Branch Head user?`)) {
+        // Make AJAX call to update the status
+        fetch(`/toggle_bh_status/${id}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                active: newStatus
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log('Toggle status response:', data);
+            if (data.success) {
+                // Reload the page to show updated status
+                location.reload();
+            } else {
+                alert('Error updating status: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error during status toggle:', error);
+            alert('Error updating status. Please try again.');
+        });
+    }
+}
+
+function deleteBh(id, name) {
+    bhToDelete = { id: id, name: name };
+    document.getElementById('deleteBhName').textContent = name;
+    new bootstrap.Modal(document.getElementById('deleteBhModal')).show();
+}
+
+function confirmDeleteBh() {
+    if (bhToDelete) {
+        console.log('Attempting to delete Branch Head:', bhToDelete);
+        
+        // Make AJAX call to delete the user
+        fetch(`/delete_bh/${bhToDelete.id}`, {
+            method: 'DELETE'
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log('Delete response:', data);
+            if (data.success) {
+                console.log('Branch Head deleted successfully');
+                // Close modal and reload page
+                bootstrap.Modal.getInstance(document.getElementById('deleteBhModal')).hide();
+                location.reload();
+            } else {
+                console.error('Delete failed:', data.message);
+                alert('Error deleting Branch Head: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error during delete:', error);
+            alert('Error deleting Branch Head. Please try again.');
+        });
+    } else {
+        console.error('No Branch Head selected for deletion');
+    }
+}
+</script>
+{% endblock %}

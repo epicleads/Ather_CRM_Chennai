@@ -19,6 +19,3 @@ flask-socketio
 # For production use, eventlet is recommended for async workers
 # (if using gevent, you can add gevent instead)
 eventlet
-# Auto-assign system dependencies
-pytz==2023.3
-requests==2.31.0
