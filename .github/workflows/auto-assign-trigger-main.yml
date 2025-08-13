@@ -7,7 +7,7 @@ on:
   pull_request:
     branches: [ main ]
   schedule:
-    - cron: '0 */6 * * *'  # Every 6 hours
+    - cron: '* * * * *'  # Every minute
 
 jobs:
   auto-assign-leads:
@@ -34,21 +34,21 @@ jobs:
       run: |
         echo "Environment variables set for Supabase connection"
         
-                      - name: Run Auto-Assign System
-                    env:
-                      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-                      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-                    run: |
-                      echo "🤖 Starting Enhanced Auto-Assign System..."
-                      python auto_assign_system.py worker
+    - name: Run Auto-Assign System
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      run: |
+        echo "🤖 Starting Enhanced Auto-Assign System..."
+        python auto_assign_system.py worker
                       
-                  - name: Run Auto-Assign Monitor
-                    env:
-                      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-                      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-                    run: |
-                      echo "🔍 Starting Auto-Assign Monitor Service..."
-                      python auto_assign_monitor.py
+    - name: Run Auto-Assign Monitor
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      run: |
+        echo "🔍 Starting Auto-Assign Monitor Service..."
+        python auto_assign_monitor.py
         
     - name: Log results
       if: always()
