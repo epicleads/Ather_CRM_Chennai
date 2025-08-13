@@ -243,22 +243,7 @@
         gap: 8px;
     }
     
-    .auto-assign-toggle {
-        font-size: 0.8rem;
-        padding: 4px 8px;
-        border-radius: 6px;
-        transition: all 0.2s ease;
-    }
-    
-    .auto-assign-toggle.active {
-        background: var(--accent-green);
-        color: white;
-        border-color: var(--accent-green);
-    }
-    
-    .auto-assign-toggle:hover {
-        transform: scale(1.05);
-    }
+
     
     .auto-assign-config {
         background: var(--surface);
@@ -617,8 +602,8 @@
   <!-- Summary Box -->
   <div class="summary-box">
     <div class="summary-item">Total Unassigned Leads: <span id="totalUnassigned">{{ actual_unassigned_count }}</span></div>
-    {% for source, leads in leads_by_source.items() %}
-      <div class="summary-item">{{ source }}: <span id="unassigned_{{ source|replace(' ', '_') }}">{{ source_unassigned_counts[source] }}</span></div>
+    {% for source, count in source_unassigned_counts.items() %}
+      <div class="summary-item">{{ source }}: <span id="unassigned_{{ source|replace(' ', '_') }}">{{ count }}</span></div>
     {% endfor %}
   </div>
 
@@ -639,16 +624,13 @@
     <!-- Scrollable Container -->
     <div class="lead-buckets-scroll-container" id="leadBucketsContainer">
       <div class="row">
-        {% for source, leads in leads_by_source.items() %}
+        {% for source, count in source_unassigned_counts.items() %}
         <div class="col-md-4">
-          <div class="lead-box" data-source="{{ source }}" data-total="{{ leads|length }}">
+          <div class="lead-box" data-source="{{ source }}" data-total="{{ count }}">
             <div class="source-header">
               <span>{{ source }} (<span class="remaining-leads" data-source="{{ source|replace(' ', '_') }}">{{ source_unassigned_counts[source] }}</span>)</span>
               <div class="source-controls">
               <span class="cre-count-indicator" data-source="{{ source|replace(' ', '_') }}" title="Number of CREs assigned">0</span>
-                <button class="btn btn-sm btn-outline-success auto-assign-toggle" data-source="{{ source }}" title="Toggle Auto-Assign">
-                  <i class="fas fa-magic"></i> Auto-Assign
-                </button>
               </div>
             </div>
             <div class="auto-assign-status" id="auto_assign_status_{{ source|replace(' ', '_') }}">
@@ -1230,22 +1212,19 @@
             
             console.log('All sources with auto-assign configs:', Object.keys(configsBySource));
             
-            // Update toggle buttons and config panels for all sources
+            // Update config panels for all sources
             Object.keys(configsBySource).forEach(source => {
               const configs = configsBySource[source];
-              const toggleBtn = document.querySelector(`.auto-assign-toggle[data-source="${source}"]`);
               const configPanel = document.getElementById(`auto_assign_config_${source.replace(/ /g, '_')}`);
               const creList = document.getElementById(`auto_assign_cre_list_${source.replace(/ /g, '_')}`);
               const statusDiv = document.getElementById(`auto_assign_status_${source.replace(/ /g, '_')}`);
               
               console.log(`Processing source: ${source}, configs:`, configs);
-              console.log(`Toggle button found:`, toggleBtn);
               console.log(`Config panel found:`, configPanel);
               console.log(`Status div found:`, statusDiv);
               
               if (configs.length > 0) {
                 // Show active state
-                toggleBtn.classList.add('active');
                 configPanel.classList.add('show');
                 
                 // Show success indicator
@@ -1290,7 +1269,6 @@
                 });
               } else {
                 // Show inactive state but keep config panel visible
-                toggleBtn.classList.remove('active');
                 configPanel.classList.add('show'); // Always show config panel
                 statusDiv.classList.remove('show', 'active');
                 
@@ -1311,35 +1289,7 @@
         });
     }
     
-    // Auto-assign toggle button click
-    document.addEventListener('click', function(e) {
-      if (e.target.closest('.auto-assign-toggle')) {
-        const toggleBtn = e.target.closest('.auto-assign-toggle');
-        const source = toggleBtn.dataset.source;
-        const configPanel = document.getElementById(`auto_assign_config_${source.replace(/ /g, '_')}`);
-        
-        if (toggleBtn.classList.contains('active')) {
-          // Deactivate auto-assign
-          toggleBtn.classList.remove('active');
-          configPanel.classList.add('show'); // Keep config panel visible
-          // Remove all configs for this source
-          autoAssignConfigs = autoAssignConfigs.filter(config => config.source !== source);
-          
-          // Refresh page after deactivating auto-assign
-          setTimeout(() => {
-            location.reload();
-          }, 500);
-        } else {
-          // Activate auto-assign
-          toggleBtn.classList.add('active');
-          configPanel.classList.add('show');
-          // Refresh page after activating auto-assign
-          setTimeout(() => {
-            location.reload();
-          }, 500);
-        }
-      }
-    });
+
     
     // Add CRE to auto-assign configuration
     document.addEventListener('click', function(e) {

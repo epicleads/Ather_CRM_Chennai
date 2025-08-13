@@ -17,7 +17,7 @@ import io
 from dotenv import load_dotenv
 from collections import defaultdict, Counter
 import json
-from auth import AuthManager, require_auth, require_admin, require_cre, require_ps, require_rec
+from auth import AuthManager, require_auth, require_admin, require_cre, require_ps, require_rec, require_bh
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from security_verification import run_security_verification
@@ -53,6 +53,13 @@ load_dotenv()
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Initialize rate limiter early so decorators can use it
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=["1000 per minute"]
+)
 
 # =============================================================================
 # AUTO-ASSIGN SYSTEM INTEGRATION
@@ -220,96 +227,13 @@ def auto_assign_new_leads_for_source(source):
         print(f"❌ Error in auto_assign_new_leads_for_source: {e}")
         return {'success': False, 'message': str(e), 'assigned_count': 0}
 
-@app.route('/check_and_assign_new_leads', methods=['POST'])
-def check_and_assign_new_leads():
-    """
-    Check all configured sources and assign new leads automatically.
-    This function runs in the background to continuously monitor for new leads.
-    """
-    try:
-        print("🔍 Checking for new leads to auto-assign...")
-        
-        # Get all auto-assign configurations
-        config_result = supabase.table('auto_assign_config').select('*').execute()
-        configs = config_result.data or []
-        
-        if not configs:
-            print("ℹ️ No auto-assign configurations found")
-            return {'success': False, 'message': 'No auto-assign configurations found', 'total_assigned': 0}
-        
-        # Group configs by source
-        source_configs = {}
-        for config in configs:
-            source = config['source']
-            if source not in source_configs:
-                source_configs[source] = []
-            source_configs[source].append(config)
-        
-        # Process each source
-        total_assigned = 0
-        for source in source_configs.keys():
-            result = auto_assign_new_leads_for_source(source)
-            if result and result.get('success'):
-                total_assigned += result.get('assigned_count', 0)
-        
-        if total_assigned > 0:
-            print(f"🎉 🟢 GLOBAL SUCCESS: Auto-assign completed across all sources")
-            print(f"   📊 Total leads assigned: {total_assigned}")
-            print(f"   🔧 Sources processed: {list(source_configs.keys())}")
-            print(f"   ⏰ Completion Time: {get_ist_timestamp()}")
-            print("   " + "="*80)
-        else:
-            print(f"ℹ️ INFO: No new leads found to assign across all sources")
-            print(f"   🔧 Sources checked: {list(source_configs.keys())}")
-            print(f"   🔍 Reason: No unassigned leads found in any configured source")
-            print("   " + "="*80)
-        
-        return jsonify({
-            'success': True,
-            'message': f'Auto-assign completed: {total_assigned} total leads assigned',
-            'total_assigned': total_assigned
-        })
-        
-    except Exception as e:
-        print(f"❌ Error in check_and_assign_new_leads: {e}")
-        return jsonify({'success': False, 'message': str(e), 'total_assigned': 0})
-
 # =============================================================================
 
 # Start background auto-assign thread
 import threading
 import time
 
-def auto_assign_background_worker():
-    """Background worker that continuously checks for new leads to auto-assign"""
-    while True:
-        try:
-            # Check for new leads every 2 minutes
-            time.sleep(120)  # 2 minutes
-            print("🔄 Background auto-assign check running...")
-            print(f"   ⏰ Check Time: {get_ist_timestamp()}")
-            print("   " + "="*80)
-            
-            # Run within Flask application context
-            with app.app_context():
-                result = check_and_assign_new_leads()
-                if result and result.get('success'):
-                    print(f"   ✅ Background check completed successfully")
-                else:
-                    print(f"   ⚠️ Background check completed with issues")
-                
-        except Exception as e:
-            print(f"❌ 🔴 CRITICAL ERROR in background auto-assign worker: {e}")
-            print(f"   ⏰ Error Time: {get_ist_timestamp()}")
-            print(f"   🚨 Error Type: {type(e).__name__}")
-            print(f"   🔍 Error Details: {str(e)}")
-            print("   " + "="*80)
-            time.sleep(60)  # Wait 1 minute on error before retrying
 
-# Start the background worker thread
-auto_assign_thread = threading.Thread(target=auto_assign_background_worker, daemon=True)
-auto_assign_thread.start()
-print("🚀 Background auto-assign worker started (checking every 2 minutes)")
 
 # Reduce Flask log noise
 import logging
@@ -1394,43 +1318,7 @@ def toggle_ps_status(ps_id):
         return jsonify({'success': False, 'message': str(e)})
 
 
-@app.route('/manage_leads')
-@require_admin
-def manage_leads():
-    try:
-        # Get all leads for counting
-        all_leads = safe_get_data('lead_master')
-        
-        # Count by lead category
-        not_interested_count = len([l for l in all_leads if l.get('lead_category') == 'Not Interested'])
 
-        # Count test drive leads from alltest_drive table
-        test_drive_leads = safe_get_data('alltest_drive')
-        test_drive_yes_count = len([l for l in test_drive_leads if l.get('test_drive_done') == 'Yes'])
-        test_drive_no_count = len([l for l in test_drive_leads if l.get('test_drive_done') == 'No'])
-        test_drive_total_count = len(test_drive_leads)
-
-        # Log export dashboard access
-        auth_manager.log_audit_event(
-            user_id=session.get('user_id'),
-            user_type=session.get('user_type'),
-            action='EXPORT_DASHBOARD_ACCESS',
-            resource='export_leads'
-        )
-        
-        return render_template('manage_leads.html', 
-                             not_interested_count=not_interested_count,
-                             test_drive_yes_count=test_drive_yes_count,
-                             test_drive_no_count=test_drive_no_count,
-                             test_drive_total_count=test_drive_total_count)
-                             
-    except Exception as e:
-        flash(f'Error loading leads data: {str(e)}', 'error')
-        return render_template('manage_leads.html', 
-                             not_interested_count=0,
-                             test_drive_yes_count=0,
-                             test_drive_no_count=0,
-                             test_drive_total_count=0)
 
 # =============================================================================
 # AUTO-ASSIGN SYSTEM INTEGRATION
@@ -1642,39 +1530,63 @@ def check_and_assign_new_leads():
             print(f"   🔍 Reason: No unassigned leads found in any configured source")
             print("   " + "="*80)
         
-        return jsonify({
+        return {
             'success': True,
             'message': f'Auto-assign completed: {total_assigned} total leads assigned',
             'total_assigned': total_assigned
-        })
+        }
         
     except Exception as e:
         print(f"❌ Error in check_and_assign_new_leads: {e}")
-        return jsonify({'success': False, 'message': str(e), 'total_assigned': 0})
+        return {'success': False, 'message': str(e), 'total_assigned': 0}
 
 # =============================================================================
 
-# Start background auto-assign thread
-import threading
-import time
-
 def auto_assign_background_worker():
     """Background worker that continuously checks for new leads to auto-assign"""
+    print("🚀 Auto-assign background worker started in separate thread")
+    
+    # Immediate auto-assign when server starts
+    print("🚀 Starting immediate auto-assign check...")
+    try:
+        with app.app_context():
+            result = check_and_assign_new_leads()
+            if result and result.get('success'):
+                print(f"   ✅ Immediate auto-assign completed successfully")
+                if result.get('total_assigned', 0) > 0:
+                    print(f"   📊 {result.get('total_assigned')} leads assigned immediately")
+                else:
+                    print(f"   ℹ️ No new leads found for immediate assignment")
+            else:
+                print(f"   ⚠️ Immediate auto-assign completed with issues")
+    except Exception as e:
+        print(f"❌ Error in immediate auto-assign: {e}")
+    
+    print("   " + "="*80)
+    
+    # Continuous background auto-assign every 2 minutes
     while True:
         try:
-            # Check for new leads every 2 minutes
-            time.sleep(120)  # 2 minutes
+            # Check for new leads every 5 minutes (less aggressive to prevent blocking)
+            time.sleep(300)  # 5 minutes
             print("🔄 Background auto-assign check running...")
             print(f"   ⏰ Check Time: {get_ist_timestamp()}")
             print("   " + "="*80)
             
-            # Run within Flask application context
-            with app.app_context():
-                result = check_and_assign_new_leads()
-                if result and result.get('success'):
-                    print(f"   ✅ Background check completed successfully")
-                else:
-                    print(f"   ⚠️ Background check completed with issues")
+            # Run within Flask application context with timeout protection
+            try:
+                with app.app_context():
+                    # Add a small delay to prevent blocking
+                    time.sleep(0.1)
+                    result = check_and_assign_new_leads()
+                    if result and result.get('success'):
+                        print(f"   ✅ Background check completed successfully")
+                        if result.get('total_assigned', 0) > 0:
+                            print(f"   📊 {result.get('total_assigned')} leads assigned")
+                    else:
+                        print(f"   ⚠️ Background check completed with issues")
+            except Exception as context_error:
+                print(f"❌ Error in Flask context: {context_error}")
                 
         except Exception as e:
             print(f"❌ 🔴 CRITICAL ERROR in background auto-assign worker: {e}")
@@ -1684,67 +1596,119 @@ def auto_assign_background_worker():
             print("   " + "="*80)
             time.sleep(60)  # Wait 1 minute on error before retrying
 
-# Start the background worker thread
-auto_assign_thread = threading.Thread(target=auto_assign_background_worker, daemon=True)
-auto_assign_thread.start()
-print("🚀 Background auto-assign worker started (checking every 2 minutes)")
-
-# Reduce Flask log noise
-import logging
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.WARNING)
-
-# Add custom Jinja2 filters
-# Note: Using Flask's built-in tojson filter instead of custom one
-
-# Utility functions
-def get_ist_timestamp():
-    """Get current timestamp in Indian Standard Time with explicit timezone"""
-    ist_time = datetime.now(pytz.timezone('Asia/Kolkata'))
-    # Format with explicit timezone offset
-    return ist_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] + '+05:30'
-
-def normalize_call_dates(update_data: dict) -> dict:
-    """Ensure all *_call_date fields are stored as full IST timestamps.
-    If any call date fields are present with any value, overwrite with current IST timestamp.
-    """
+def start_auto_assign_system():
+    """Start the auto-assign system in a completely separate thread"""
     try:
-        call_keys = [
-            'first_call_date', 'second_call_date', 'third_call_date',
-            'fourth_call_date', 'fifth_call_date', 'sixth_call_date', 'seventh_call_date'
-        ]
-        for key in call_keys:
-            if key in update_data and update_data[key] is not None:
-                # Always overwrite with current timestamp, regardless of what was there
-                print(f"DEBUG: Normalizing {key} from '{update_data[key]}' to '{get_ist_timestamp()}'")
-                update_data[key] = get_ist_timestamp()
+        # Create a non-daemon thread for better reliability
+        auto_assign_thread = threading.Thread(
+            target=auto_assign_background_worker, 
+            name="AutoAssignWorker",
+            daemon=False  # Changed to False for better reliability
+        )
+        auto_assign_thread.start()
+        
+        print("🚀 Auto-assign system initialized and starting immediately!")
+        print("   📋 Will check for new leads every 5 minutes (less aggressive)")
+        print("   ⚡ First auto-assign check starting now...")
+        print("   🔧 Thread ID:", auto_assign_thread.ident)
+        print("   🧵 Thread Name:", auto_assign_thread.name)
+        print("   🚀 Thread running independently - main app remains responsive!")
+        
+        return auto_assign_thread
     except Exception as e:
-        # Be resilient; on any issue, leave data as-is
-        print(f"DEBUG: Error in normalize_call_dates: {e}")
-        pass
-    return update_data
+        print(f"❌ Failed to start auto-assign system: {e}")
+        return None
 
-def is_valid_date(date_string):
-    """Validate date string format (YYYY-MM-DD)"""
+# Start the auto-assign system
+auto_assign_thread = start_auto_assign_system()
+
+# Thread monitoring and management
+def monitor_threads():
+    """Monitor thread status and restart if needed"""
+    import threading
+    active_threads = threading.active_count()
+    print(f"🔍 Active threads: {active_threads}")
+    
+    # Check if auto-assign thread is still alive
+    if auto_assign_thread and not auto_assign_thread.is_alive():
+        print("⚠️ Auto-assign thread died, restarting...")
+        # Note: We can't modify global variable here due to scope
+        # This function is for monitoring only
+        print("⚠️ Auto-assign thread needs restart - use /debug/restart_auto_assign endpoint")
+
+# Add thread monitoring to Flask app
+@app.before_request
+def check_thread_health():
+    """Check thread health before each request"""
+    if auto_assign_thread and not auto_assign_thread.is_alive():
+        print("⚠️ Auto-assign thread health check failed - needs restart")
+        # Note: We can't restart here due to request context
+        # Use /debug/restart_auto_assign endpoint to restart
+
+# Debug routes for thread management
+@app.route('/debug/threads')
+@require_admin
+def debug_threads():
+    """Debug endpoint to check thread status"""
+    import threading
+    active_threads = threading.active_count()
+    thread_info = {
+        'active_threads': active_threads,
+        'auto_assign_thread_alive': auto_assign_thread.is_alive() if auto_assign_thread else False,
+        'auto_assign_thread_id': auto_assign_thread.ident if auto_assign_thread else None,
+        'auto_assign_thread_name': auto_assign_thread.name if auto_assign_thread else None
+    }
+    return jsonify(thread_info)
+
+@app.route('/debug/restart_auto_assign', methods=['POST'])
+@require_admin
+def restart_auto_assign():
+    """Manually restart auto-assign system"""
+    global auto_assign_thread
+    if auto_assign_thread and auto_assign_thread.is_alive():
+        print("🔄 Manually restarting auto-assign system...")
+        # Note: We can't directly stop a running thread, but we can start a new one
+        # The old one will eventually complete its current cycle
+    
+    auto_assign_thread = start_auto_assign_system()
+    return jsonify({'success': True, 'message': 'Auto-assign system restarted'})
+
+@app.route('/debug/trigger_auto_assign', methods=['POST'])
+@require_admin
+def trigger_auto_assign():
+    """Manually trigger immediate auto-assign"""
     try:
-        datetime.strptime(date_string, '%Y-%m-%d')
-        return True
-    except ValueError:
-        return False
+        with app.app_context():
+            result = check_and_assign_new_leads()
+            if result and result.get('success'):
+                return jsonify({
+                    'success': True, 
+                    'message': f'Auto-assign completed: {result.get("total_assigned", 0)} leads assigned',
+                    'total_assigned': result.get('total_assigned', 0)
+                })
+            else:
+                return jsonify({
+                    'success': False, 
+                    'message': 'Auto-assign completed with issues',
+                    'error': result.get('message', 'Unknown error') if result else 'No result'
+                })
+    except Exception as e:
+        return jsonify({
+            'success': False, 
+            'message': f'Error triggering auto-assign: {str(e)}'
+        })
 
-def is_valid_uid(uid):
-    """Validate UID format"""
-    if not uid:
-        return False
-    # Add your UID validation logic here
-    return True
+@app.route('/health')
+def health_check():
+    """Simple health check endpoint to verify system responsiveness"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': get_ist_timestamp(),
+        'auto_assign_thread_alive': auto_assign_thread.is_alive() if auto_assign_thread else False,
+        'message': 'System is responsive and auto-assign is running independently'
+    })
 
-
-# Using Flask's built-in tojson filter
-
-# Get environment variables with fallback values for testing
-SUPABASE_URL = os.environ.get('SUPABASE_URL')
-SUPABASE_KEY = os.environ.get('SUPABASE_ANON_KEY')
+# =============================================================================
 SECRET_KEY = os.environ.get('FLASK_SECRET_KEY', 'fallback-secret-key-change-this')
 
 # Email configuration (add these to your .env file)
@@ -2443,12 +2407,38 @@ def unified_login() -> Response:
     password = request.form.get('password', '').strip()
     user_type = request.form.get('user_type', '').strip().lower()
 
-    valid_user_types = ['admin', 'cre', 'ps', 'rec']
+    valid_user_types = ['admin', 'bh', 'cre', 'ps', 'rec']
     if user_type not in valid_user_types:
-        flash('Please select a valid role (Admin, CRE, PS, or Receptionist)', 'error')
+        flash('Please select a valid role (Admin, Branch Head, CRE, PS, or Receptionist)', 'error')
         return redirect(url_for('index'))
 
-    # Branch Head login removed
+    # Branch Head authentication
+    if user_type == 'bh':
+        try:
+            bh_user = supabase.table('branch_head_users').select('*').eq('username', username).execute().data
+            if not bh_user:
+                flash('Invalid username or password', 'error')
+                return redirect(url_for('index'))
+            bh_user = bh_user[0]
+            if not bh_user.get('is_active', True):
+                flash('User is inactive', 'error')
+                return redirect(url_for('index'))
+            # Check password using werkzeug
+            if not check_password_hash(bh_user['password_hash'], password):
+                flash('Incorrect password', 'error')
+                return redirect(url_for('index'))
+            session.clear()
+            session['bh_user_id'] = bh_user['id']
+            session['bh_branch'] = bh_user['branch']
+            session['bh_name'] = bh_user.get('name', username)
+            session['user_type'] = 'bh'
+            session['username'] = username
+            flash('Welcome! Logged in as Branch Head', 'success')
+            return redirect(url_for('bh_dashboard'))
+        except Exception as e:
+            print(f"Error in Branch Head login: {e}")
+            flash('Error during login. Please try again.', 'error')
+            return redirect(url_for('index'))
 
     elif user_type == 'rec':
         # Receptionist authentication
@@ -2513,636 +2503,6 @@ def admin_login():
     if request.method == 'POST':
         return unified_login()
     return redirect(url_for('index'))
-
-
-@app.route('/cre_login', methods=['GET', 'POST'])
-def cre_login():
-    if request.method == 'POST':
-        return unified_login()
-    return redirect(url_for('index'))
-
-
-@app.route('/ps_login', methods=['GET', 'POST'])
-def ps_login():
-    if request.method == 'POST':
-        return unified_login()
-    return redirect(url_for('index'))
-
-
-@app.route('/password_reset_request', methods=['GET', 'POST'])
-@limiter.limit("5 per minute")
-def password_reset_request():
-    if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        user_type = request.form.get('user_type', '').strip()
-
-        if not username or not user_type:
-            flash('Please enter username and select user type', 'error')
-            return render_template('password_reset_request.html')
-
-        success, message, token = auth_manager.generate_password_reset_token(username, user_type)
-
-        if success:
-            # Send the reset link via email
-            # Fetch user email from the appropriate table
-            user_email = None
-            try:
-                if user_type == 'admin':
-                    user_result = supabase.table('admin_users').select('email').eq('username', username).execute()
-                elif user_type == 'cre':
-                    user_result = supabase.table('cre_users').select('email').eq('username', username).execute()
-                elif user_type == 'ps':
-                    user_result = supabase.table('ps_users').select('email').eq('username', username).execute()
-                else:
-                    user_result = None
-                if user_result and user_result.data and user_result.data[0].get('email'):
-                    user_email = user_result.data[0]['email']
-            except Exception as e:
-                print(f"Error fetching user email for password reset: {e}")
-                user_email = None
-
-            reset_url = url_for('password_reset', token=token, _external=True)
-            email_sent = False
-            if user_email:
-                try:
-                    msg = MIMEMultipart()
-                    msg['From'] = EMAIL_USER
-                    msg['To'] = user_email
-                    msg['Subject'] = 'Ather CRM Password Reset Request'
-                    body = f"""
-                    Dear {username},
-
-                    We received a request to reset your password for your Ather CRM account.
-
-                    Please click the link below to reset your password:
-                    {reset_url}
-
-                    If you did not request this, please ignore this email.
-
-                    Best regards,\nAther CRM System
-                    """
-                    msg.attach(MIMEText(body, 'plain'))
-                    server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-                    server.starttls()
-                    server.login(EMAIL_USER, EMAIL_PASSWORD)
-                    text = msg.as_string()
-                    server.sendmail(EMAIL_USER, user_email, text)
-                    server.quit()
-                    print(f"Password reset email sent to {user_email}")
-                    email_sent = True
-                except Exception as e:
-                    print(f"Error sending password reset email: {e}")
-                    email_sent = False
-            if email_sent:
-                flash('If the username exists and is valid, a password reset link has been sent to the registered email address.', 'success')
-            else:
-                flash('If the username exists and is valid, a password reset link has been sent to the registered email address.', 'success')
-                # Optionally, log or alert admin if email sending failed
-        else:
-            flash(message, 'error')
-
-    return render_template('password_reset_request.html')
-
-
-@app.route('/password_reset/<token>', methods=['GET', 'POST'])
-def password_reset(token):
-    if request.method == 'POST':
-        new_password = request.form.get('new_password', '').strip()
-        confirm_password = request.form.get('confirm_password', '').strip()
-
-        if not new_password or not confirm_password:
-            flash('Please enter and confirm your new password', 'error')
-            return render_template('password_reset.html', token=token)
-
-        if new_password != confirm_password:
-            flash('Passwords do not match', 'error')
-            return render_template('password_reset.html', token=token)
-
-        success, message = auth_manager.reset_password_with_token(token, new_password)
-
-        if success:
-            flash('Password reset successfully. Please log in with your new password.', 'success')
-            return redirect(url_for('index'))
-        else:
-            flash(message, 'error')
-
-    return render_template('password_reset.html', token=token)
-
-
-@app.route('/change_password', methods=['POST'])
-@require_auth()
-def change_password():
-    current_password = request.form.get('current_password', '').strip()
-    new_password = request.form.get('new_password', '').strip()
-    confirm_password = request.form.get('confirm_password', '').strip()
-
-    if not all([current_password, new_password, confirm_password]):
-        flash('All fields are required', 'error')
-        return redirect(url_for('security_settings'))
-
-    if new_password != confirm_password:
-        flash('New passwords do not match', 'error')
-        return redirect(url_for('security_settings'))
-
-    user_id = session.get('user_id')
-    user_type = session.get('user_type')
-
-    if not user_id or not user_type:
-        flash('Session information not found', 'error')
-        return redirect(url_for('security_settings'))
-
-    success, message = auth_manager.change_password(user_id, user_type, current_password, new_password)
-
-    if success:
-        flash('Password changed successfully', 'success')
-    else:
-        flash(message, 'error')
-
-    return redirect(url_for('security_settings'))
-
-
-@app.route('/change_cre_password', methods=['GET', 'POST'])
-@require_cre
-def change_cre_password():
-    if request.method == 'POST':
-        current_password = request.form.get('current_password', '').strip()
-        new_password = request.form.get('new_password', '').strip()
-        confirm_password = request.form.get('confirm_password', '').strip()
-
-        if not all([current_password, new_password, confirm_password]):
-            flash('All fields are required', 'error')
-            return render_template('change_cre_password.html')
-
-        if new_password != confirm_password:
-            flash('New passwords do not match', 'error')
-            return render_template('change_cre_password.html')
-
-        user_id = session.get('user_id')
-        user_type = session.get('user_type')
-
-        if not user_id or not user_type:
-            flash('Session information not found', 'error')
-            return render_template('change_cre_password.html')
-
-        success, message = auth_manager.change_password(user_id, user_type, current_password, new_password)
-
-        if success:
-            flash('Password changed successfully', 'success')
-            return redirect(url_for('cre_dashboard'))
-        else:
-            flash(message, 'error')
-
-    return render_template('change_cre_password.html')
-
-
-@app.route('/change_ps_password', methods=['GET', 'POST'])
-@require_ps
-def change_ps_password():
-    if request.method == 'POST':
-        current_password = request.form.get('current_password', '').strip()
-        new_password = request.form.get('new_password', '').strip()
-        confirm_password = request.form.get('confirm_password', '').strip()
-
-        if not all([current_password, new_password, confirm_password]):
-            flash('All fields are required', 'error')
-            return render_template('change_ps_password.html')
-
-        if new_password != confirm_password:
-            flash('New passwords do not match', 'error')
-            return render_template('change_ps_password.html')
-
-        user_id = session.get('user_id')
-        user_type = session.get('user_type')
-
-        if not user_id or not user_type:
-            flash('Session information not found', 'error')
-            return render_template('change_ps_password.html')
-
-        success, message = auth_manager.change_password(user_id, user_type, current_password, new_password)
-
-        if success:
-            flash('Password changed successfully', 'success')
-            return redirect(url_for('ps_dashboard'))
-        else:
-            flash(message, 'error')
-
-    return render_template('change_ps_password.html')
-
-
-@app.route('/security_settings')
-@require_auth()
-def security_settings():
-    user_id = session.get('user_id')
-    user_type = session.get('user_type')
-
-    if not user_id or not user_type:
-        flash('Session information not found', 'error')
-        return redirect(url_for('index'))
-
-    # Get active sessions
-    sessions = auth_manager.get_user_sessions(user_id, user_type)
-
-    # Get audit logs
-    audit_logs = auth_manager.get_audit_logs(user_id, user_type, limit=20)
-
-    return render_template('security_settings.html', sessions=sessions, audit_logs=audit_logs)
-
-
-@app.route('/security_audit')
-@require_admin
-def security_audit():
-    """Security audit dashboard"""
-    return render_template('security_audit.html')
-
-
-@app.route('/run_security_audit', methods=['POST'])
-@require_admin
-def run_security_audit():
-    """Run comprehensive security audit"""
-    try:
-        # Run security verification
-        audit_results = run_security_verification(supabase)
-
-        # Log the security audit
-        user_id = session.get('user_id')
-        user_type = session.get('user_type')
-        
-        if user_id and user_type:
-            auth_manager.log_audit_event(
-                user_id=user_id,
-                user_type=user_type,
-                action='SECURITY_AUDIT_RUN',
-                resource='security_audit',
-                details={'overall_score': audit_results.get('overall_score', 0)}
-            )
-
-        return jsonify({
-            'success': True,
-            'results': audit_results
-        })
-    except Exception as e:
-        print(f"Error running security audit: {e}")
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        })
-
-
-@app.route('/terminate_session', methods=['POST'])
-@require_auth()
-def terminate_session():
-    try:
-        data = request.get_json()
-        session_id = data.get('session_id')
-
-        if not session_id:
-            return jsonify({'success': False, 'message': 'Session ID required'})
-
-        auth_manager.deactivate_session(session_id)
-
-        user_id = session.get('user_id')
-        user_type = session.get('user_type')
-        
-        if user_id and user_type:
-            auth_manager.log_audit_event(
-                user_id=user_id,
-                user_type=user_type,
-                action='SESSION_TERMINATED',
-                details={'terminated_session': session_id}
-            )
-
-        return jsonify({'success': True, 'message': 'Session terminated successfully'})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/terminate_all_sessions', methods=['POST'])
-@require_auth()
-def terminate_all_sessions():
-    try:
-        user_id = session.get('user_id')
-        user_type = session.get('user_type')
-        current_session = session.get('session_id')
-
-        if user_id and user_type and current_session:
-            auth_manager.deactivate_all_user_sessions(user_id, user_type, current_session)
-            auth_manager.log_audit_event(
-                user_id=user_id,
-                user_type=user_type,
-                action='ALL_SESSIONS_TERMINATED',
-                details={'except_session': current_session}
-            )
-        else:
-            return jsonify({'success': False, 'message': 'Session information not found'})
-
-        return jsonify({'success': True, 'message': 'All other sessions terminated successfully'})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/admin_dashboard')
-@require_admin
-def admin_dashboard():
-    # Get counts for dashboard with better error handling and actual queries
-    try:
-        # Get actual counts from database with proper queries
-        cre_count = get_accurate_count('cre_users')
-        ps_count = get_accurate_count('ps_users')
-        leads_count = get_accurate_count('lead_master')
-        unassigned_leads = get_accurate_count('lead_master', {'assigned': 'No'})
-
-        print(
-            f"Dashboard counts - CRE: {cre_count}, PS: {ps_count}, Total Leads: {leads_count}, Unassigned: {unassigned_leads}")
-
-    except Exception as e:
-        print(f"Error getting dashboard counts: {e}")
-        cre_count = ps_count = leads_count = unassigned_leads = 0
-
-    # Log dashboard access
-    user_id = session.get('user_id')
-    user_type = session.get('user_type')
-    if user_id and user_type:
-        auth_manager.log_audit_event(
-            user_id=user_id,
-            user_type=user_type,
-            action='DASHBOARD_ACCESS',
-            resource='admin_dashboard'
-        )
-
-    return render_template('admin_dashboard.html',
-                           cre_count=cre_count,
-                           ps_count=ps_count,
-                           leads_count=leads_count,
-                           unassigned_leads=unassigned_leads)
-
-
-@app.route('/upload_data', methods=['GET', 'POST'])
-@require_admin
-def upload_data():
-    if request.method == 'POST':
-        if 'file' not in request.files:
-            flash('No file selected', 'error')
-            return redirect(request.url)
-
-        file = request.files['file']
-        source = request.form.get('source', '').strip()
-
-        if not source:
-            flash('Please select a data source', 'error')
-            return redirect(request.url)
-
-        if file.filename == '':
-            flash('No file selected', 'error')
-            return redirect(request.url)
-
-        if file and file.filename and allowed_file(file.filename):
-            filename = secure_filename(str(file.filename))
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-
-            try:
-                file.save(filepath)
-
-                # Check file size
-                file_size = os.path.getsize(filepath)
-                if file_size > 50 * 1024 * 1024:  # 50MB limit
-                    flash('File too large. Maximum size is 50MB.', 'error')
-                    os.remove(filepath)
-                    return redirect(request.url)
-
-                print(f"Processing file: {filename} ({file_size / 1024 / 1024:.2f} MB)")
-
-                # Read the file based on extension
-                if filename.lower().endswith('.csv'):
-                    data = read_csv_file(filepath)
-                else:
-                    data = read_excel_file(filepath)
-
-                if not data:
-                    flash('No valid data found in file', 'error')
-                    os.remove(filepath)
-                    return redirect(request.url)
-
-                print(f"Read {len(data)} rows from file")
-
-                # Get current sequence number for UID generation
-                result = supabase.table('lead_master').select('uid').execute()
-                current_count = len(result.data) if result.data else 0
-
-                # Prepare leads data for batch insert
-                leads_to_insert = []
-                skipped_rows = 0
-
-                for index, row in enumerate(data):
-                    try:
-                        # Validate required fields
-                        required_fields = ['customer_name', 'customer_mobile_number', 'date']
-                        if not all(key in row and str(row[key]).strip() for key in required_fields):
-                            skipped_rows += 1
-                            continue
-
-                        uid = generate_uid(source, row['customer_mobile_number'],
-                                           current_count + len(leads_to_insert) + 1)
-
-                        lead_data = {
-                            'uid': uid,
-                            'date': str(row['date']).strip(),
-                            'customer_name': str(row['customer_name']).strip(),
-                            'customer_mobile_number': str(row['customer_mobile_number']).strip(),
-                            'source': source,
-                            'assigned': 'No',
-                            'final_status': 'Pending'
-                        }
-
-                        leads_to_insert.append(lead_data)
-
-
-                    except Exception as e:
-                        print(f"Error processing row {index}: {e}")
-                        skipped_rows += 1
-                        continue
-
-                if not leads_to_insert:
-                    flash('No valid leads found to insert', 'error')
-                    os.remove(filepath)
-                    return redirect(request.url)
-
-                print(f"Prepared {len(leads_to_insert)} leads for insertion")
-
-                # Batch insert leads
-                success_count = batch_insert_leads(leads_to_insert)
-
-                # Log data upload
-                auth_manager.log_audit_event(
-                    user_id=session.get('user_id'),
-                    user_type=session.get('user_type'),
-                    action='DATA_UPLOAD',
-                    resource='lead_master',
-                    details={
-                        'source': source,
-                        'records_uploaded': success_count,
-                        'filename': filename,
-                        'file_size_mb': round(file_size / 1024 / 1024, 2),
-                        'skipped_rows': skipped_rows
-                    }
-                )
-
-                # Create success message
-                message = f'Successfully uploaded {success_count} leads'
-                if skipped_rows > 0:
-                    message += f' ({skipped_rows} rows skipped due to missing data)'
-                message += '. Please go to "Assign Leads" to assign them to CREs.'
-
-                flash(message, 'success')
-
-                # Clean up uploaded file
-                os.remove(filepath)
-
-            except Exception as e:
-                print(f"Error processing file: {e}")
-                flash(f'Error processing file: {str(e)}', 'error')
-                if os.path.exists(filepath):
-                    os.remove(filepath)
-        else:
-            flash('Invalid file format. Please upload CSV or Excel files only.', 'error')
-
-    return render_template('upload_data.html')
-
-@app.route('/assign_leads')
-@require_admin
-def assign_leads():
-    try:
-        # Fetch all unassigned leads in batches of 1000
-        all_unassigned_leads = []
-        batch_size = 1000
-        offset = 0
-        while True:
-            result = supabase.table('lead_master').select('*').eq('assigned', 'No').range(offset, offset + batch_size - 1).execute()
-            batch = result.data or []
-            all_unassigned_leads.extend(batch)
-            if len(batch) < batch_size:
-                break
-            offset += batch_size
-
-        # Organize by source
-        leads_by_source = {}
-        for lead in all_unassigned_leads:
-            source = lead.get('source', 'Unknown')
-            leads_by_source.setdefault(source, []).append(lead)
-
-        # Get CREs
-        cres = safe_get_data('cre_users')
-
-        # Get accurate total unassigned count
-        actual_unassigned_count = get_accurate_count('lead_master', {'assigned': 'No'})
-
-        # Get accurate per-source unassigned counts
-        source_unassigned_counts = {}
-        for source in leads_by_source.keys():
-            source_unassigned_counts[source] = get_accurate_count('lead_master', {'assigned': 'No', 'source': source})
-
-        # Get all sources that have auto-assign configurations, even if they have zero unassigned leads
-        auto_assign_sources = set()
-        try:
-            auto_assign_result = supabase.table('auto_assign_config').select('source').execute()
-            if auto_assign_result.data:
-                for config in auto_assign_result.data:
-                    auto_assign_sources.add(config['source'])
-        except Exception as e:
-            print(f"Error fetching auto-assign sources: {e}")
-
-        # Add sources with auto-assign configs to source_unassigned_counts if they're not already there
-        for source in auto_assign_sources:
-            if source not in source_unassigned_counts:
-                source_unassigned_counts[source] = 0
-
-        return render_template('assign_leads.html',
-                               unassigned_leads=all_unassigned_leads,
-                               actual_unassigned_count=actual_unassigned_count,
-                               cres=cres,
-                               leads_by_source=leads_by_source,
-                               source_unassigned_counts=source_unassigned_counts)
-    except Exception as e:
-        print(f"Error loading assign leads data: {e}")
-        flash(f'Error loading data: {str(e)}', 'error')
-        return redirect(url_for('admin_dashboard'))
-
-
-@app.route('/assign_leads_dynamic_action', methods=['POST'])
-@require_admin
-def assign_leads_dynamic_action():
-    try:
-        data = request.get_json()
-        assignments = data.get('assignments', [])
-
-        if not assignments:
-            return jsonify({'success': False, 'message': 'No assignments provided'}), 400
-
-        # Fetch all unassigned leads in batches
-        all_unassigned = []
-        batch_size = 1000
-        offset = 0
-        while True:
-            result = supabase.table('lead_master').select('*').eq('assigned', 'No').range(offset, offset + batch_size - 1).execute()
-            batch = result.data or []
-            all_unassigned.extend(batch)
-            if len(batch) < batch_size:
-                break
-            offset += batch_size
-
-        leads_by_source = {}
-        for lead in all_unassigned:
-            source = lead.get('source', 'Unknown')
-            leads_by_source.setdefault(source, []).append(lead)
-
-        total_assigned = 0
-
-        for assignment in assignments:
-            cre_id = assignment.get('cre_id')
-            source = assignment.get('source')
-            quantity = assignment.get('quantity')
-
-            if not cre_id or not source or not quantity:
-                continue
-
-            # Get CRE details
-            cre_data = supabase.table('cre_users').select('*').eq('id', cre_id).execute()
-            if not cre_data.data:
-                continue
-
-            cre = cre_data.data[0]
-            leads = leads_by_source.get(source, [])
-
-            if not leads:
-                print(f"No unassigned leads found for source {source}")
-                continue
-
-            random.shuffle(leads)
-            leads_to_assign = leads[:quantity]
-            leads_by_source[source] = leads[quantity:]  # Remove assigned leads
-
-            for lead in leads_to_assign:
-                update_data = {
-                    'cre_name': cre['name'],
-                    'assigned': 'Yes',
-                    'cre_assigned_at': datetime.now().isoformat()
-
-                }
-
-                try:
-                    supabase.table('lead_master').update(update_data).eq('uid', lead['uid']).execute()
-                    total_assigned += 1
-                    print(f"Assigned lead {lead['uid']} to CRE {cre['name']} for source {source}")
-                    if total_assigned % 100 == 0:
-                        time.sleep(0.1)
-                except Exception as e:
-                    print(f"Error assigning lead {lead['uid']}: {e}")
-
-        print(f"Total leads assigned: {total_assigned}")
-        return jsonify({'success': True, 'message': f'Total {total_assigned} leads assigned successfully'})
-
-    except Exception as e:
-        print(f"Error in dynamic lead assignment: {e}")
-        return jsonify({'success': False, 'message': str(e)}), 500
 @app.route('/add_cre', methods=['GET', 'POST'])
 @require_admin
 def add_cre():
@@ -3275,124 +2635,14 @@ def add_ps():
     return render_template('add_ps.html', branches=branches)
 
 
-@app.route('/add_bh', methods=['GET', 'POST'])
-@require_admin
-def add_bh():
-    branches = ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
-
-    if request.method == 'POST':
-        name = request.form.get('name', '').strip()
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '').strip()
-        phone = request.form.get('phone', '').strip()
-        email = request.form.get('email', '').strip()
-        branch = request.form.get('branch', '').strip()
-
-        if not all([name, username, password, phone, email, branch]):
-            flash('All fields are required', 'error')
-            return render_template('add_bh.html', branches=branches)
-
-        if not auth_manager.validate_password_strength(password):
-            flash(
-                'Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character',
-                'error')
-            return render_template('add_bh.html', branches=branches)
-
-        try:
-            # Check if username already exists
-            existing = supabase.table('branch_head_users').select('username').eq('username', username).execute()
-            if existing.data:
-                flash('Username already exists', 'error')
-                return render_template('add_bh.html', branches=branches)
-
-            # Hash password using auth_manager (provides hash and salt)
-            password_hash, salt = auth_manager.hash_password(password)
-
-            # Create branch head data
-            bh_data = {
-                'name': name,
-                'username': username,
-                'password': password,  # Keep for backward compatibility
-                'password_hash': password_hash,
-                'salt': salt,  # Add the salt value
-                'phone': phone,
-                'email': email,
-                'branch': branch,
-                'is_active': True,
-                'role': 'bh',
-                'failed_login_attempts': 0
-            }
-
-            result = supabase.table('branch_head_users').insert(bh_data).execute()
-
-            # Log Branch Head creation
-            auth_manager.log_audit_event(
-                user_id=session.get('user_id'),
-                user_type=session.get('user_type'),
-                action='BRANCH_HEAD_CREATED',
-                resource='branch_head_users',
-                resource_id=str(result.data[0]['id']) if result.data else None,
-                details={'bh_name': name, 'username': username, 'branch': branch}
-            )
-
-            flash('Branch Head added successfully', 'success')
-            return redirect(url_for('manage_bh'))
-        except Exception as e:
-            flash(f'Error adding Branch Head: {str(e)}', 'error')
-
-    return render_template('add_bh.html', branches=branches)
-@app.route('/manage_cre')
-@require_admin
-def manage_cre():
-    try:
-        cre_users = safe_get_data('cre_users')
-        return render_template('manage_cre.html', cre_users=cre_users)
-    except Exception as e:
-        flash(f'Error loading CRE users: {str(e)}', 'error')
-        return render_template('manage_cre.html', cre_users=[])
 
 
-@app.route('/manage_ps')
-@require_admin
-def manage_ps():
-    try:
-        ps_users = safe_get_data('ps_users')
-        return render_template('manage_ps.html', ps_users=ps_users)
-    except Exception as e:
-        flash(f'Error loading PS users: {str(e)}', 'error')
-        return render_template('manage_ps.html', ps_users=[])
 
 
-@app.route('/toggle_ps_status/<int:ps_id>', methods=['POST'])
-@require_admin
-def toggle_ps_status(ps_id):
-    try:
-        data = request.get_json()
-        active_status = data.get('active', True)
 
-        # Update PS status
-        result = supabase.table('ps_users').update({
-            'is_active': active_status
-        }).eq('id', ps_id).execute()
 
-        if result.data:
-            # Log status change
-            auth_manager.log_audit_event(
-                user_id=session.get('user_id'),
-                user_type=session.get('user_type'),
-                action='PS_STATUS_CHANGED',
-                resource='ps_users',
-                resource_id=str(ps_id),
-                details={'new_status': 'active' if active_status else 'inactive'}
-            )
 
-            return jsonify({'success': True, 'message': 'PS status updated successfully'})
-        else:
-            return jsonify({'success': False, 'message': 'PS not found'})
 
-    except Exception as e:
-        print(f"Error toggling PS status: {e}")
-        return jsonify({'success': False, 'message': str(e)})
 
 
 @app.route('/manage_leads')
@@ -7197,9 +6447,9 @@ def get_auto_assign_configs():
 def get_auto_assign_history():
     """API endpoint to get auto-assignment history"""
     try:
-        # Get auto-assign history with pagination
+        # Get auto-assign history with pagination - load one row at a time
         page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 50, type=int)
+        per_page = request.args.get('per_page', 1, type=int)  # Changed from 50 to 1
         source_filter = request.args.get('source', '')
         cre_filter = request.args.get('cre_id', '')
         
@@ -8645,6 +7895,17 @@ def export_leads():
         flash(f'Error loading export dashboard: {str(e)}', 'error')
         return redirect(url_for('admin_dashboard'))
 
+@app.route('/bh_dashboard')
+@require_bh
+def bh_dashboard():
+    """Branch Head Dashboard"""
+    try:
+        return render_template('bh_dashboard.html')
+    except Exception as e:
+        flash(f'Error loading dashboard: {str(e)}', 'error')
+        return redirect(url_for('index'))
+
+
 @app.route('/api/bh_ps_performance')
 def api_bh_ps_performance():
     """API to get PS performance data for Branch Head dashboard"""
@@ -8889,6 +8150,138 @@ def get_followup_date_field(num):
         7: 'seventh_call_date'
     }
     return followup_date_fields.get(num, 'first_call_date')
+
+@app.route('/edit_bh/<int:bh_id>', methods=['POST'])
+@require_admin
+def edit_bh(bh_id):
+    """Edit Branch Head user"""
+    try:
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip()
+        phone = data.get('phone', '').strip()
+        branch = data.get('branch', '').strip()
+
+        if not all([name, username, email, phone, branch]):
+            return jsonify({'success': False, 'message': 'All fields are required'})
+
+        # Check if username already exists (excluding current user)
+        existing = supabase.table('branch_head_users').select('username').eq('username', username).neq('id', bh_id).execute()
+        if existing.data:
+            return jsonify({'success': False, 'message': 'Username already exists'})
+
+        # Update branch head
+        result = supabase.table('branch_head_users').update({
+            'name': name,
+            'username': username,
+            'email': email,
+            'phone': phone,
+            'branch': branch,
+            'updated_at': datetime.now().isoformat()
+        }).eq('id', bh_id).execute()
+
+        if result.data:
+            # Log the edit
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='BRANCH_HEAD_EDITED',
+                resource='branch_head_users',
+                resource_id=str(bh_id),
+                details={'bh_name': name, 'username': username, 'branch': branch}
+            )
+            return jsonify({'success': True, 'message': 'Branch Head updated successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Failed to update Branch Head'})
+
+    except Exception as e:
+        print(f"Error editing Branch Head: {e}")
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+
+
+@app.route('/toggle_bh_status/<int:bh_id>', methods=['POST'])
+@require_admin
+def toggle_bh_status(bh_id):
+    """Toggle Branch Head active status"""
+    try:
+        data = request.get_json()
+        active_status = data.get('active', True)
+
+        # Update status
+        result = supabase.table('branch_head_users').update({
+            'is_active': active_status,
+            'updated_at': datetime.now().isoformat()
+        }).eq('id', bh_id).execute()
+
+        if result.data:
+            action = 'activated' if active_status else 'deactivated'
+            # Log the status change
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action=f'BRANCH_HEAD_{action.upper()}',
+                resource='branch_head_users',
+                resource_id=str(bh_id),
+                details={'status': active_status}
+            )
+            return jsonify({'success': True, 'message': f'Branch Head {action} successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Failed to update status'})
+
+    except Exception as e:
+        print(f"Error toggling Branch Head status: {e}")
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+
+
+@app.route('/delete_bh/<int:bh_id>', methods=['DELETE'])
+@require_admin
+def delete_bh(bh_id):
+    """Delete Branch Head user"""
+    try:
+        # Get branch head details before deletion for logging
+        bh_result = supabase.table('branch_head_users').select('name, username, branch').eq('id', bh_id).execute()
+        if not bh_result.data:
+            return jsonify({'success': False, 'message': 'Branch Head not found'})
+
+        bh_data = bh_result.data[0]
+
+        # Delete the branch head
+        result = supabase.table('branch_head_users').delete().eq('id', bh_id).execute()
+
+        if result.data:
+            # Log the deletion
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='BRANCH_HEAD_DELETED',
+                resource='branch_head_users',
+                resource_id=str(bh_id),
+                details={'bh_name': bh_data['name'], 'username': bh_data['username'], 'branch': bh_data['branch']}
+            )
+            return jsonify({'success': True, 'message': 'Branch Head deleted successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Failed to delete Branch Head'})
+
+    except Exception as e:
+        print(f"Error deleting Branch Head: {e}")
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+
+
+@app.route('/manage_bh')
+@require_admin
+def manage_bh():
+    """Manage Branch Head users"""
+    try:
+        bh_users = safe_get_data('branch_head_users')
+        return render_template('manage_bh.html', bh_users=bh_users)
+    except Exception as e:
+        flash(f'Error loading Branch Head users: {str(e)}', 'error')
+        return render_template('manage_bh.html', bh_users=[])
+
+
+
+
 
 @app.route('/api/bh_lead_details')
 def api_bh_lead_details():
