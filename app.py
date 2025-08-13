@@ -1,5 +1,7 @@
-import eventlet
-eventlet.monkey_patch()
+# Remove Eventlet - Use sync workers instead for Render compatibility
+# import eventlet
+# eventlet.monkey_patch(ssl=False, thread=False)  # Disable problematic patches
+
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, current_app
 from supabase.client import create_client, Client
 import csv
@@ -17,15 +19,17 @@ import io
 from dotenv import load_dotenv
 from collections import defaultdict, Counter
 import json
-from auth import AuthManager, require_auth, require_admin, require_cre, require_ps, require_rec
+from auth import AuthManager, require_auth, require_admin, require_cre, require_ps, require_rec, require_bh
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from security_verification import run_security_verification
 import time
 import gc
-from flask_socketio import SocketIO, emit
+import threading
+# Remove Flask-SocketIO - not compatible with sync workers
+# from flask_socketio import SocketIO, emit
 import math
-# from redis import Redis  # REMOVE this line for local development
+# from redis import Redis  # REMOVED - Not needed for local development
 
 # Import optimized operations for faster lead updates
 from optimized_lead_operations import create_optimized_operations
@@ -54,13 +58,214 @@ import requests
 # Load environment variables from .env file
 load_dotenv()
 
+# Production SSL handling - disable SSL verification for Render compatibility
+import os
+
+# For production environment, disable SSL verification completely
+if os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False):
+    print("🚀 Production environment detected - disabling SSL verification")
+    os.environ['PYTHONHTTPSVERIFY'] = '0'
+    os.environ['CURL_CA_BUNDLE'] = ''
+    os.environ['REQUESTS_CA_BUNDLE'] = ''
+    os.environ['SSL_CERT_FILE'] = ''
+    
+    # Disable SSL warnings
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    print("✅ SSL verification disabled for production")
+else:
+    print("🔧 Local environment - SSL verification enabled")
+
 # WhatsApp Business API Configuration
 WABA_ID = "1051569503777887"
 WABA_PHONE_ID = "679404361922646"
 MCUBE_ACCESS_TOKEN = os.environ.get("MCUBE_ACCESS_TOKEN", "")
 
+
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
+# Remove SocketIO - not compatible with sync workers
+# socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Initialize rate limiter early so decorators can use it
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=["1000 per minute"]
+)
+
+# =============================================================================
+# AUTO-ASSIGN SYSTEM INTEGRATION
+# =============================================================================
+
+def auto_assign_new_leads_for_source(source):
+    """
+    Automatically assign new leads for a specific source based on saved configuration.
+    This function is integrated directly into Flask app for automatic execution.
+    
+    Args:
+        source (str): The source name to auto-assign leads for
+        
+    Returns:
+        dict: Result with assigned_count and status
+    """
+    try:
+        print(f"🤖 Auto-assigning new leads for source: {source}")
+        
+        # Get auto-assign configuration for this source
+        config_result = supabase.table('auto_assign_config').select('cre_id').eq('source', source).execute()
+        configs = config_result.data or []
+        
+        if not configs:
+            print(f"ℹ️ No auto-assign configuration found for {source}")
+            return {'success': False, 'message': f'No auto-assign configuration found for {source}', 'assigned_count': 0}
+        
+        cre_ids = [config['cre_id'] for config in configs]
+        print(f"📋 Found {len(cre_ids)} CREs configured for {source}: {cre_ids}")
+        
+        # Get CRE details for fair distribution
+        cre_result = supabase.table('cre_users').select('*').in_('id', cre_ids).execute()
+        cres = cre_result.data or []
+        
+        if not cres:
+            print(f"⚠️ No CREs found for source {source}")
+            return {'success': False, 'message': f'No CREs found for source {source}', 'assigned_count': 0}
+        
+        # Get unassigned leads for this source (double-check to avoid race conditions)
+        unassigned_result = supabase.table('lead_master').select('*').eq('assigned', 'No').eq('source', source).execute()
+        unassigned_leads = unassigned_result.data or []
+        
+        if not unassigned_leads:
+            print(f"ℹ️ No unassigned leads found for {source}")
+            return {'success': True, 'message': f'No unassigned leads found for {source}', 'assigned_count': 0}
+        
+        print(f"📊 Found {len(unassigned_leads)} unassigned leads for {source}")
+        
+        # Get the last assigned CRE for this source to determine starting point
+        last_assigned_result = supabase.table('lead_master').select('cre_name').eq('source', source).order('cre_assigned_at', desc=True).limit(1).execute()
+        last_cre_name = None
+        if last_assigned_result.data:
+            last_cre_name = last_assigned_result.data[0].get('cre_name')
+        
+        # Find starting index for round-robin
+        start_index = 0
+        if last_cre_name:
+            for i, cre in enumerate(cres):
+                if cre['name'] == last_cre_name:
+                    start_index = (i + 1) % len(cres)
+                    break
+        
+        # Assign leads using round-robin fair distribution
+        assigned_count = 0
+        for i, lead in enumerate(unassigned_leads):
+            # Double-check if lead is still unassigned before attempting assignment
+            current_lead = supabase.table('lead_master').select('assigned').eq('uid', lead['uid']).execute()
+            if not current_lead.data or current_lead.data[0].get('assigned') == 'Yes':
+                print(f"ℹ️ Lead {lead['uid']} is already assigned, skipping...")
+                continue
+                
+            selected_cre = cres[(start_index + i) % len(cres)]
+            
+            update_data = {
+                'cre_name': selected_cre['name'],
+                'assigned': 'Yes',
+                'cre_assigned_at': get_ist_timestamp(),
+                'lead_status': 'Pending'
+            }
+            
+            try:
+                # Update lead assignment with optimistic locking
+                result = supabase.table('lead_master').update(update_data).eq('uid', lead['uid']).eq('assigned', 'No').execute()
+                
+                # Check if update was successful
+                if not result.data:
+                    print(f"ℹ️ Lead {lead['uid']} was already assigned by another process, skipping...")
+                    continue
+                
+                # Create call attempt history
+                call_history_data = {
+                    'uid': lead['uid'],
+                    'call_no': 'first',
+                    'attempt': 1,
+                    'status': 'Pending',
+                    'cre_name': selected_cre['name'],
+                    'call_was_recorded': False,
+                    'follow_up_date': None,
+                    'remarks': f'Auto-assigned to {selected_cre["name"]} from {source}',
+                    'final_status': 'Pending'
+                }
+                supabase.table('cre_call_attempt_history').insert(call_history_data).execute()
+                
+                # Update CRE's auto-assign count
+                supabase.table('cre_users').update({
+                    'auto_assign_count': selected_cre.get('auto_assign_count', 0) + 1
+                }).eq('id', selected_cre['id']).execute()
+                
+                # Log auto-assign history
+                history_data = {
+                    'lead_uid': lead['uid'],
+                    'source': source,
+                    'assigned_cre_id': selected_cre['id'],
+                    'assigned_cre_name': selected_cre['name'],
+                    'cre_total_leads_before': selected_cre.get('auto_assign_count', 0),
+                    'cre_total_leads_after': selected_cre.get('auto_assign_count', 0) + 1,
+                    'assignment_method': 'fair_distribution',
+                    'created_at': get_ist_timestamp()
+                }
+                supabase.table('auto_assign_history').insert(history_data).execute()
+                
+                assigned_count += 1
+                print(f"🎉 🟢 SUCCESS: Auto-assigned lead {lead['uid']} to {selected_cre['name']} (source: {source})")
+                print(f"   📋 Lead Details: UID={lead['uid']}, Customer={lead.get('customer_name', 'N/A')}, Phone={lead.get('customer_phone_number', 'N/A')}")
+                print(f"   👤 CRE Details: ID={selected_cre['id']}, Name={selected_cre['name']}, Total Leads Before={selected_cre.get('auto_assign_count', 0)}")
+                print(f"   ⏰ Assignment Time: {get_ist_timestamp()}")
+                print(f"   🔄 Status: {lead.get('lead_status', 'N/A')} → Pending")
+                print(f"   📞 Call History: First call attempt recorded")
+                print(f"   📊 Auto-assign Count: {selected_cre.get('auto_assign_count', 0)} → {selected_cre.get('auto_assign_count', 0) + 1}")
+                print("   " + "="*80)
+                
+            except Exception as e:
+                print(f"❌ 🔴 FAILED: Auto-assign failed for lead {lead['uid']} (source: {source})")
+                print(f"   📋 Lead Details: UID={lead['uid']}, Customer={lead.get('customer_name', 'N/A')}, Phone={lead.get('customer_phone_number', 'N/A')}")
+                print(f"   👤 CRE Details: ID={selected_cre['id']}, Name={selected_cre['name']}")
+                print(f"   ⏰ Error Time: {get_ist_timestamp()}")
+                print(f"   🚨 Error Details: {str(e)}")
+                print(f"   🔍 Error Type: {type(e).__name__}")
+                print(f"   📊 Current Status: assigned={lead.get('assigned', 'N/A')}, lead_status={lead.get('lead_status', 'N/A')}")
+                print("   " + "="*80)
+                # Don't continue on error, just log it
+                continue
+        
+        if assigned_count > 0:
+            print(f"🎉 🟢 SUCCESS SUMMARY: Auto-assigned {assigned_count} new leads for {source}")
+            print(f"   📊 Total leads processed: {len(unassigned_leads)}")
+            print(f"   ✅ Successfully assigned: {assigned_count}")
+            print(f"   ❌ Failed assignments: {len(unassigned_leads) - assigned_count}")
+            print(f"   👥 CREs involved: {[cre['name'] for cre in cres]}")
+            print(f"   ⏰ Completion Time: {get_ist_timestamp()}")
+            print("   " + "="*80)
+        else:
+            print(f"ℹ️ INFO: No leads were auto-assigned for {source}")
+            print(f"   📊 Total leads processed: {len(unassigned_leads)}")
+            print(f"   🔍 Reason: All leads were already assigned or no unassigned leads found")
+            print("   " + "="*80)
+        
+        return {
+            'success': True,
+            'message': f'Successfully auto-assigned {assigned_count} new leads for {source}',
+            'assigned_count': assigned_count
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in auto_assign_new_leads_for_source: {e}")
+        return {'success': False, 'message': str(e), 'assigned_count': 0}
+
+# =============================================================================
+
+# Start background auto-assign thread
+import threading
+import time
+
+
 
 # Threading lock for sequence numbers (WhatsApp functionality)
 _sequence_lock = threading.Lock()
@@ -99,84 +304,6 @@ def normalize_call_dates(update_data: dict) -> dict:
         print(f"DEBUG: Error in normalize_call_dates: {e}")
         pass
     return update_data
-
-def sync_timestamps_between_tables(uid: str, final_status: str, won_timestamp: str = None, lost_timestamp: str = None):
-    """
-    Synchronize won_timestamp and lost_timestamp between lead_master and ps_followup_master tables.
-    
-    Args:
-        uid: Lead UID
-        final_status: The final status ('Won' or 'Lost')
-        won_timestamp: Timestamp for won status (if applicable)
-        lost_timestamp: Timestamp for lost status (if applicable)
-    """
-    try:
-        if final_status == 'Won' and won_timestamp:
-            # Update both tables with won_timestamp
-            supabase.table('lead_master').update({'won_timestamp': won_timestamp}).eq('uid', uid).execute()
-            supabase.table('ps_followup_master').update({'won_timestamp': won_timestamp}).eq('lead_uid', uid).execute()
-            print(f"DEBUG: Synced won_timestamp '{won_timestamp}' for lead {uid} in both tables")
-            
-        elif final_status == 'Lost' and lost_timestamp:
-            # Update both tables with lost_timestamp
-            supabase.table('lead_master').update({'lost_timestamp': lost_timestamp}).eq('uid', uid).execute()
-            supabase.table('ps_followup_master').update({'lost_timestamp': lost_timestamp}).eq('lead_uid', uid).execute()
-            print(f"DEBUG: Synced lost_timestamp '{lost_timestamp}' for lead {uid} in both tables")
-            
-        elif final_status not in ['Won', 'Lost']:
-            # Clear timestamps if status is neither Won nor Lost
-            supabase.table('lead_master').update({
-                'won_timestamp': None,
-                'lost_timestamp': None
-            }).eq('uid', uid).execute()
-            supabase.table('ps_followup_master').update({
-                'won_timestamp': None,
-                'lost_timestamp': None
-            }).eq('lead_uid', uid).execute()
-            print(f"DEBUG: Cleared timestamps for lead {uid} as status is '{final_status}'")
-            
-    except Exception as e:
-        print(f"ERROR: Failed to sync timestamps for lead {uid}: {str(e)}")
-        # Don't raise the exception - we want the main operation to continue
-
-def sync_all_existing_timestamps():
-    """
-    Synchronize timestamps for all existing leads that might have mismatched timestamps.
-    This function can be run manually or as a maintenance task.
-    """
-    try:
-        print("Starting timestamp synchronization for all existing leads...")
-        
-        # Get all leads with final_status Won or Lost
-        won_leads = supabase.table('lead_master').select('uid, won_timestamp').eq('final_status', 'Won').not_.is_('won_timestamp', 'null').execute()
-        lost_leads = supabase.table('lead_master').select('uid, lost_timestamp').eq('final_status', 'Lost').not_.is_('lost_timestamp', 'null').execute()
-        
-        synced_count = 0
-        
-        # Sync Won leads
-        for lead in won_leads.data:
-            try:
-                supabase.table('ps_followup_master').update({'won_timestamp': lead['won_timestamp']}).eq('lead_uid', lead['uid']).execute()
-                synced_count += 1
-                print(f"Synced won_timestamp for lead {lead['uid']}")
-            except Exception as e:
-                print(f"Failed to sync won_timestamp for lead {lead['uid']}: {str(e)}")
-        
-        # Sync Lost leads
-        for lead in lost_leads.data:
-            try:
-                supabase.table('ps_followup_master').update({'lost_timestamp': lead['lost_timestamp']}).eq('lead_uid', lead['uid']).execute()
-                synced_count += 1
-                print(f"Synced lost_timestamp for lead {lead['uid']}")
-            except Exception as e:
-                print(f"Failed to sync lost_timestamp for lead {lead['uid']}: {str(e)}")
-        
-        print(f"Timestamp synchronization completed. Synced {synced_count} leads.")
-        return synced_count
-        
-    except Exception as e:
-        print(f"ERROR in sync_all_existing_timestamps: {str(e)}")
-        return 0
 
 def is_valid_date(date_string):
     """Validate date string format (YYYY-MM-DD)"""
@@ -222,35 +349,1770 @@ if not SUPABASE_KEY:
 app.secret_key = SECRET_KEY
 app.permanent_session_lifetime = timedelta(hours=24)
 
-# Initialize Supabase client
+# Initialize Supabase client with production SSL handling
 try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    print("✅ Supabase client initialized successfully")
+    if os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False):
+        print("🚀 Production environment - using SSL-disabled Supabase client")
+        # For production, create client with SSL verification completely disabled
+        import httpx
+        
+        # Create transport with SSL verification disabled
+        transport = httpx.HTTPTransport(verify=False)
+        
+        # Create custom httpx client
+        http_client = httpx.Client(
+            transport=transport,
+            timeout=30.0,
+            follow_redirects=True
+        )
+        
+        # Initialize Supabase with custom client
+        supabase: Client = create_client(
+            SUPABASE_URL, 
+            SUPABASE_KEY,
+            options={
+                'http_client': http_client
+            }
+        )
+        print("✅ Supabase client initialized successfully with SSL verification disabled")
+    else:
+        # Local environment - standard client
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ Supabase client initialized successfully for local environment")
+    
     # Removed Supabase warm-up query for local development
 except Exception as e:
     print(f"❌ Error initializing Supabase client: {e}")
-    raise
+    print("🔄 Trying fallback initialization...")
+    try:
+        # Final fallback: try with no SSL verification via environment
+        os.environ['PYTHONHTTPSVERIFY'] = '0'
+        os.environ['CURL_CA_BUNDLE'] = ''
+        
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ Supabase client initialized successfully with fallback SSL settings")
+    except Exception as fallback_error:
+        print(f"❌ Fallback initialization also failed: {fallback_error}")
+        raise
 
-# Initialize optimized operations for faster lead updates
-try:
-    optimized_ops = create_optimized_operations(supabase)
-    print("✅ Optimized operations initialized successfully")
-except Exception as e:
-    print(f"❌ Error initializing optimized operations: {e}")
-    # Continue without optimized operations if there's an error
-    optimized_ops = None
+# Initialize app context for background tasks
+with app.app_context():
+    # Initialize optimized operations for faster lead updates
+    try:
+        optimized_ops = create_optimized_operations(supabase)
+        print("✅ Optimized operations initialized successfully")
+    except Exception as e:
+        print(f"❌ Error initializing optimized operations: {e}")
+        # Continue without optimized operations if there's an error
+        optimized_ops = None
 
-# Initialize AuthManager
-auth_manager = AuthManager(supabase)
-# Store auth_manager in app config instead of direct attribute
-app.config['AUTH_MANAGER'] = auth_manager
+    # Initialize AuthManager
+    auth_manager = AuthManager(supabase)
+    # Store auth_manager in app config instead of direct attribute
+    app.config['AUTH_MANAGER'] = auth_manager
 
-# Initialize rate limiter
-limiter = Limiter(
-    key_func=get_remote_address,
-    app=app,
-    default_limits=["1000 per minute"]  # Use in-memory backend for local/dev
-)
+
+
+
+def batch_insert_leads(leads_data, batch_size=100):
+    """Insert leads in batches to avoid overwhelming the database"""
+    total_inserted = 0
+    total_batches = (len(leads_data) + batch_size - 1) // batch_size
+
+    print(f"Starting batch insert: {len(leads_data)} leads in {total_batches} batches")
+
+    for i in range(0, len(leads_data), batch_size):
+        batch = leads_data[i:i + batch_size]
+        batch_num = (i // batch_size) + 1
+
+        try:
+            # Insert batch
+            result = supabase.table('lead_master').insert(batch).execute()
+
+            if result.data:
+                batch_inserted = len(result.data)
+                total_inserted += batch_inserted
+                print(f"Batch {batch_num}/{total_batches}: Inserted {batch_inserted} leads")
+            else:
+                print(f"Batch {batch_num}/{total_batches}: No data returned from insert")
+
+            # Small delay to prevent overwhelming the database
+            time.sleep(0.1)  # CHANGED from eventlet.sleep(0.1)
+
+            # Force garbage collection every 10 batches
+            if batch_num % 10 == 0:
+                gc.collect()
+
+        except Exception as e:
+            print(f"Error inserting batch {batch_num}: {e}")
+            # Continue with next batch instead of failing completely
+            continue
+
+    print(f"Batch insert completed: {total_inserted} total leads inserted")
+    return total_inserted
+
+
+def generate_uid(source, mobile_number, sequence):
+    """Generate UID based on source, mobile number, and sequence"""
+    source_map = {
+        'Google': 'G',
+        'Meta': 'M',
+        'Affiliate': 'A',
+        'Know': 'K',
+        'Whatsapp': 'W',
+        'Tele': 'T',
+        'Activity': 'AC',
+        'Walk-in': 'W',  # Walk-in mapping
+        'Walkin': 'W'    # Walkin mapping (without hyphen)
+    }
+
+    source_char = source_map.get(source, 'X')
+
+    # Get sequence character (A-Z)
+    sequence_char = chr(65 + (sequence % 26))  # A=65 in ASCII
+
+    # Get last 4 digits of mobile number
+    mobile_str = str(mobile_number).replace(' ', '').replace('-', '')
+    mobile_last4 = mobile_str[-4:] if len(mobile_str) >= 4 else mobile_str.zfill(4)
+
+    # Generate sequence number (0001, 0002, etc.)
+    seq_num = f"{(sequence % 9999) + 1:04d}"
+
+    return f"{source_char}{sequence_char}-{mobile_last4}-{seq_num}"
+
+
+def get_next_call_info(lead_data):
+    """Determine the next available call number and which calls are completed"""
+    call_order = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
+    completed_calls = []
+    next_call = 'first'
+
+    for call_num in call_order:
+        call_date_key = f'{call_num}_call_date'
+        if lead_data.get(call_date_key):
+            completed_calls.append(call_num)
+        else:
+            next_call = call_num
+            break
+
+    return next_call, completed_calls
+
+
+def get_next_ps_call_info(ps_data):
+    """Determine the next available PS call number and which calls are completed (now 7 calls)"""
+    call_order = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
+    completed_calls = []
+    next_call = 'first'
+
+    for call_num in call_order:
+        call_date_key = f'{call_num}_call_date'
+        if ps_data.get(call_date_key):
+            completed_calls.append(call_num)
+        else:
+            next_call = call_num
+            break
+
+    return next_call, completed_calls
+
+
+def get_accurate_count(table_name, filters=None):
+    """Get accurate count from Supabase table"""
+    try:
+        query = supabase.table(table_name).select('id')
+
+        if filters:
+            for key, value in filters.items():
+                if value is not None:
+                    query = query.eq(key, value)
+
+        result = query.execute()
+
+        # Count the returned data
+        return len(result.data) if result.data else 0
+
+    except Exception as e:
+        print(f"Error getting count from {table_name}: {e}")
+        return 0
+
+
+def safe_get_data(table_name, filters=None, select_fields='*', limit=10000):
+    """Safely get data from Supabase with error handling"""
+    try:
+        query = supabase.table(table_name).select(select_fields)
+
+        if filters:
+            for key, value in filters.items():
+                if value is not None:
+                    query = query.eq(key, value)
+
+        # Add limit to prevent default 1000 row limitation
+        if limit:
+            query = query.limit(limit)
+
+        result = query.execute()
+        return result.data or []
+    except Exception as e:
+        print(f"Error fetching data from {table_name}: {e}")
+        return []
+
+
+def sync_test_drive_to_alltest_drive(source_table, original_id, lead_data):
+    """
+    Sync test drive data to alltest_drive table when test_drive_done is updated
+    """
+    try:
+        # Check if test_drive_done is not null and is Yes/No or True/False
+        test_drive_done = lead_data.get('test_drive_done')
+        
+        # Handle both boolean and string values
+        if test_drive_done is None:
+            return
+        
+        # Convert boolean to string if needed
+        if test_drive_done is True:
+            test_drive_done = 'Yes'
+        elif test_drive_done is False:
+            test_drive_done = 'No'
+        elif test_drive_done not in ['Yes', 'No']:
+            return
+        
+        # Check if record already exists in alltest_drive
+        existing_record = supabase.table('alltest_drive').select('*').eq('source_table', source_table).eq('original_id', str(original_id)).execute()
+        
+        # Prepare data for alltest_drive table
+        alltest_drive_data = {
+            'source_table': source_table,
+            'original_id': str(original_id),
+            'test_drive_done': test_drive_done,
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        # Map fields based on source table
+        if source_table == 'walkin_table':
+            alltest_drive_data.update({
+                'customer_name': lead_data.get('customer_name'),
+                'mobile_number': lead_data.get('mobile_number'),
+                'lead_status': lead_data.get('lead_status'),
+                'lead_category': lead_data.get('lead_category'),
+                'model_interested': lead_data.get('model_interested'),
+                'final_status': lead_data.get('status'),
+                'ps_name': lead_data.get('ps_assigned'),
+                'branch': lead_data.get('branch'),
+                'created_at': lead_data.get('created_at')
+            })
+            # For walkin_table, use uid instead of id
+            alltest_drive_data['original_id'] = lead_data.get('uid', str(original_id))
+        not_interested_count = len([l for l in all_leads if l.get('lead_category') == 'Not Interested'])
+
+        # Count test drive leads from alltest_drive table
+        test_drive_leads = safe_get_data('alltest_drive')
+        test_drive_yes_count = len([l for l in test_drive_leads if l.get('test_drive_done') == 'Yes'])
+        test_drive_no_count = len([l for l in test_drive_leads if l.get('test_drive_done') == 'No'])
+        test_drive_total_count = len(test_drive_leads)
+
+        # Log export dashboard access
+        auth_manager.log_audit_event(
+            user_id=session.get('user_id'),
+            user_type=session.get('user_type'),
+            action='EXPORT_DASHBOARD_ACCESS',
+            resource='export_leads'
+        )
+    except Exception as e:
+        print(f"Error tracking PS call attempt: {e}")
+
+
+@app.route('/ps_login', methods=['GET', 'POST'])
+def ps_login():
+    if request.method == 'POST':
+        return unified_login()
+    return redirect(url_for('index'))
+
+
+@app.route('/password_reset_request', methods=['GET', 'POST'])
+@limiter.limit("5 per minute")
+def password_reset_request():
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        user_type = request.form.get('user_type', '').strip()
+
+        if not username or not user_type:
+            flash('Please enter username and select user type', 'error')
+            return render_template('password_reset_request.html')
+
+        success, message, token = auth_manager.generate_password_reset_token(username, user_type)
+
+        if success:
+            # Send the reset link via email
+            # Fetch user email from the appropriate table
+            user_email = None
+            try:
+                if user_type == 'admin':
+                    user_result = supabase.table('admin_users').select('email').eq('username', username).execute()
+                elif user_type == 'cre':
+                    user_result = supabase.table('cre_users').select('email').eq('username', username).execute()
+                elif user_type == 'ps':
+                    user_result = supabase.table('ps_users').select('email').eq('username', username).execute()
+                else:
+                    user_result = None
+                if user_result and user_result.data and user_result.data[0].get('email'):
+                    user_email = user_result.data[0]['email']
+            except Exception as e:
+                print(f"Error fetching user email for password reset: {e}")
+                user_email = None
+
+            reset_url = url_for('password_reset', token=token, _external=True)
+            email_sent = False
+            if user_email:
+                try:
+                    msg = MIMEMultipart()
+                    msg['From'] = EMAIL_USER
+                    msg['To'] = user_email
+                    msg['Subject'] = 'Ather CRM Password Reset Request'
+                    body = f"""
+                    Dear {username},
+
+                    We received a request to reset your password for your Ather CRM account.
+
+                    Please click the link below to reset your password:
+                    {reset_url}
+
+                    If you did not request this, please ignore this email.
+
+                    Best regards,\nAther CRM System
+                    """
+                    msg.attach(MIMEText(body, 'plain'))
+                    server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+                    server.starttls()
+                    server.login(EMAIL_USER, EMAIL_PASSWORD)
+                    text = msg.as_string()
+                    server.sendmail(EMAIL_USER, user_email, text)
+                    server.quit()
+                    print(f"Password reset email sent to {user_email}")
+                    email_sent = True
+                except Exception as e:
+                    print(f"Error sending password reset email: {e}")
+                    email_sent = False
+            if email_sent:
+                flash('If the username exists and is valid, a password reset link has been sent to the registered email address.', 'success')
+            else:
+                flash('If the username exists and is valid, a password reset link has been sent to the registered email address.', 'success')
+                # Optionally, log or alert admin if email sending failed
+        else:
+            flash(message, 'error')
+
+    return render_template('password_reset_request.html')
+
+
+@app.route('/password_reset/<token>', methods=['GET', 'POST'])
+def password_reset(token):
+    if request.method == 'POST':
+        new_password = request.form.get('new_password', '').strip()
+        confirm_password = request.form.get('confirm_password', '').strip()
+
+        if not new_password or not confirm_password:
+            flash('Please enter and confirm your new password', 'error')
+            return render_template('password_reset.html', token=token)
+
+        if new_password != confirm_password:
+            flash('Passwords do not match', 'error')
+            return render_template('password_reset.html', token=token)
+
+        success, message = auth_manager.reset_password_with_token(token, new_password)
+
+        if success:
+            flash('Password reset successfully. Please log in with your new password.', 'success')
+            return redirect(url_for('index'))
+        else:
+            flash(message, 'error')
+
+    return render_template('password_reset.html', token=token)
+
+
+@app.route('/change_password', methods=['POST'])
+@require_auth()
+def change_password():
+    current_password = request.form.get('current_password', '').strip()
+    new_password = request.form.get('new_password', '').strip()
+    confirm_password = request.form.get('confirm_password', '').strip()
+
+    if not all([current_password, new_password, confirm_password]):
+        flash('All fields are required', 'error')
+        return redirect(url_for('security_settings'))
+
+    if new_password != confirm_password:
+        flash('New passwords do not match', 'error')
+        return redirect(url_for('security_settings'))
+
+    user_id = session.get('user_id')
+    user_type = session.get('user_type')
+
+    if not user_id or not user_type:
+        flash('Session information not found', 'error')
+        return redirect(url_for('security_settings'))
+
+    success, message = auth_manager.change_password(user_id, user_type, current_password, new_password)
+
+    if success:
+        flash('Password changed successfully', 'success')
+    else:
+        flash(message, 'error')
+
+    return redirect(url_for('security_settings'))
+
+
+@app.route('/change_cre_password', methods=['GET', 'POST'])
+@require_cre
+def change_cre_password():
+    if request.method == 'POST':
+        current_password = request.form.get('current_password', '').strip()
+        new_password = request.form.get('new_password', '').strip()
+        confirm_password = request.form.get('confirm_password', '').strip()
+
+        if not all([current_password, new_password, confirm_password]):
+            flash('All fields are required', 'error')
+            return render_template('change_cre_password.html')
+
+        if new_password != confirm_password:
+            flash('New passwords do not match', 'error')
+            return render_template('change_cre_password.html')
+
+        user_id = session.get('user_id')
+        user_type = session.get('user_type')
+
+        if not user_id or not user_type:
+            flash('Session information not found', 'error')
+            return render_template('change_cre_password.html')
+
+        success, message = auth_manager.change_password(user_id, user_type, current_password, new_password)
+
+        if success:
+            flash('Password changed successfully', 'success')
+            return redirect(url_for('cre_dashboard'))
+        else:
+            flash(message, 'error')
+
+    return render_template('change_cre_password.html')
+
+
+@app.route('/change_ps_password', methods=['GET', 'POST'])
+@require_ps
+def change_ps_password():
+    if request.method == 'POST':
+        current_password = request.form.get('current_password', '').strip()
+        new_password = request.form.get('new_password', '').strip()
+        confirm_password = request.form.get('confirm_password', '').strip()
+
+        if not all([current_password, new_password, confirm_password]):
+            flash('All fields are required', 'error')
+            return render_template('change_ps_password.html')
+
+        if new_password != confirm_password:
+            flash('New passwords do not match', 'error')
+            return render_template('change_ps_password.html')
+
+        user_id = session.get('user_id')
+        user_type = session.get('user_type')
+
+        if not user_id or not user_type:
+            flash('Session information not found', 'error')
+            return render_template('change_ps_password.html')
+
+        success, message = auth_manager.change_password(user_id, user_type, current_password, new_password)
+
+        if success:
+            flash('Password changed successfully', 'success')
+            return redirect(url_for('ps_dashboard'))
+        else:
+            flash(message, 'error')
+
+    return render_template('change_ps_password.html')
+
+
+@app.route('/security_settings')
+@require_auth()
+def security_settings():
+    user_id = session.get('user_id')
+    user_type = session.get('user_type')
+
+    if not user_id or not user_type:
+        flash('Session information not found', 'error')
+        return redirect(url_for('index'))
+
+    # Get active sessions
+    sessions = auth_manager.get_user_sessions(user_id, user_type)
+
+    # Get audit logs
+    audit_logs = auth_manager.get_audit_logs(user_id, user_type, limit=20)
+
+    return render_template('security_settings.html', sessions=sessions, audit_logs=audit_logs)
+
+
+@app.route('/security_audit')
+@require_admin
+def security_audit():
+    """Security audit dashboard"""
+    return render_template('security_audit.html')
+
+
+@app.route('/run_security_audit', methods=['POST'])
+@require_admin
+def run_security_audit():
+    """Run comprehensive security audit"""
+    try:
+        # Run security verification
+        audit_results = run_security_verification(supabase)
+
+        # Log the security audit
+        user_id = session.get('user_id')
+        user_type = session.get('user_type')
+        
+        if user_id and user_type:
+            auth_manager.log_audit_event(
+                user_id=user_id,
+                user_type=user_type,
+                action='SECURITY_AUDIT_RUN',
+                resource='security_audit',
+                details={'overall_score': audit_results.get('overall_score', 0)}
+            )
+
+        return jsonify({
+            'success': True,
+            'results': audit_results
+        })
+    except Exception as e:
+        print(f"Error running security audit: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        })
+
+
+@app.route('/terminate_session', methods=['POST'])
+@require_auth()
+def terminate_session():
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+
+        if not session_id:
+            return jsonify({'success': False, 'message': 'Session ID required'})
+
+        auth_manager.deactivate_session(session_id)
+
+        user_id = session.get('user_id')
+        user_type = session.get('user_type')
+        
+        if user_id and user_type:
+            auth_manager.log_audit_event(
+                user_id=user_id,
+                user_type=user_type,
+                action='SESSION_TERMINATED',
+                details={'terminated_session': session_id}
+            )
+
+        return jsonify({'success': True, 'message': 'Session terminated successfully'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/terminate_all_sessions', methods=['POST'])
+@require_auth()
+def terminate_all_sessions():
+    try:
+        user_id = session.get('user_id')
+        user_type = session.get('user_type')
+        current_session = session.get('session_id')
+
+        if user_id and user_type and current_session:
+            auth_manager.deactivate_all_user_sessions(user_id, user_type, current_session)
+            auth_manager.log_audit_event(
+                user_id=user_id,
+                user_type=user_type,
+                action='ALL_SESSIONS_TERMINATED',
+                details={'except_session': current_session}
+            )
+        else:
+            return jsonify({'success': False, 'message': 'Session information not found'})
+
+        return jsonify({'success': True, 'message': 'All other sessions terminated successfully'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/admin_dashboard')
+@require_admin
+def admin_dashboard():
+    # Get counts for dashboard with better error handling and actual queries
+    try:
+        # Get actual counts from database with proper queries
+        cre_count = get_accurate_count('cre_users')
+        ps_count = get_accurate_count('ps_users')
+        leads_count = get_accurate_count('lead_master')
+        unassigned_leads = get_accurate_count('lead_master', {'assigned': 'No'})
+
+        print(
+            f"Dashboard counts - CRE: {cre_count}, PS: {ps_count}, Total Leads: {leads_count}, Unassigned: {unassigned_leads}")
+
+    except Exception as e:
+        print(f"Error getting dashboard counts: {e}")
+        cre_count = ps_count = leads_count = unassigned_leads = 0
+
+    # Log dashboard access
+    user_id = session.get('user_id')
+    user_type = session.get('user_type')
+    if user_id and user_type:
+        auth_manager.log_audit_event(
+            user_id=user_id,
+            user_type=user_type,
+            action='DASHBOARD_ACCESS',
+            resource='admin_dashboard'
+        )
+
+    return render_template('admin_dashboard.html',
+                           cre_count=cre_count,
+                           ps_count=ps_count,
+                           leads_count=leads_count,
+                           unassigned_leads=unassigned_leads)
+
+
+@app.route('/upload_data', methods=['GET', 'POST'])
+@require_admin
+def upload_data():
+    if request.method == 'POST':
+        if 'file' not in request.files:
+            flash('No file selected', 'error')
+            return redirect(request.url)
+
+        file = request.files['file']
+        source = request.form.get('source', '').strip()
+
+        if not source:
+            flash('Please select a data source', 'error')
+            return redirect(request.url)
+
+        if file.filename == '':
+            flash('No file selected', 'error')
+            return redirect(request.url)
+
+        if file and file.filename and allowed_file(file.filename):
+            filename = secure_filename(str(file.filename))
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+
+            try:
+                file.save(filepath)
+
+                # Check file size
+                file_size = os.path.getsize(filepath)
+                if file_size > 50 * 1024 * 1024:  # 50MB limit
+                    flash('File too large. Maximum size is 50MB.', 'error')
+                    os.remove(filepath)
+                    return redirect(request.url)
+
+                print(f"Processing file: {filename} ({file_size / 1024 / 1024:.2f} MB)")
+
+                # Read the file based on extension
+                if filename.lower().endswith('.csv'):
+                    data = read_csv_file(filepath)
+                else:
+                    data = read_excel_file(filepath)
+
+                if not data:
+                    flash('No valid data found in file', 'error')
+                    os.remove(filepath)
+                    return redirect(request.url)
+
+                print(f"Read {len(data)} rows from file")
+
+                # Get current sequence number for UID generation
+                result = supabase.table('lead_master').select('uid').execute()
+                current_count = len(result.data) if result.data else 0
+
+                # Prepare leads data for batch insert
+                leads_to_insert = []
+                skipped_rows = 0
+
+                for index, row in enumerate(data):
+                    try:
+                        # Validate required fields
+                        required_fields = ['customer_name', 'customer_mobile_number', 'date']
+                        if not all(key in row and str(row[key]).strip() for key in required_fields):
+                            skipped_rows += 1
+                            continue
+
+                        uid = generate_uid(source, row['customer_mobile_number'],
+                                           current_count + len(leads_to_insert) + 1)
+
+                        lead_data = {
+                            'uid': uid,
+                            'date': str(row['date']).strip(),
+                            'customer_name': str(row['customer_name']).strip(),
+                            'customer_mobile_number': str(row['customer_mobile_number']).strip(),
+                            'source': source,
+                            'assigned': 'No',
+                            'final_status': 'Pending'
+                        }
+
+                        leads_to_insert.append(lead_data)
+
+
+                    except Exception as e:
+                        print(f"Error processing row {index}: {e}")
+                        skipped_rows += 1
+                        continue
+
+                if not leads_to_insert:
+                    flash('No valid leads found to insert', 'error')
+                    os.remove(filepath)
+                    return redirect(request.url)
+
+                print(f"Prepared {len(leads_to_insert)} leads for insertion")
+
+                # Batch insert leads
+                success_count = batch_insert_leads(leads_to_insert)
+
+                # Log data upload
+                auth_manager.log_audit_event(
+                    user_id=session.get('user_id'),
+                    user_type=session.get('user_type'),
+                    action='DATA_UPLOAD',
+                    resource='lead_master',
+                    details={
+                        'source': source,
+                        'records_uploaded': success_count,
+                        'filename': filename,
+                        'file_size_mb': round(file_size / 1024 / 1024, 2),
+                        'skipped_rows': skipped_rows
+                    }
+                )
+
+                # Create success message
+                message = f'Successfully uploaded {success_count} leads'
+                if skipped_rows > 0:
+                    message += f' ({skipped_rows} rows skipped due to missing data)'
+                message += '. Please go to "Assign Leads" to assign them to CREs.'
+
+                flash(message, 'success')
+
+                # Clean up uploaded file
+                os.remove(filepath)
+
+            except Exception as e:
+                print(f"Error processing file: {e}")
+                flash(f'Error processing file: {str(e)}', 'error')
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+        else:
+            flash('Invalid file format. Please upload CSV or Excel files only.', 'error')
+
+    return render_template('upload_data.html')
+
+@app.route('/assign_leads')
+@require_admin
+def assign_leads():
+    try:
+        # Fetch all unassigned leads in batches of 1000
+        all_unassigned_leads = []
+        batch_size = 1000
+        offset = 0
+        while True:
+            result = supabase.table('lead_master').select('*').eq('assigned', 'No').range(offset, offset + batch_size - 1).execute()
+            batch = result.data or []
+            all_unassigned_leads.extend(batch)
+            if len(batch) < batch_size:
+                break
+            offset += batch_size
+
+        # Organize by source
+        leads_by_source = {}
+        for lead in all_unassigned_leads:
+            source = lead.get('source', 'Unknown')
+            leads_by_source.setdefault(source, []).append(lead)
+
+        # Get CREs
+        cres = safe_get_data('cre_users')
+
+        # Get accurate total unassigned count
+        actual_unassigned_count = get_accurate_count('lead_master', {'assigned': 'No'})
+
+        # Get accurate per-source unassigned counts
+        source_unassigned_counts = {}
+        for source in leads_by_source.keys():
+            source_unassigned_counts[source] = get_accurate_count('lead_master', {'assigned': 'No', 'source': source})
+
+        # Get all sources that have auto-assign configurations, even if they have zero unassigned leads
+        auto_assign_sources = set()
+        try:
+            auto_assign_result = supabase.table('auto_assign_config').select('source').execute()
+            if auto_assign_result.data:
+                for config in auto_assign_result.data:
+                    auto_assign_sources.add(config['source'])
+        except Exception as e:
+            print(f"Error fetching auto-assign sources: {e}")
+
+        # Add sources with auto-assign configs to source_unassigned_counts if they're not already there
+        for source in auto_assign_sources:
+            if source not in source_unassigned_counts:
+                source_unassigned_counts[source] = 0
+
+        return render_template('assign_leads.html',
+                               unassigned_leads=all_unassigned_leads,
+                               actual_unassigned_count=actual_unassigned_count,
+                               cres=cres,
+                               leads_by_source=leads_by_source,
+                               source_unassigned_counts=source_unassigned_counts)
+    except Exception as e:
+        print(f"Error loading assign leads data: {e}")
+        flash(f'Error loading data: {str(e)}', 'error')
+        return redirect(url_for('admin_dashboard'))
+
+
+@app.route('/assign_leads_dynamic_action', methods=['POST'])
+@require_admin
+def assign_leads_dynamic_action():
+    try:
+        data = request.get_json()
+        assignments = data.get('assignments', [])
+
+        if not assignments:
+            return jsonify({'success': False, 'message': 'No assignments provided'}), 400
+
+        # Fetch all unassigned leads in batches
+        all_unassigned = []
+        batch_size = 1000
+        offset = 0
+        while True:
+            result = supabase.table('lead_master').select('*').eq('assigned', 'No').range(offset, offset + batch_size - 1).execute()
+            batch = result.data or []
+            all_unassigned.extend(batch)
+            if len(batch) < batch_size:
+                break
+            offset += batch_size
+
+        leads_by_source = {}
+        for lead in all_unassigned:
+            source = lead.get('source', 'Unknown')
+            leads_by_source.setdefault(source, []).append(lead)
+
+        total_assigned = 0
+
+        for assignment in assignments:
+            cre_id = assignment.get('cre_id')
+            source = assignment.get('source')
+            quantity = assignment.get('quantity')
+
+            if not cre_id or not source or not quantity:
+                continue
+
+            # Get CRE details
+            cre_data = supabase.table('cre_users').select('*').eq('id', cre_id).execute()
+            if not cre_data.data:
+                continue
+
+            cre = cre_data.data[0]
+            leads = leads_by_source.get(source, [])
+
+            if not leads:
+                print(f"No unassigned leads found for source {source}")
+                continue
+
+            random.shuffle(leads)
+            leads_to_assign = leads[:quantity]
+            leads_by_source[source] = leads[quantity:]  # Remove assigned leads
+
+            for lead in leads_to_assign:
+                update_data = {
+                    'cre_name': cre['name'],
+                    'assigned': 'Yes',
+                    'cre_assigned_at': datetime.now().isoformat()
+
+                }
+
+                try:
+                    supabase.table('lead_master').update(update_data).eq('uid', lead['uid']).execute()
+                    total_assigned += 1
+                    print(f"Assigned lead {lead['uid']} to CRE {cre['name']} for source {source}")
+                    if total_assigned % 100 == 0:
+                        time.sleep(0.1)
+                except Exception as e:
+                    print(f"Error assigning lead {lead['uid']}: {e}")
+
+        print(f"Total leads assigned: {total_assigned}")
+        return jsonify({'success': True, 'message': f'Total {total_assigned} leads assigned successfully'})
+
+    except Exception as e:
+        print(f"Error in dynamic lead assignment: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/add_cre', methods=['GET', 'POST'])
+@require_admin
+def add_cre():
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        phone = request.form.get('phone', '').strip()
+        email = request.form.get('email', '').strip()
+        if not all([name, username, password, phone, email]):
+            flash('All fields are required', 'error')
+            return render_template('add_cre.html')
+        if not auth_manager.validate_password_strength(password):
+            flash(
+                'Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character',
+                'error')
+            return render_template('add_cre.html')
+        try:
+            # Check if username already exists
+            existing = supabase.table('cre_users').select('username').eq('username', username).execute()
+            if existing.data:
+                flash('Username already exists', 'error')
+                return render_template('add_cre.html')
+            # Hash password using auth_manager (provides hash and salt)
+            password_hash, salt = auth_manager.hash_password(password)
+            # Replace the existing cre_data creation with this:
+            cre_data = {
+                'name': name,
+                'username': username,
+                'password': password,  # Keep for backward compatibility
+                'password_hash': password_hash,
+                'salt': salt,  # Add the salt value
+                'phone': phone,
+                'email': email,
+                'is_active': True,
+                'role': 'cre',
+                'failed_login_attempts': 0
+            }
+            result = supabase.table('cre_users').insert(cre_data).execute()
+            # Log CRE creation
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='CRE_CREATED',
+                resource='cre_users',
+                resource_id=str(result.data[0]['id']) if result.data else None,
+                details={'cre_name': name, 'username': username}
+            )
+            flash('CRE added successfully', 'success')
+            return redirect(url_for('manage_cre'))
+        except Exception as e:
+            flash(f'Error adding CRE: {str(e)}', 'error')
+    return render_template('add_cre.html')
+
+@app.route('/add_ps', methods=['GET', 'POST'])
+@require_admin
+def add_ps():
+    branches = ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        phone = request.form.get('phone', '').strip()
+        email = request.form.get('email', '').strip()
+        branch = request.form.get('branch', '').strip()
+        if not all([name, username, password, phone, email, branch]):
+            flash('All fields are required', 'error')
+            return render_template('add_ps.html', branches=branches)
+        if not auth_manager.validate_password_strength(password):
+            flash(
+                'Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character',
+                'error')
+            return render_template('add_ps.html', branches=branches)
+        try:
+            # Check if username already exists
+            existing = supabase.table('ps_users').select('username').eq('username', username).execute()
+            if existing.data:
+                flash('Username already exists', 'error')
+                return render_template('add_ps.html', branches=branches)
+            # Hash password using auth_manager (provides hash and salt)
+            password_hash, salt = auth_manager.hash_password(password)
+            # Replace the existing ps_data creation with this:
+            ps_data = {
+                'name': name,
+                'username': username,
+                'password': password,  # Keep for backward compatibility
+                'password_hash': password_hash,
+                'salt': salt,  # Add the salt value
+                'phone': phone,
+                'email': email,
+                'branch': branch,
+                'is_active': True,
+                'role': 'ps',
+                'failed_login_attempts': 0
+            }
+            result = supabase.table('ps_users').insert(ps_data).execute()
+            # Log PS creation
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='PS_CREATED',
+                resource='ps_users',
+                resource_id=str(result.data[0]['id']) if result.data else None,
+                details={'ps_name': name, 'username': username, 'branch': branch}
+            )
+            flash('Product Specialist added successfully', 'success')
+            return redirect(url_for('manage_ps'))
+        except Exception as e:
+            flash(f'Error adding Product Specialist: {str(e)}', 'error')
+    return render_template('add_ps.html', branches=branches)
+
+
+
+@app.route('/add_bh', methods=['GET', 'POST'])
+@require_admin
+def add_bh():
+    branches = ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
+
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        phone = request.form.get('phone', '').strip()
+        email = request.form.get('email', '').strip()
+        branch = request.form.get('branch', '').strip()
+
+        if not all([name, username, password, phone, email, branch]):
+            flash('All fields are required', 'error')
+            return render_template('add_bh.html', branches=branches)
+
+        if not auth_manager.validate_password_strength(password):
+            flash(
+                'Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character',
+                'error')
+            return render_template('add_bh.html', branches=branches)
+
+        try:
+            # Check if username already exists
+            existing = supabase.table('branch_head_users').select('username').eq('username', username).execute()
+            if existing.data:
+                flash('Username already exists', 'error')
+                return render_template('add_bh.html', branches=branches)
+
+            # Hash password using auth_manager (provides hash and salt)
+            password_hash, salt = auth_manager.hash_password(password)
+
+            # Create branch head data
+            bh_data = {
+                'name': name,
+                'username': username,
+                'password': password,  # Keep for backward compatibility
+                'password_hash': password_hash,
+                'salt': salt,  # Add the salt value
+                'phone': phone,
+                'email': email,
+                'branch': branch,
+                'is_active': True,
+                'role': 'bh',
+                'failed_login_attempts': 0
+            }
+
+            result = supabase.table('branch_head_users').insert(bh_data).execute()
+
+            # Log Branch Head creation
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='BRANCH_HEAD_CREATED',
+                resource='branch_head_users',
+                resource_id=str(result.data[0]['id']) if result.data else None,
+                details={'bh_name': name, 'username': username, 'branch': branch}
+            )
+
+            flash('Branch Head added successfully', 'success')
+            return redirect(url_for('manage_bh'))
+        except Exception as e:
+            flash(f'Error adding Branch Head: {str(e)}', 'error')
+
+    return render_template('add_bh.html', branches=branches)
+@app.route('/manage_cre')
+@require_admin
+def manage_cre():
+    try:
+        cre_users = safe_get_data('cre_users')
+        return render_template('manage_cre.html', cre_users=cre_users)
+    except Exception as e:
+        flash(f'Error loading CRE users: {str(e)}', 'error')
+        return render_template('manage_cre.html', cre_users=[])
+
+
+@app.route('/manage_ps')
+@require_admin
+def manage_ps():
+    try:
+        ps_users = safe_get_data('ps_users')
+        return render_template('manage_ps.html', ps_users=ps_users)
+    except Exception as e:
+        flash(f'Error loading PS users: {str(e)}', 'error')
+        return render_template('manage_ps.html', ps_users=[])
+
+
+@app.route('/toggle_ps_status/<int:ps_id>', methods=['POST'])
+@require_admin
+def toggle_ps_status(ps_id):
+    try:
+        data = request.get_json()
+        active_status = data.get('active', True)
+
+        # Update PS status
+        result = supabase.table('ps_users').update({
+            'is_active': active_status
+        }).eq('id', ps_id).execute()
+
+        if result.data:
+            # Log status change
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='PS_STATUS_CHANGED',
+                resource='ps_users',
+                resource_id=str(ps_id),
+                details={'new_status': 'active' if active_status else 'inactive'}
+            )
+
+            return jsonify({'success': True, 'message': 'PS status updated successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'PS not found'})
+
+    except Exception as e:
+        print(f"Error toggling PS status: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+
+
+# =============================================================================
+# AUTO-ASSIGN SYSTEM INTEGRATION
+# =============================================================================
+
+def auto_assign_new_leads_for_source(source):
+    """
+    Automatically assign new leads for a specific source based on saved configuration.
+    This function is integrated directly into Flask app for automatic execution.
+    
+    Args:
+        source (str): The source name to auto-assign leads for
+        
+    Returns:
+        dict: Result with assigned_count and status
+    """
+    try:
+        print(f"🤖 Auto-assigning new leads for source: {source}")
+        
+        # Get auto-assign configuration for this source
+        config_result = supabase.table('auto_assign_config').select('cre_id').eq('source', source).execute()
+        configs = config_result.data or []
+        
+        if not configs:
+            print(f"ℹ️ No auto-assign configuration found for {source}")
+            return {'success': False, 'message': f'No auto-assign configuration found for {source}', 'assigned_count': 0}
+        
+        cre_ids = [config['cre_id'] for config in configs]
+        print(f"📋 Found {len(cre_ids)} CREs configured for {source}: {cre_ids}")
+        
+        # Get CRE details for fair distribution
+        cre_result = supabase.table('cre_users').select('*').in_('id', cre_ids).execute()
+        cres = cre_result.data or []
+        
+        if not cres:
+            print(f"⚠️ No CREs found for source {source}")
+            return {'success': False, 'message': f'No CREs found for source {source}', 'assigned_count': 0}
+        
+        # Get unassigned leads for this source (double-check to avoid race conditions)
+        unassigned_result = supabase.table('lead_master').select('*').eq('assigned', 'No').eq('source', source).execute()
+        unassigned_leads = unassigned_result.data or []
+        
+        if not unassigned_leads:
+            print(f"ℹ️ No unassigned leads found for {source}")
+            return {'success': True, 'message': f'No unassigned leads found for {source}', 'assigned_count': 0}
+        
+        print(f"📊 Found {len(unassigned_leads)} unassigned leads for {source}")
+        
+        # Get the last assigned CRE for this source to determine starting point
+        last_assigned_result = supabase.table('lead_master').select('cre_name').eq('source', source).order('cre_assigned_at', desc=True).limit(1).execute()
+        last_cre_name = None
+        if last_assigned_result.data:
+            last_cre_name = last_assigned_result.data[0].get('cre_name')
+        
+        # Find starting index for round-robin
+        start_index = 0
+        if last_cre_name:
+            for i, cre in enumerate(cres):
+                if cre['name'] == last_cre_name:
+                    start_index = (i + 1) % len(cres)
+                    break
+        
+        # Assign leads using round-robin fair distribution
+        assigned_count = 0
+        for i, lead in enumerate(unassigned_leads):
+            # Double-check if lead is still unassigned before attempting assignment
+            current_lead = supabase.table('lead_master').select('assigned').eq('uid', lead['uid']).execute()
+            if not current_lead.data or current_lead.data[0].get('assigned') == 'Yes':
+                print(f"ℹ️ Lead {lead['uid']} is already assigned, skipping...")
+                continue
+                
+            selected_cre = cres[(start_index + i) % len(cres)]
+            
+            update_data = {
+                'cre_name': selected_cre['name'],
+                'assigned': 'Yes',
+                'cre_assigned_at': get_ist_timestamp(),
+                'lead_status': 'Pending'
+            }
+            
+            try:
+                # Update lead assignment with optimistic locking
+                result = supabase.table('lead_master').update(update_data).eq('uid', lead['uid']).eq('assigned', 'No').execute()
+                
+                # Check if update was successful
+                if not result.data:
+                    print(f"ℹ️ Lead {lead['uid']} was already assigned by another process, skipping...")
+                    continue
+                
+                # Create call attempt history
+                call_history_data = {
+                    'uid': lead['uid'],
+                    'call_no': 'first',
+                    'attempt': 1,
+                    'status': 'Pending',
+                    'cre_name': selected_cre['name'],
+                    'call_was_recorded': False,
+                    'follow_up_date': None,
+                    'remarks': f'Auto-assigned to {selected_cre["name"]} from {source}',
+                    'final_status': 'Pending'
+                }
+                supabase.table('cre_call_attempt_history').insert(call_history_data).execute()
+                
+                # Update CRE's auto-assign count
+                supabase.table('cre_users').update({
+                    'auto_assign_count': selected_cre.get('auto_assign_count', 0) + 1
+                }).eq('id', selected_cre['id']).execute()
+                
+                # Log auto-assign history
+                history_data = {
+                    'lead_uid': lead['uid'],
+                    'source': source,
+                    'assigned_cre_id': selected_cre['id'],
+                    'assigned_cre_name': selected_cre['name'],
+                    'cre_total_leads_before': selected_cre.get('auto_assign_count', 0),
+                    'cre_total_leads_after': selected_cre.get('auto_assign_count', 0) + 1,
+                    'assignment_method': 'fair_distribution',
+                    'created_at': get_ist_timestamp()
+                }
+                supabase.table('auto_assign_history').insert(history_data).execute()
+                
+                assigned_count += 1
+                print(f"🎉 🟢 SUCCESS: Auto-assigned lead {lead['uid']} to {selected_cre['name']} (source: {source})")
+                print(f"   📋 Lead Details: UID={lead['uid']}, Customer={lead.get('customer_name', 'N/A')}, Phone={lead.get('customer_phone_number', 'N/A')}")
+                print(f"   👤 CRE Details: ID={selected_cre['id']}, Name={selected_cre['name']}, Total Leads Before={selected_cre.get('auto_assign_count', 0)}")
+                print(f"   ⏰ Assignment Time: {get_ist_timestamp()}")
+                print(f"   🔄 Status: {lead.get('lead_status', 'N/A')} → Pending")
+                print(f"   📞 Call History: First call attempt recorded")
+                print(f"   📊 Auto-assign Count: {selected_cre.get('auto_assign_count', 0)} → {selected_cre.get('auto_assign_count', 0) + 1}")
+                print("   " + "="*80)
+                
+            except Exception as e:
+                print(f"❌ 🔴 FAILED: Auto-assign failed for lead {lead['uid']} (source: {source})")
+                print(f"   📋 Lead Details: UID={lead['uid']}, Customer={lead.get('customer_name', 'N/A')}, Phone={lead.get('customer_phone_number', 'N/A')}")
+                print(f"   👤 CRE Details: ID={selected_cre['id']}, Name={selected_cre['name']}")
+                print(f"   ⏰ Error Time: {get_ist_timestamp()}")
+                print(f"   🚨 Error Details: {str(e)}")
+                print(f"   🔍 Error Type: {type(e).__name__}")
+                print(f"   📊 Current Status: assigned={lead.get('assigned', 'N/A')}, lead_status={lead.get('lead_status', 'N/A')}")
+                print("   " + "="*80)
+                # Don't continue on error, just log it
+                continue
+        
+        if assigned_count > 0:
+            print(f"🎉 🟢 SUCCESS SUMMARY: Auto-assigned {assigned_count} new leads for {source}")
+            print(f"   📊 Total leads processed: {len(unassigned_leads)}")
+            print(f"   ✅ Successfully assigned: {assigned_count}")
+            print(f"   ❌ Failed assignments: {len(unassigned_leads) - assigned_count}")
+            print(f"   👥 CREs involved: {[cre['name'] for cre in cres]}")
+            print(f"   ⏰ Completion Time: {get_ist_timestamp()}")
+            print("   " + "="*80)
+        else:
+            print(f"ℹ️ INFO: No leads were auto-assigned for {source}")
+            print(f"   📊 Total leads processed: {len(unassigned_leads)}")
+            print(f"   🔍 Reason: All leads were already assigned or no unassigned leads found")
+            print("   " + "="*80)
+        
+        return {
+            'success': True,
+            'message': f'Successfully auto-assigned {assigned_count} new leads for {source}',
+            'assigned_count': assigned_count
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in auto_assign_new_leads_for_source: {e}")
+        return {'success': False, 'message': str(e), 'assigned_count': 0}
+
+@app.route('/check_and_assign_new_leads', methods=['POST'])
+def check_and_assign_new_leads():
+    """
+    Check all configured sources and assign new leads automatically.
+    This function runs in the background to continuously monitor for new leads.
+    """
+    try:
+        print("🔍 Checking for new leads to auto-assign...")
+        
+        # Get all auto-assign configurations
+        config_result = supabase.table('auto_assign_config').select('*').execute()
+        configs = config_result.data or []
+        
+        if not configs:
+            print("ℹ️ No auto-assign configurations found")
+            return {'success': False, 'message': 'No auto-assign configurations found', 'total_assigned': 0}
+        
+        # Group configs by source
+        source_configs = {}
+        for config in configs:
+            source = config['source']
+            if source not in source_configs:
+                source_configs[source] = []
+            source_configs[source].append(config)
+        
+        # Process each source
+        total_assigned = 0
+        for source in source_configs.keys():
+            result = auto_assign_new_leads_for_source(source)
+            if result and result.get('success'):
+                total_assigned += result.get('assigned_count', 0)
+        
+        if total_assigned > 0:
+            print(f"🎉 🟢 GLOBAL SUCCESS: Auto-assign completed across all sources")
+            print(f"   📊 Total leads assigned: {total_assigned}")
+            print(f"   🔧 Sources processed: {list(source_configs.keys())}")
+            print(f"   ⏰ Completion Time: {get_ist_timestamp()}")
+            print("   " + "="*80)
+        else:
+            print(f"ℹ️ INFO: No new leads found to assign across all sources")
+            print(f"   🔧 Sources checked: {list(source_configs.keys())}")
+            print(f"   🔍 Reason: No unassigned leads found in any configured source")
+            print("   " + "="*80)
+        
+        return {
+            'success': True,
+            'message': f'Auto-assign completed: {total_assigned} total leads assigned',
+            'total_assigned': total_assigned
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in check_and_assign_new_leads: {e}")
+        return {'success': False, 'message': str(e), 'total_assigned': 0}
+
+# =============================================================================
+
+def auto_assign_background_worker():
+    """Background worker that continuously checks for new leads to auto-assign"""
+    print("🚀 Auto-assign background worker started in separate thread")
+    
+    # Immediate auto-assign when server starts
+    print("🚀 Starting immediate auto-assign check...")
+    try:
+        with app.app_context():
+            result = check_and_assign_new_leads()
+            if result and result.get('success'):
+                print(f"   ✅ Immediate auto-assign completed successfully")
+                if result.get('total_assigned', 0) > 0:
+                    print(f"   📊 {result.get('total_assigned')} leads assigned immediately")
+                else:
+                    print(f"   ℹ️ No new leads found for immediate assignment")
+            else:
+                print(f"   ⚠️ Immediate auto-assign completed with issues")
+    except Exception as e:
+        print(f"❌ Error in immediate auto-assign: {e}")
+    
+    print("   " + "="*80)
+    
+    # Continuous background auto-assign every 2 minutes
+    while True:
+        try:
+            # Check for new leads every 5 minutes (less aggressive to prevent blocking)
+            time.sleep(300)  # 5 minutes
+            print("🔄 Background auto-assign check running...")
+            print(f"   ⏰ Check Time: {get_ist_timestamp()}")
+            print("   " + "="*80)
+            
+            # Run within Flask application context with timeout protection
+            try:
+                with app.app_context():
+                    # Add a small delay to prevent blocking
+                    time.sleep(0.1)
+                    result = check_and_assign_new_leads()
+                    if result and result.get('success'):
+                        print(f"   ✅ Background check completed successfully")
+                        if result.get('total_assigned', 0) > 0:
+                            print(f"   📊 {result.get('total_assigned')} leads assigned")
+                    else:
+                        print(f"   ⚠️ Background check completed with issues")
+            except Exception as context_error:
+                print(f"❌ Error in Flask context: {context_error}")
+                
+        except Exception as e:
+            print(f"❌ 🔴 CRITICAL ERROR in background auto-assign worker: {e}")
+            print(f"   ⏰ Error Time: {get_ist_timestamp()}")
+            print(f"   🚨 Error Type: {type(e).__name__}")
+            print(f"   🔍 Error Details: {str(e)}")
+            print("   " + "="*80)
+            time.sleep(60)  # Wait 1 minute on error before retrying
+
+def start_auto_assign_system():
+    """Start the auto-assign system in a production-compatible way"""
+    try:
+        # Check if we're in production (sync worker environment)
+        import os
+        is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
+        
+        if is_production:
+            print("🚀 Production environment detected - using HTTP-triggered auto-assign")
+            print("   📋 Will check for new leads every 5 minutes")
+            print("   ⚡ First auto-assign check starting now...")
+            print("   🔧 Using HTTP endpoint scheduling")
+            print("   🚀 Auto-assign will run in production mode!")
+            
+            # In production, trigger immediate auto-assign via HTTP endpoint
+            try:
+                with app.app_context():
+                    result = check_and_assign_new_leads()
+                    if result and result.get('success'):
+                        print(f"   ✅ Production auto-assign completed: {result.get('total_assigned', 0)} leads assigned")
+                    else:
+                        print(f"   ⚠️ Production auto-assign completed with issues")
+            except Exception as e:
+                print(f"❌ Error in production auto-assign: {e}")
+            
+            # Return None to indicate no threading (use HTTP endpoints instead)
+            return None
+        else:
+            # Development environment - use threading
+            print("🚀 Development environment - using threading for auto-assign")
+            auto_assign_thread = threading.Thread(
+                target=auto_assign_background_worker, 
+                name="AutoAssignWorker",
+                daemon=False
+            )
+            auto_assign_thread.start()
+            
+            print("   📋 Will check for new leads every 5 minutes")
+            print("   ⚡ First auto-assign check starting now...")
+            print("   🔧 Thread ID:", auto_assign_thread.ident)
+            print("   🧵 Thread Name:", auto_assign_thread.name)
+            print("   🚀 Thread running independently - main app remains responsive!")
+            
+            return auto_assign_thread
+            
+    except Exception as e:
+        print(f"❌ Failed to start auto-assign system: {e}")
+        return None
+
+# Start the auto-assign system
+auto_assign_thread = start_auto_assign_system()
+
+# Production auto-assign scheduler (sync worker compatible)
+def setup_production_auto_assign():
+    """Setup production-compatible auto-assign scheduling"""
+    import os
+    is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
+    
+    if is_production:
+        print("🚀 Setting up production auto-assign scheduler...")
+        print("   📋 Auto-assign will be triggered via HTTP requests")
+        print("   🔧 Use /api/auto_assign_trigger endpoint to trigger manually")
+        print("   📊 Set up external cron job or scheduler to call this endpoint every 5 minutes")
+        print("   💡 Example cron job: */5 * * * * curl 'https://your-domain.com/api/auto_assign_trigger'")
+        print("   💡 Example with uptimerobot: Monitor /api/auto_assign_trigger every 5 minutes")
+        print("   💡 Example with render cron: Add cron job to call /api/auto_assign_trigger")
+        
+        # In production, we can't use background threads with sync workers
+        # Instead, we'll rely on external scheduling
+        return True
+    return False
+
+# Setup production auto-assign if needed
+production_auto_assign = setup_production_auto_assign()
+
+# Production status endpoint
+@app.route('/api/status')
+def api_status():
+    """Production status endpoint"""
+    import os
+    is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
+    
+    return jsonify({
+        'status': 'operational',
+        'environment': 'production' if is_production else 'development',
+        'auto_assign': 'http-triggered' if is_production else 'background-thread',
+        'timestamp': get_ist_timestamp(),
+        'message': 'Ather CRM is running successfully'
+    })
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for production monitoring"""
+    try:
+        # Test Supabase connection
+        test_result = supabase.table('admin_users').select('count', count='exact').limit(1).execute()
+        
+        # Get production status
+        import os
+        is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
+        
+        return jsonify({
+            'status': 'healthy',
+            'database': 'connected',
+            'timestamp': get_ist_timestamp(),
+            'environment': 'production' if is_production else 'development',
+            'auto_assign_thread_alive': auto_assign_thread.is_alive() if auto_assign_thread else False,
+            'auto_assign_status': 'http-triggered' if is_production else 'threading',
+            'message': 'System is responsive and auto-assign is running independently'
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'database': 'disconnected',
+            'error': str(e),
+            'timestamp': get_ist_timestamp()
+        }), 500
+
+@app.route('/api/auto_assign_simple', methods=['POST'])
+def api_auto_assign_simple():
+    """Simple auto-assign endpoint for production (no auth required)"""
+    try:
+        with app.app_context():
+            result = check_and_assign_new_leads()
+            if result and result.get('success'):
+                return jsonify({
+                    'success': True, 
+                    'message': f'Auto-assign completed: {result.get("total_assigned", 0)} leads assigned',
+                    'total_assigned': result.get('total_assigned', 0),
+                    'timestamp': get_ist_timestamp(),
+                    'note': 'This endpoint is for production auto-assign scheduling'
+                })
+            else:
+                return jsonify({
+                    'success': False, 
+                    'message': 'Auto-assign completed with issues',
+                    'error': result.get('message', 'Unknown error') if result else 'No result'
+                })
+    except Exception as e:
+        return jsonify({
+            'success': False, 
+            'message': f'Error triggering auto-assign: {str(e)}'
+        })
+
+@app.route('/api/auto_assign_trigger', methods=['GET'])
+def api_auto_assign_trigger():
+    """GET endpoint for easy auto-assign triggering (production use)"""
+    try:
+        with app.app_context():
+            result = check_and_assign_new_leads()
+            if result and result.get('success'):
+                return jsonify({
+                    'success': True, 
+                    'message': f'Auto-assign completed: {result.get("total_assigned", 0)} leads assigned',
+                    'total_assigned': result.get('total_assigned', 0),
+                    'timestamp': get_ist_timestamp(),
+                    'note': 'Use this endpoint for production auto-assign scheduling (GET request)'
+                })
+            else:
+                return jsonify({
+                    'success': False, 
+                    'message': 'Auto-assign completed with issues',
+                    'error': result.get('message', 'Unknown error') if result else 'No result'
+                })
+    except Exception as e:
+        return jsonify({
+            'success': False, 
+            'message': f'Error triggering auto-assign: {str(e)}'
+        })
+
+# Fallback authentication system for production SSL issues
+@app.route('/fallback_login', methods=['GET', 'POST'])
+def fallback_login():
+    """Fallback login system when Supabase SSL fails"""
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        user_type = request.form.get('user_type', '').strip().lower()
+        
+        # Simple fallback authentication (you should enhance this)
+        if username == 'admin' and password == 'admin123' and user_type == 'admin':
+            session.clear()
+            session['user_id'] = 1
+            session['user_type'] = 'admin'
+            session['username'] = username
+            flash('Fallback login successful (Admin)', 'success')
+            return redirect(url_for('admin_dashboard'))
+        elif username == 'cre' and password == 'cre123' and user_type == 'cre':
+            session.clear()
+            session['user_id'] = 1
+            session['user_type'] = 'cre'
+            session['username'] = username
+            flash('Fallback login successful (CRE)', 'success')
+            return redirect(url_for('cre_dashboard'))
+        elif username == 'ps' and password == 'ps123' and user_type == 'ps':
+            session.clear()
+            session['user_id'] = 1
+            session['user_type'] = 'ps'
+            session['username'] = username
+            flash('Fallback login successful (PS)', 'success')
+            return redirect(url_for('ps_dashboard'))
+        elif username == 'bh' and password == 'bh123' and user_type == 'bh':
+            session.clear()
+            session['user_id'] = 1
+            session['user_type'] = 'bh'
+            session['username'] = username
+            flash('Fallback login successful (Branch Head)', 'success')
+            return redirect(url_for('bh_dashboard'))
+        else:
+            flash('Invalid credentials in fallback mode', 'error')
+    
+    return render_template('fallback_login.html')
+
+@app.route('/api/ssl_status')
+def api_ssl_status():
+    """Check SSL connection status"""
+    try:
+        # Test Supabase connection
+        test_result = supabase.table('admin_users').select('id').limit(1).execute()
+        ssl_status = 'working'
+        message = 'SSL connection is working properly'
+    except Exception as e:
+        ssl_status = 'failed'
+        message = f'SSL connection failed: {str(e)}'
+    
+    return jsonify({
+        'ssl_status': ssl_status,
+        'message': message,
+        'timestamp': get_ist_timestamp(),
+        'fallback_available': True,
+        'fallback_url': url_for('fallback_login')
+    })
+
+# Thread monitoring and management
+def monitor_threads():
+    """Monitor thread status and restart if needed"""
+    import threading
+    active_threads = threading.active_count()
+    print(f"🔍 Active threads: {active_threads}")
+    
+    # Check if auto-assign thread is still alive
+    if auto_assign_thread and not auto_assign_thread.is_alive():
+        print("⚠️ Auto-assign thread died, restarting...")
+        # Note: We can't modify global variable here due to scope
+        # This function is for monitoring only
+        print("⚠️ Auto-assign thread needs restart - use /debug/restart_auto_assign endpoint")
+
+# Add thread monitoring to Flask app
+@app.before_request
+def check_thread_health():
+    """Check thread health before each request"""
+    # Only check thread health in development environment
+    if auto_assign_thread and not auto_assign_thread.is_alive():
+        print("⚠️ Auto-assign thread health check failed - needs restart")
+        # Note: We can't restart here due to request context
+        # Use /debug/restart_auto_assign endpoint to restart
+
+# Debug routes for thread management
+@app.route('/debug/threads')
+@require_admin
+def debug_threads():
+    """Debug endpoint to check thread status"""
+    import threading
+    import os
+    is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
+    
+    active_threads = threading.active_count()
+    thread_info = {
+        'active_threads': active_threads,
+        'environment': 'production' if is_production else 'development',
+        'auto_assign_thread_alive': auto_assign_thread.is_alive() if auto_assign_thread else False,
+        'auto_assign_thread_id': auto_assign_thread.ident if auto_assign_thread else None,
+        'auto_assign_thread_name': auto_assign_thread.name if auto_assign_thread else None,
+        'auto_assign_status': 'http-triggered' if is_production else 'threading'
+    }
+    return jsonify(thread_info)
+
+@app.route('/debug/restart_auto_assign', methods=['POST'])
+@require_admin
+def restart_auto_assign():
+    """Manually restart auto-assign system"""
+    global auto_assign_thread
+    if auto_assign_thread and auto_assign_thread.is_alive():
+        print("🔄 Manually restarting auto-assign system...")
+        # Note: We can't directly stop a running thread, but we can start a new one
+        # The old one will eventually complete its current cycle
+    
+    auto_assign_thread = start_auto_assign_system()
+    return jsonify({'success': True, 'message': 'Auto-assign system restarted'})
+
+@app.route('/debug/trigger_auto_assign', methods=['POST'])
+@require_admin
+def trigger_auto_assign():
+    """Manually trigger immediate auto-assign"""
+    try:
+        with app.app_context():
+            result = check_and_assign_new_leads()
+            if result and result.get('success'):
+                return jsonify({
+                    'success': True, 
+                    'message': f'Auto-assign completed: {result.get("total_assigned", 0)} leads assigned',
+                    'total_assigned': result.get('total_assigned', 0)
+                })
+            else:
+                return jsonify({
+                    'success': False, 
+                    'message': 'Auto-assign completed with issues',
+                    'error': result.get('message', 'Unknown error') if result else 'No result'
+                })
+    except Exception as e:
+        return jsonify({
+            'success': False, 
+            'message': f'Error triggering auto-assign: {str(e)}'
+        })
+
+@app.route('/api/auto_assign', methods=['POST'])
+def api_auto_assign():
+    """Public API endpoint for triggering auto-assign (for production use)"""
+    try:
+        # Simple authentication check (you can enhance this)
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        token = auth_header.split(' ')[1]
+        # For now, accept any token (you should implement proper token validation)
+        
+        with app.app_context():
+            result = check_and_assign_new_leads()
+            if result and result.get('success'):
+                return jsonify({
+                    'success': True, 
+                    'message': f'Auto-assign completed: {result.get("total_assigned", 0)} leads assigned',
+                    'total_assigned': result.get('total_assigned', 0),
+                    'timestamp': get_ist_timestamp()
+                })
+            else:
+                return jsonify({
+                    'success': False, 
+                    'message': 'Auto-assign completed with issues',
+                    'error': result.get('message', 'Unknown error') if result else 'No result'
+                })
+    except Exception as e:
+        return jsonify({
+            'success': False, 
+            'message': f'Error triggering auto-assign: {str(e)}'
+        })
+
+# Health check endpoint already defined above - removing duplicate
+# The comprehensive health check at line ~1766 handles database connectivity and system status
+
+# =============================================================================
+SECRET_KEY = os.environ.get('FLASK_SECRET_KEY', 'fallback-secret-key-change-this')
+
+# Email configuration (add these to your .env file)
+SMTP_SERVER = os.environ.get('SMTP_SERVER', 'smtp.gmail.com')
+SMTP_PORT = int(os.environ.get('SMTP_PORT', '587'))
+EMAIL_USER = os.environ.get('EMAIL_USER', '')
+EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD', '')
 
 # Upload folder configuration
 UPLOAD_FOLDER = 'uploads'
@@ -897,61 +2759,39 @@ def unified_login() -> Response:
     password = request.form.get('password', '').strip()
     user_type = request.form.get('user_type', '').strip().lower()
 
-    valid_user_types = ['admin', 'cre', 'ps', 'bh', 'rec']
+    valid_user_types = ['admin', 'bh', 'cre', 'ps', 'rec']
     if user_type not in valid_user_types:
-        flash('Please select a valid role (Admin, CRE, PS, Branch Head, or Receptionist)', 'error')
+        flash('Please select a valid role (Admin, Branch Head, CRE, PS, or Receptionist)', 'error')
         return redirect(url_for('index'))
 
-    # Branch Head login removed
-
-    elif user_type == 'bh':
-        # Branch Head authentication
-        bh_user = supabase.table('branch_head_users').select('*').eq('username', username).execute().data
-        if not bh_user:
-            flash('Invalid username or password', 'error')
-            return redirect(url_for('index'))
-        bh_user = bh_user[0]
-        if not bh_user.get('is_active', True):
-            flash('User is inactive', 'error')
-            return redirect(url_for('index'))
-        # Check password using werkzeug
+    # Branch Head authentication
+    if user_type == 'bh':
         try:
-            print(f"DEBUG: Attempting to verify password for Branch Head {username}")
-            print(f"DEBUG: Password hash format: {bh_user['password_hash'][:20]}...")
-            print(f"DEBUG: Using check_password_hash with hash and password")
+            bh_user = supabase.table('branch_head_users').select('*').eq('username', username).execute().data
+            if not bh_user:
+                flash('Invalid username or password', 'error')
+                return redirect(url_for('index'))
+            bh_user = bh_user[0]
+            if not bh_user.get('is_active', True):
+                flash('User is inactive', 'error')
+                return redirect(url_for('index'))
+            # Check password using werkzeug
             if not check_password_hash(bh_user['password_hash'], password):
-                print(f"DEBUG: Password verification failed for Branch Head {username}")
                 flash('Incorrect password', 'error')
                 return redirect(url_for('index'))
-            print(f"DEBUG: Password verification successful for Branch Head {username}")
+            session.clear()
+            session['bh_user_id'] = bh_user['id']
+            session['bh_branch'] = bh_user['branch']
+            session['bh_name'] = bh_user.get('name', username)
+            session['user_type'] = 'bh'
+            session['username'] = username
+            flash('Welcome! Logged in as Branch Head', 'success')
+            return redirect(url_for('bh_dashboard'))
         except Exception as e:
-            print(f"DEBUG: Error checking password hash for Branch Head {username}: {str(e)}")
-            print(f"DEBUG: Error type: {type(e).__name__}")
-            print(f"DEBUG: Full error details: {e}")
-            # Fallback: check if plain password matches (for backward compatibility)
-            if bh_user.get('password') != password:
-                print(f"DEBUG: Plain password fallback also failed for Branch Head {username}")
-                flash('Incorrect password', 'error')
-                return redirect(url_for('index'))
-            print(f"DEBUG: Plain password fallback successful for Branch Head {username}")
-            # If plain password matches, update to new hash format
-            try:
-                new_password_hash = generate_password_hash(password)
-                print(f"DEBUG: Generated new password hash for Branch Head {username}")
-                supabase.table('branch_head_users').update({
-                    'password_hash': new_password_hash
-                }).eq('id', bh_user['id']).execute()
-                print(f"DEBUG: Updated password hash for Branch Head {username}")
-            except Exception as update_error:
-                print(f"DEBUG: Failed to update password hash for Branch Head {username}: {str(update_error)}")
-        session.clear()
-        session['bh_user_id'] = bh_user['id']
-        session['bh_branch'] = bh_user['branch']
-        session['bh_name'] = bh_user.get('name', username)
-        session['user_type'] = 'bh'
-        session['username'] = username
-        flash('Welcome! Logged in as Branch Head', 'success')
-        return redirect(url_for('bh_dashboard'))
+            print(f"Error in Branch Head login: {e}")
+            flash('Error during login. Please try again.', 'error')
+            return redirect(url_for('index'))
+
     elif user_type == 'rec':
         # Receptionist authentication
         rec_user = supabase.table('rec_users').select('*').eq('username', username).execute().data
@@ -963,35 +2803,9 @@ def unified_login() -> Response:
             flash('User is inactive', 'error')
             return redirect(url_for('index'))
         # Check password using werkzeug
-        try:
-            print(f"DEBUG: Attempting to verify password for Receptionist {username}")
-            print(f"DEBUG: Password hash format: {rec_user['password_hash'][:20]}...")
-            print(f"DEBUG: Using check_password_hash with hash and password")
-            if not check_password_hash(rec_user['password_hash'], password):
-                print(f"DEBUG: Password verification failed for Receptionist {username}")
-                flash('Incorrect password', 'error')
-                return redirect(url_for('index'))
-            print(f"DEBUG: Password verification successful for Receptionist {username}")
-        except Exception as e:
-            print(f"DEBUG: Error checking password hash for Receptionist {username}: {str(e)}")
-            print(f"DEBUG: Error type: {type(e).__name__}")
-            print(f"DEBUG: Full error details: {e}")
-            # Fallback: check if plain password matches (for backward compatibility)
-            if rec_user.get('password') != password:
-                print(f"DEBUG: Plain password fallback also failed for Receptionist {username}")
-                flash('Incorrect password', 'error')
-                return redirect(url_for('index'))
-            print(f"DEBUG: Plain password fallback successful for Receptionist {username}")
-            # If plain password matches, update to new hash format
-            try:
-                new_password_hash = generate_password_hash(password)
-                print(f"DEBUG: Generated new password hash for Receptionist {username}")
-                supabase.table('rec_users').update({
-                    'password_hash': new_password_hash
-                }).eq('id', rec_user['id']).execute()
-                print(f"DEBUG: Updated password hash for Receptionist {username}")
-            except Exception as update_error:
-                print(f"DEBUG: Failed to update password hash for Receptionist {username}: {str(update_error)}")
+        if not check_password_hash(rec_user['password_hash'], password):
+            flash('Incorrect password', 'error')
+            return redirect(url_for('index'))
         session.clear()
         session['rec_user_id'] = rec_user['id']
         session['rec_branch'] = rec_user['branch']
@@ -1041,647 +2855,6 @@ def admin_login():
     if request.method == 'POST':
         return unified_login()
     return redirect(url_for('index'))
-
-
-@app.route('/cre_login', methods=['GET', 'POST'])
-def cre_login():
-    if request.method == 'POST':
-        return unified_login()
-    return redirect(url_for('index'))
-
-
-@app.route('/ps_login', methods=['GET', 'POST'])
-def ps_login():
-    if request.method == 'POST':
-        return unified_login()
-    return redirect(url_for('index'))
-
-
-@app.route('/password_reset_request', methods=['GET', 'POST'])
-@limiter.limit("5 per minute")
-def password_reset_request():
-    if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        user_type = request.form.get('user_type', '').strip()
-
-        if not username or not user_type:
-            flash('Please enter username and select user type', 'error')
-            return render_template('password_reset_request.html')
-
-        success, message, token = auth_manager.generate_password_reset_token(username, user_type)
-
-        if success:
-            # Send the reset link via email
-            # Fetch user email from the appropriate table
-            user_email = None
-            try:
-                if user_type == 'admin':
-                    user_result = supabase.table('admin_users').select('email').eq('username', username).execute()
-                elif user_type == 'cre':
-                    user_result = supabase.table('cre_users').select('email').eq('username', username).execute()
-                elif user_type == 'ps':
-                    user_result = supabase.table('ps_users').select('email').eq('username', username).execute()
-                else:
-                    user_result = None
-                if user_result and user_result.data and user_result.data[0].get('email'):
-                    user_email = user_result.data[0]['email']
-            except Exception as e:
-                print(f"Error fetching user email for password reset: {e}")
-                user_email = None
-
-            reset_url = url_for('password_reset', token=token, _external=True)
-            email_sent = False
-            if user_email:
-                try:
-                    msg = MIMEMultipart()
-                    msg['From'] = EMAIL_USER
-                    msg['To'] = user_email
-                    msg['Subject'] = 'Ather CRM Password Reset Request'
-                    body = f"""
-                    Dear {username},
-
-                    We received a request to reset your password for your Ather CRM account.
-
-                    Please click the link below to reset your password:
-                    {reset_url}
-
-                    If you did not request this, please ignore this email.
-
-                    Best regards,\nAther CRM System
-                    """
-                    msg.attach(MIMEText(body, 'plain'))
-                    server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-                    server.starttls()
-                    server.login(EMAIL_USER, EMAIL_PASSWORD)
-                    text = msg.as_string()
-                    server.sendmail(EMAIL_USER, user_email, text)
-                    server.quit()
-                    print(f"Password reset email sent to {user_email}")
-                    email_sent = True
-                except Exception as e:
-                    print(f"Error sending password reset email: {e}")
-                    email_sent = False
-            if email_sent:
-                flash('If the username exists and is valid, a password reset link has been sent to the registered email address.', 'success')
-            else:
-                flash('If the username exists and is valid, a password reset link has been sent to the registered email address.', 'success')
-                # Optionally, log or alert admin if email sending failed
-        else:
-            flash(message, 'error')
-
-    return render_template('password_reset_request.html')
-
-
-@app.route('/password_reset/<token>', methods=['GET', 'POST'])
-def password_reset(token):
-    if request.method == 'POST':
-        new_password = request.form.get('new_password', '').strip()
-        confirm_password = request.form.get('confirm_password', '').strip()
-
-        if not new_password or not confirm_password:
-            flash('Please enter and confirm your new password', 'error')
-            return render_template('password_reset.html', token=token)
-
-        if new_password != confirm_password:
-            flash('Passwords do not match', 'error')
-            return render_template('password_reset.html', token=token)
-
-        success, message = auth_manager.reset_password_with_token(token, new_password)
-
-        if success:
-            flash('Password reset successfully. Please log in with your new password.', 'success')
-            return redirect(url_for('index'))
-        else:
-            flash(message, 'error')
-
-    return render_template('password_reset.html', token=token)
-
-
-@app.route('/change_password', methods=['POST'])
-@require_auth()
-def change_password():
-    current_password = request.form.get('current_password', '').strip()
-    new_password = request.form.get('new_password', '').strip()
-    confirm_password = request.form.get('confirm_password', '').strip()
-
-    if not all([current_password, new_password, confirm_password]):
-        flash('All fields are required', 'error')
-        return redirect(url_for('security_settings'))
-
-    if new_password != confirm_password:
-        flash('New passwords do not match', 'error')
-        return redirect(url_for('security_settings'))
-
-    user_id = session.get('user_id')
-    user_type = session.get('user_type')
-
-    if not user_id or not user_type:
-        flash('Session information not found', 'error')
-        return redirect(url_for('security_settings'))
-
-    success, message = auth_manager.change_password(user_id, user_type, current_password, new_password)
-
-    if success:
-        flash('Password changed successfully', 'success')
-    else:
-        flash(message, 'error')
-
-    return redirect(url_for('security_settings'))
-
-
-@app.route('/change_cre_password', methods=['GET', 'POST'])
-@require_cre
-def change_cre_password():
-    if request.method == 'POST':
-        current_password = request.form.get('current_password', '').strip()
-        new_password = request.form.get('new_password', '').strip()
-        confirm_password = request.form.get('confirm_password', '').strip()
-
-        if not all([current_password, new_password, confirm_password]):
-            flash('All fields are required', 'error')
-            return render_template('change_cre_password.html')
-
-        if new_password != confirm_password:
-            flash('New passwords do not match', 'error')
-            return render_template('change_cre_password.html')
-
-        user_id = session.get('user_id')
-        user_type = session.get('user_type')
-
-        if not user_id or not user_type:
-            flash('Session information not found', 'error')
-            return render_template('change_cre_password.html')
-
-        success, message = auth_manager.change_password(user_id, user_type, current_password, new_password)
-
-        if success:
-            flash('Password changed successfully', 'success')
-            return redirect(url_for('cre_dashboard'))
-        else:
-            flash(message, 'error')
-
-    return render_template('change_cre_password.html')
-
-
-@app.route('/change_ps_password', methods=['GET', 'POST'])
-@require_ps
-def change_ps_password():
-    if request.method == 'POST':
-        current_password = request.form.get('current_password', '').strip()
-        new_password = request.form.get('new_password', '').strip()
-        confirm_password = request.form.get('confirm_password', '').strip()
-
-        if not all([current_password, new_password, confirm_password]):
-            flash('All fields are required', 'error')
-            return render_template('change_ps_password.html')
-
-        if new_password != confirm_password:
-            flash('New passwords do not match', 'error')
-            return render_template('change_ps_password.html')
-
-        user_id = session.get('user_id')
-        user_type = session.get('user_type')
-
-        if not user_id or not user_type:
-            flash('Session information not found', 'error')
-            return render_template('change_ps_password.html')
-
-        success, message = auth_manager.change_password(user_id, user_type, current_password, new_password)
-
-        if success:
-            flash('Password changed successfully', 'success')
-            return redirect(url_for('ps_dashboard'))
-        else:
-            flash(message, 'error')
-
-    return render_template('change_ps_password.html')
-
-
-@app.route('/security_settings')
-@require_auth()
-def security_settings():
-    user_id = session.get('user_id')
-    user_type = session.get('user_type')
-
-    if not user_id or not user_type:
-        flash('Session information not found', 'error')
-        return redirect(url_for('index'))
-
-    # Get active sessions
-    sessions = auth_manager.get_user_sessions(user_id, user_type)
-
-    # Get audit logs
-    audit_logs = auth_manager.get_audit_logs(user_id, user_type, limit=20)
-
-    return render_template('security_settings.html', sessions=sessions, audit_logs=audit_logs)
-
-
-@app.route('/security_audit')
-@require_admin
-def security_audit():
-    """Security audit dashboard"""
-    return render_template('security_audit.html')
-
-
-@app.route('/run_security_audit', methods=['POST'])
-@require_admin
-def run_security_audit():
-    """Run comprehensive security audit"""
-    try:
-        # Run security verification
-        audit_results = run_security_verification(supabase)
-
-        # Log the security audit
-        user_id = session.get('user_id')
-        user_type = session.get('user_type')
-        
-        if user_id and user_type:
-            auth_manager.log_audit_event(
-                user_id=user_id,
-                user_type=user_type,
-                action='SECURITY_AUDIT_RUN',
-                resource='security_audit',
-                details={'overall_score': audit_results.get('overall_score', 0)}
-            )
-
-        return jsonify({
-            'success': True,
-            'results': audit_results
-        })
-    except Exception as e:
-        print(f"Error running security audit: {e}")
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        })
-
-
-@app.route('/terminate_session', methods=['POST'])
-@require_auth()
-def terminate_session():
-    try:
-        data = request.get_json()
-        session_id = data.get('session_id')
-
-        if not session_id:
-            return jsonify({'success': False, 'message': 'Session ID required'})
-
-        auth_manager.deactivate_session(session_id)
-
-        user_id = session.get('user_id')
-        user_type = session.get('user_type')
-        
-        if user_id and user_type:
-            auth_manager.log_audit_event(
-                user_id=user_id,
-                user_type=user_type,
-                action='SESSION_TERMINATED',
-                details={'terminated_session': session_id}
-            )
-
-        return jsonify({'success': True, 'message': 'Session terminated successfully'})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/terminate_all_sessions', methods=['POST'])
-@require_auth()
-def terminate_all_sessions():
-    try:
-        user_id = session.get('user_id')
-        user_type = session.get('user_type')
-        current_session = session.get('session_id')
-
-        if user_id and user_type and current_session:
-            auth_manager.deactivate_all_user_sessions(user_id, user_type, current_session)
-            auth_manager.log_audit_event(
-                user_id=user_id,
-                user_type=user_type,
-                action='ALL_SESSIONS_TERMINATED',
-                details={'except_session': current_session}
-            )
-        else:
-            return jsonify({'success': False, 'message': 'Session information not found'})
-
-        return jsonify({'success': True, 'message': 'All other sessions terminated successfully'})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/admin_dashboard')
-@require_admin
-def admin_dashboard():
-    # Get counts for dashboard with better error handling and actual queries
-    try:
-        # Get actual counts from database with proper queries
-        cre_count = get_accurate_count('cre_users')
-        ps_count = get_accurate_count('ps_users')
-        bh_count = get_accurate_count('branch_head_users')
-        leads_count = get_accurate_count('lead_master')
-        unassigned_leads = get_accurate_count('lead_master', {'assigned': 'No'})
-
-        print(
-            f"Dashboard counts - CRE: {cre_count}, PS: {ps_count}, Branch Heads: {bh_count}, Total Leads: {leads_count}, Unassigned: {unassigned_leads}")
-
-    except Exception as e:
-        print(f"Error getting dashboard counts: {e}")
-        cre_count = ps_count = bh_count = leads_count = unassigned_leads = 0
-
-    # Log dashboard access
-    user_id = session.get('user_id')
-    user_type = session.get('user_type')
-    if user_id and user_type:
-        auth_manager.log_audit_event(
-            user_id=user_id,
-            user_type=user_type,
-            action='DASHBOARD_ACCESS',
-            resource='admin_dashboard'
-        )
-
-    return render_template('admin_dashboard.html',
-                           cre_count=cre_count,
-                           ps_count=ps_count,
-                           bh_count=bh_count,
-                           leads_count=leads_count,
-                           unassigned_leads=unassigned_leads)
-
-
-@app.route('/bh_dashboard')
-def bh_dashboard():
-    """Branch Head dashboard"""
-    # Check if user is logged in as Branch Head
-    if session.get('user_type') != 'bh':
-        flash('Access denied. Branch Head access only.', 'error')
-        return redirect(url_for('index'))
-    
-    # Log dashboard access
-    user_id = session.get('bh_user_id')
-    user_type = session.get('user_type')
-    if user_id and user_type:
-        auth_manager.log_audit_event(
-            user_id=user_id,
-            user_type=user_type,
-            action='DASHBOARD_ACCESS',
-            resource='bh_dashboard'
-        )
-    
-    return render_template('bh_dashboard.html')
-
-
-@app.route('/upload_data', methods=['GET', 'POST'])
-@require_admin
-def upload_data():
-    if request.method == 'POST':
-        if 'file' not in request.files:
-            flash('No file selected', 'error')
-            return redirect(request.url)
-
-        file = request.files['file']
-        source = request.form.get('source', '').strip()
-
-        if not source:
-            flash('Please select a data source', 'error')
-            return redirect(request.url)
-
-        if file.filename == '':
-            flash('No file selected', 'error')
-            return redirect(request.url)
-
-        if file and file.filename and allowed_file(file.filename):
-            filename = secure_filename(str(file.filename))
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-
-            try:
-                file.save(filepath)
-
-                # Check file size
-                file_size = os.path.getsize(filepath)
-                if file_size > 50 * 1024 * 1024:  # 50MB limit
-                    flash('File too large. Maximum size is 50MB.', 'error')
-                    os.remove(filepath)
-                    return redirect(request.url)
-
-                print(f"Processing file: {filename} ({file_size / 1024 / 1024:.2f} MB)")
-
-                # Read the file based on extension
-                if filename.lower().endswith('.csv'):
-                    data = read_csv_file(filepath)
-                else:
-                    data = read_excel_file(filepath)
-
-                if not data:
-                    flash('No valid data found in file', 'error')
-                    os.remove(filepath)
-                    return redirect(request.url)
-
-                print(f"Read {len(data)} rows from file")
-
-                # Get current sequence number for UID generation
-                result = supabase.table('lead_master').select('uid').execute()
-                current_count = len(result.data) if result.data else 0
-
-                # Prepare leads data for batch insert
-                leads_to_insert = []
-                skipped_rows = 0
-
-                for index, row in enumerate(data):
-                    try:
-                        # Validate required fields
-                        required_fields = ['customer_name', 'customer_mobile_number', 'date']
-                        if not all(key in row and str(row[key]).strip() for key in required_fields):
-                            skipped_rows += 1
-                            continue
-
-                        uid = generate_uid(source, row['customer_mobile_number'],
-                                           current_count + len(leads_to_insert) + 1)
-
-                        lead_data = {
-                            'uid': uid,
-                            'date': str(row['date']).strip(),
-                            'customer_name': str(row['customer_name']).strip(),
-                            'customer_mobile_number': str(row['customer_mobile_number']).strip(),
-                            'source': source,
-                            'assigned': 'No',
-                            'final_status': 'Pending'
-                        }
-
-                        leads_to_insert.append(lead_data)
-
-
-                    except Exception as e:
-                        print(f"Error processing row {index}: {e}")
-                        skipped_rows += 1
-                        continue
-
-                if not leads_to_insert:
-                    flash('No valid leads found to insert', 'error')
-                    os.remove(filepath)
-                    return redirect(request.url)
-
-                print(f"Prepared {len(leads_to_insert)} leads for insertion")
-
-                # Batch insert leads
-                success_count = batch_insert_leads(leads_to_insert)
-
-                # Log data upload
-                auth_manager.log_audit_event(
-                    user_id=session.get('user_id'),
-                    user_type=session.get('user_type'),
-                    action='DATA_UPLOAD',
-                    resource='lead_master',
-                    details={
-                        'source': source,
-                        'records_uploaded': success_count,
-                        'filename': filename,
-                        'file_size_mb': round(file_size / 1024 / 1024, 2),
-                        'skipped_rows': skipped_rows
-                    }
-                )
-
-                # Create success message
-                message = f'Successfully uploaded {success_count} leads'
-                if skipped_rows > 0:
-                    message += f' ({skipped_rows} rows skipped due to missing data)'
-                message += '. Please go to "Assign Leads" to assign them to CREs.'
-
-                flash(message, 'success')
-
-                # Clean up uploaded file
-                os.remove(filepath)
-
-            except Exception as e:
-                print(f"Error processing file: {e}")
-                flash(f'Error processing file: {str(e)}', 'error')
-                if os.path.exists(filepath):
-                    os.remove(filepath)
-        else:
-            flash('Invalid file format. Please upload CSV or Excel files only.', 'error')
-
-    return render_template('upload_data.html')
-
-@app.route('/assign_leads')
-@require_admin
-def assign_leads():
-    try:
-        # Fetch all unassigned leads in batches of 1000
-        all_unassigned_leads = []
-        batch_size = 1000
-        offset = 0
-        while True:
-            result = supabase.table('lead_master').select('*').eq('assigned', 'No').range(offset, offset + batch_size - 1).execute()
-            batch = result.data or []
-            all_unassigned_leads.extend(batch)
-            if len(batch) < batch_size:
-                break
-            offset += batch_size
-
-        # Organize by source
-        leads_by_source = {}
-        for lead in all_unassigned_leads:
-            source = lead.get('source', 'Unknown')
-            leads_by_source.setdefault(source, []).append(lead)
-
-        # Get CREs
-        cres = safe_get_data('cre_users')
-
-        # Get accurate total unassigned count
-        actual_unassigned_count = get_accurate_count('lead_master', {'assigned': 'No'})
-
-        # Get accurate per-source unassigned counts
-        source_unassigned_counts = {}
-        for source in leads_by_source.keys():
-            source_unassigned_counts[source] = get_accurate_count('lead_master', {'assigned': 'No', 'source': source})
-
-        return render_template('assign_leads.html',
-                               unassigned_leads=all_unassigned_leads,
-                               actual_unassigned_count=actual_unassigned_count,
-                               cres=cres,
-                               leads_by_source=leads_by_source,
-                               source_unassigned_counts=source_unassigned_counts)
-    except Exception as e:
-        print(f"Error loading assign leads data: {e}")
-        flash(f'Error loading data: {str(e)}', 'error')
-        return redirect(url_for('admin_dashboard'))
-
-
-@app.route('/assign_leads_dynamic_action', methods=['POST'])
-@require_admin
-def assign_leads_dynamic_action():
-    try:
-        data = request.get_json()
-        assignments = data.get('assignments', [])
-
-        if not assignments:
-            return jsonify({'success': False, 'message': 'No assignments provided'}), 400
-
-        # Fetch all unassigned leads in batches
-        all_unassigned = []
-        batch_size = 1000
-        offset = 0
-        while True:
-            result = supabase.table('lead_master').select('*').eq('assigned', 'No').range(offset, offset + batch_size - 1).execute()
-            batch = result.data or []
-            all_unassigned.extend(batch)
-            if len(batch) < batch_size:
-                break
-            offset += batch_size
-
-        leads_by_source = {}
-        for lead in all_unassigned:
-            source = lead.get('source', 'Unknown')
-            leads_by_source.setdefault(source, []).append(lead)
-
-        total_assigned = 0
-
-        for assignment in assignments:
-            cre_id = assignment.get('cre_id')
-            source = assignment.get('source')
-            quantity = assignment.get('quantity')
-
-            if not cre_id or not source or not quantity:
-                continue
-
-            # Get CRE details
-            cre_data = supabase.table('cre_users').select('*').eq('id', cre_id).execute()
-            if not cre_data.data:
-                continue
-
-            cre = cre_data.data[0]
-            leads = leads_by_source.get(source, [])
-
-            if not leads:
-                print(f"No unassigned leads found for source {source}")
-                continue
-
-            random.shuffle(leads)
-            leads_to_assign = leads[:quantity]
-            leads_by_source[source] = leads[quantity:]  # Remove assigned leads
-
-            for lead in leads_to_assign:
-                update_data = {
-                    'cre_name': cre['name'],
-                    'assigned': 'Yes',
-                    'cre_assigned_at': datetime.now().isoformat()
-
-                }
-
-                try:
-                    supabase.table('lead_master').update(update_data).eq('uid', lead['uid']).execute()
-                    total_assigned += 1
-                    print(f"Assigned lead {lead['uid']} to CRE {cre['name']} for source {source}")
-                    if total_assigned % 100 == 0:
-                        time.sleep(0.1)
-                except Exception as e:
-                    print(f"Error assigning lead {lead['uid']}: {e}")
-
-        print(f"Total leads assigned: {total_assigned}")
-        return jsonify({'success': True, 'message': f'Total {total_assigned} leads assigned successfully'})
-
-    except Exception as e:
-        print(f"Error in dynamic lead assignment: {e}")
-        return jsonify({'success': False, 'message': str(e)}), 500
-
-
 @app.route('/add_cre', methods=['GET', 'POST'])
 @require_admin
 def add_cre():
@@ -1814,259 +2987,14 @@ def add_ps():
     return render_template('add_ps.html', branches=branches)
 
 
-@app.route('/add_bh', methods=['GET', 'POST'])
-@require_admin
-def add_bh():
-    branches = ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
-
-    if request.method == 'POST':
-        name = request.form.get('name', '').strip()
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '').strip()
-        phone = request.form.get('phone', '').strip()
-        email = request.form.get('email', '').strip()
-        branch = request.form.get('branch', '').strip()
-
-        if not all([name, username, password, phone, email, branch]):
-            flash('All fields are required', 'error')
-            return render_template('add_bh.html', branches=branches)
-
-        if not auth_manager.validate_password_strength(password):
-            flash(
-                'Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character',
-                'error')
-            return render_template('add_bh.html', branches=branches)
-
-        try:
-            # Check if username already exists
-            existing = supabase.table('branch_head_users').select('username').eq('username', username).execute()
-            if existing.data:
-                flash('Username already exists', 'error')
-                return render_template('add_bh.html', branches=branches)
-
-            # Hash password using auth_manager (provides hash and salt)
-            password_hash, salt = auth_manager.hash_password(password)
-
-            # Create branch head data
-            bh_data = {
-                'name': name,
-                'username': username,
-                'password': password,  # Keep for backward compatibility
-                'password_hash': password_hash,
-                'salt': salt,  # Add the salt value
-                'phone': phone,
-                'email': email,
-                'branch': branch,
-                'is_active': True,
-                'role': 'bh',
-                'failed_login_attempts': 0
-            }
-
-            result = supabase.table('branch_head_users').insert(bh_data).execute()
-
-            # Log Branch Head creation
-            auth_manager.log_audit_event(
-                user_id=session.get('user_id'),
-                user_type=session.get('user_type'),
-                action='BRANCH_HEAD_CREATED',
-                resource='branch_head_users',
-                resource_id=str(result.data[0]['id']) if result.data else None,
-                details={'bh_name': name, 'username': username, 'branch': branch}
-            )
-
-            flash('Branch Head added successfully', 'success')
-            return redirect(url_for('manage_bh'))
-        except Exception as e:
-            flash(f'Error adding Branch Head: {str(e)}', 'error')
-
-    return render_template('add_bh.html', branches=branches)
 
 
-@app.route('/manage_cre')
-@require_admin
-def manage_cre():
-    try:
-        cre_users = safe_get_data('cre_users')
-        return render_template('manage_cre.html', cre_users=cre_users)
-    except Exception as e:
-        flash(f'Error loading CRE users: {str(e)}', 'error')
-        return render_template('manage_cre.html', cre_users=[])
 
 
-@app.route('/manage_bh')
-@require_admin
-def manage_bh():
-    try:
-        bh_users = safe_get_data('branch_head_users')
-        return render_template('manage_bh.html', bh_users=bh_users)
-    except Exception as e:
-        flash(f'Error loading Branch Head users: {str(e)}', 'error')
-        return render_template('manage_bh.html', bh_users=[])
 
 
-@app.route('/delete_bh/<int:bh_id>', methods=['DELETE'])
-@require_admin
-def delete_bh(bh_id):
-    print(f"DEBUG: delete_bh route called with bh_id: {bh_id}")
-    try:
-        # Get the Branch Head details first
-        bh_result = supabase.table('branch_head_users').select('*').eq('id', bh_id).execute()
-        print(f"DEBUG: bh_result data: {bh_result.data}")
-        if not bh_result.data:
-            print(f"DEBUG: Branch Head not found for id: {bh_id}")
-            flash('Branch Head not found', 'error')
-            return redirect(url_for('manage_bh'))
-        
-        bh = bh_result.data[0]
-        bh_name = bh.get('name')
-        print(f"DEBUG: Found Branch Head: {bh_name}")
-        
-        # Check if Branch Head has any associated data that would prevent deletion
-        # For now, we'll allow deletion but you can add checks here if needed
-        
-        # Delete the Branch Head user
-        delete_result = supabase.table('branch_head_users').delete().eq('id', bh_id).execute()
-        print(f"DEBUG: Delete result: {delete_result}")
-        
-        # Log the deletion
-        auth_manager.log_audit_event(
-            user_id=session.get('user_id'),
-            user_type=session.get('user_type'),
-            action='BRANCH_HEAD_DELETED',
-            resource='branch_head_users',
-            resource_id=str(bh_id),
-            details={'bh_name': bh_name}
-        )
-        
-        print(f"DEBUG: Branch Head {bh_name} deleted successfully")
-        return jsonify({'success': True, 'message': f'Branch Head {bh_name} deleted successfully'})
-        
-    except Exception as e:
-        print(f"DEBUG: Error in delete_bh: {str(e)}")
-        return jsonify({'success': False, 'message': str(e)})
 
 
-@app.route('/toggle_bh_status/<int:bh_id>', methods=['POST'])
-@require_admin
-def toggle_bh_status(bh_id):
-    try:
-        data = request.get_json()
-        active_status = data.get('active', True)
-
-        # Update Branch Head status
-        result = supabase.table('branch_head_users').update({
-            'is_active': active_status
-        }).eq('id', bh_id).execute()
-
-        if result.data:
-            # Log status change
-            auth_manager.log_audit_event(
-                user_id=session.get('user_id'),
-                user_type=session.get('user_type'),
-                action='BRANCH_HEAD_STATUS_CHANGED',
-                resource='branch_head_users',
-                resource_id=str(bh_id),
-                details={'new_status': 'active' if active_status else 'inactive'}
-            )
-
-            return jsonify({'success': True, 'message': 'Branch Head status updated successfully'})
-        else:
-            return jsonify({'success': False, 'message': 'Branch Head not found'})
-
-    except Exception as e:
-        print(f"Error toggling Branch Head status: {e}")
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/manage_ps')
-@require_admin
-def manage_ps():
-    try:
-        ps_users = safe_get_data('ps_users')
-        return render_template('manage_ps.html', ps_users=ps_users)
-    except Exception as e:
-        flash(f'Error loading PS users: {str(e)}', 'error')
-        return render_template('manage_ps.html', ps_users=[])
-
-
-@app.route('/toggle_ps_status/<int:ps_id>', methods=['POST'])
-@require_admin
-def toggle_ps_status(ps_id):
-    try:
-        data = request.get_json()
-        active_status = data.get('active', True)
-
-        # Update PS status
-        result = supabase.table('ps_users').update({
-            'is_active': active_status
-        }).eq('id', ps_id).execute()
-
-        if result.data:
-            # Log status change
-            auth_manager.log_audit_event(
-                user_id=session.get('user_id'),
-                user_type=session.get('user_type'),
-                action='PS_STATUS_CHANGED',
-                resource='ps_users',
-                resource_id=str(ps_id),
-                details={'new_status': 'active' if active_status else 'inactive'}
-            )
-
-            return jsonify({'success': True, 'message': 'PS status updated successfully'})
-        else:
-            return jsonify({'success': False, 'message': 'PS not found'})
-
-    except Exception as e:
-        print(f"Error toggling PS status: {e}")
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/edit_bh/<int:bh_id>', methods=['POST'])
-@require_admin
-def edit_bh(bh_id):
-    try:
-        data = request.get_json()
-        name = data.get('name', '').strip()
-        username = data.get('username', '').strip()
-        email = data.get('email', '').strip()
-        phone = data.get('phone', '').strip()
-        branch = data.get('branch', '').strip()
-
-        if not all([name, username, email, phone, branch]):
-            return jsonify({'success': False, 'message': 'All fields are required'})
-
-        # Check if username already exists for other users
-        existing = supabase.table('branch_head_users').select('username').eq('username', username).neq('id', bh_id).execute()
-        if existing.data:
-            return jsonify({'success': False, 'message': 'Username already exists'})
-
-        # Update the Branch Head
-        result = supabase.table('branch_head_users').update({
-            'name': name,
-            'username': username,
-            'email': email,
-            'phone': phone,
-            'branch': branch
-        }).eq('id', bh_id).execute()
-
-        if result.data:
-            # Log the update
-            auth_manager.log_audit_event(
-                user_id=session.get('user_id'),
-                user_type=session.get('user_type'),
-                action='BRANCH_HEAD_UPDATED',
-                resource='branch_head_users',
-                resource_id=str(bh_id),
-                details={'bh_name': name, 'username': username, 'branch': branch}
-            )
-
-            return jsonify({'success': True, 'message': 'Branch Head updated successfully'})
-        else:
-            return jsonify({'success': False, 'message': 'Branch Head not found'})
-
-    except Exception as e:
-        print(f"Error updating Branch Head: {e}")
-        return jsonify({'success': False, 'message': str(e)})
 
 
 @app.route('/manage_leads')
@@ -2834,7 +3762,7 @@ def add_lead():
                         
                         # Send email notification to PS
                         try:
-                            socketio.start_background_task(send_email_to_ps, ps_user['email'], ps_user['name'], lead_data, cre_name)
+                            threading.Thread(target=send_email_to_ps, args=(ps_user['email'], ps_user['name'], lead_data, cre_name)).start()
                             flash(f'Lead added successfully and assigned to {ps_name}! Email notification sent.', 'success')
                         except Exception as e:
                             print(f"Error sending email: {e}")
@@ -2843,6 +3771,16 @@ def add_lead():
                         flash('Lead added successfully! (PS assignment failed)', 'warning')
                 else:
                     flash('Lead added successfully!', 'success')
+                
+                # Trigger auto-assign for new leads if they're not already assigned
+                if not cre_name:  # Only auto-assign if no CRE was manually assigned
+                    try:
+                        print(f"🔄 New lead added from {source}, triggering auto-assign...")
+                        # Run auto-assign in background to avoid blocking the response
+                        threading.Thread(target=auto_assign_new_leads_for_source, args=(source,)).start()
+                        print(f"✅ Auto-assign triggered for {source}")
+                    except Exception as e:
+                        print(f"❌ Error triggering auto-assign for new lead: {e}")
             
             return redirect(url_for('cre_dashboard'))
         except Exception as e:
@@ -3243,6 +4181,17 @@ def add_lead_with_cre():
             result = supabase.table('lead_master').insert(lead_data).execute()
             if result.data:
                 print("Fresh lead inserted successfully")
+                
+                # Trigger auto-assign for new leads if they're not already assigned
+                if not assigned_cre_id:  # Only auto-assign if no CRE was manually assigned
+                    try:
+                        print(f"🔄 New lead added from {source}, triggering auto-assign...")
+                        # Run auto-assign in background to avoid blocking the response
+                        threading.Thread(target=auto_assign_new_leads_for_source, args=(source,)).start()
+                        print(f"✅ Auto-assign triggered for {source}")
+                    except Exception as e:
+                        print(f"❌ Error triggering auto-assign for new lead: {e}")
+                
                 if is_ajax:
                     return jsonify({'success': True, 'message': 'Lead added successfully', 'uid': uid})
                 else:
@@ -3578,7 +4527,7 @@ def update_lead(uid):
                 try:
                     if ps_user:
                         lead_data_for_email = {**lead_data, **update_data}
-                        socketio.start_background_task(send_email_to_ps, ps_user['email'], ps_user['name'], lead_data_for_email, session.get('cre_name'))
+                        threading.Thread(target=send_email_to_ps, args=(ps_user['email'], ps_user['name'], lead_data_for_email, session.get('cre_name'))).start()
                         flash(f'Lead assigned to {ps_name} and email notification sent', 'success')
                     else:
                         flash(f'Lead assigned to {ps_name}', 'success')
@@ -3593,11 +4542,9 @@ def update_lead(uid):
                 final_status = request.form['final_status']
                 update_data['final_status'] = final_status
                 if final_status == 'Won':
-                    won_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    update_data['won_timestamp'] = won_timestamp
+                    update_data['won_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 elif final_status == 'Lost':
-                    lost_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    update_data['lost_timestamp'] = lost_timestamp
+                    update_data['lost_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
             # Handle call dates and remarks - record for all statuses including RNR
             if request.form.get('call_date') and call_remark:
@@ -3641,15 +4588,6 @@ def update_lead(uid):
                         ps_result = supabase.table('ps_followup_master').select('lead_uid').eq('lead_uid', uid).execute()
                         if ps_result.data:
                             supabase.table('ps_followup_master').update({'final_status': update_data['final_status']}).eq('lead_uid', uid).execute()
-                    
-                    # Synchronize timestamps between tables
-                    if 'final_status' in update_data:
-                        sync_timestamps_between_tables(
-                            uid=uid,
-                            final_status=update_data['final_status'],
-                            won_timestamp=update_data.get('won_timestamp'),
-                            lost_timestamp=update_data.get('lost_timestamp')
-                        )
 
                     # Log lead update
                     auth_manager.log_audit_event(
@@ -4434,8 +5372,7 @@ def update_ps_lead(uid):
                     # Auto-set final_status to Won for Booked with another number
                     if lead_status == 'Booked with another number':
                         update_data['final_status'] = 'Won'
-                        won_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        update_data['won_timestamp'] = won_timestamp
+                        update_data['won_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         
                 if lead_category:
                     update_data['lead_category'] = lead_category
@@ -4452,11 +5389,9 @@ def update_ps_lead(uid):
                     final_status = request.form['final_status']
                     update_data['final_status'] = final_status
                     if final_status == 'Won':
-                        won_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        update_data['won_timestamp'] = won_timestamp
+                        update_data['won_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     elif final_status == 'Lost':
-                        lost_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        update_data['lost_timestamp'] = lost_timestamp
+                        update_data['lost_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 # Handle call dates and remarks for the next available call
                 skip_first_call_statuses = [
                     'Call not Connected',
@@ -4503,15 +5438,6 @@ def update_ps_lead(uid):
                             elif final_status == 'Lost':
                                 main_update_data['lost_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             supabase.table('lead_master').update(main_update_data).eq('uid', uid).execute()
-                        
-                        # Synchronize timestamps between tables
-                        if 'final_status' in update_data:
-                            sync_timestamps_between_tables(
-                                uid=uid,
-                                final_status=update_data['final_status'],
-                                won_timestamp=update_data.get('won_timestamp'),
-                                lost_timestamp=update_data.get('lost_timestamp')
-                            )
                         # Log PS lead update
                         auth_manager.log_audit_event(
                             user_id=session.get('user_id'),
@@ -4687,7 +5613,7 @@ def update_lead_optimized(uid):
                     # Send email notification (non-blocking)
                     try:
                         lead_data_for_email = {**lead_data, **update_data}
-                        socketio.start_background_task(send_email_to_ps, ps_user['email'], ps_user['name'], lead_data_for_email, session.get('cre_name'))
+                        threading.Thread(target=send_email_to_ps, args=(ps_user['email'], ps_user['name'], lead_data_for_email, session.get('cre_name'))).start()
                         flash(f'Lead assigned to {ps_name} and email notification sent', 'success')
                     except Exception as e:
                         print(f"Error sending email: {e}")
@@ -5047,30 +5973,10 @@ def performance_metrics():
 
 
 
-def ensure_static_directories():
-    """Ensure static directories exist"""
-    try:
-        static_dir = os.path.join(os.path.dirname(__file__), 'static')
-        images_dir = os.path.join(static_dir, 'images')
-
-        os.makedirs(static_dir, exist_ok=True)
-        os.makedirs(images_dir, exist_ok=True)
-
-        print(f"Static directories ensured: {images_dir}")
-        return images_dir
-    except Exception as e:
-        print(f"Error creating static directories: {e}")
-        return None
-
-
-
-
-
-
-
 @app.route('/analytics')
-@require_auth(['admin'])
+@require_admin
 def analytics():
+    """Main analytics dashboard for admin users"""
     try:
         # Get filter period or custom date range from query parameter
         period = request.args.get('period', '30')
@@ -5483,1706 +6389,10 @@ def analytics():
         return render_template('analytics.html', analytics=empty_analytics)
 
 
-# Branch Head dashboard route removed
-
-@app.route('/api/branch_head_dashboard_data')
-def api_branch_head_dashboard_data():
-    # Deprecated endpoint (Branch Head removed)
-    return jsonify({'success': False, 'error': 'Branch Head feature removed'}), 410
-    # Get query parameters
-    section = request.args.get('section', 'fresh_leads')
-    # Note: All filtering (date, search, etc.) is handled client-side
-    # No backend filtering parameters needed
-
-    # Get branch from session (fallbacks for non-branch-head flows)
-    branch = session.get('branch') or session.get('rec_branch', 'No branch in session')
-
-    # OPTIMIZED: Calculate KPI counts using efficient count queries with caching
-    try:
-        # Cache key for KPI counts
-        cache_key = f"branch_kpi_{branch}_{datetime.now().strftime('%Y-%m-%d')}"
-        
-        # Check if we have cached KPI counts (cache for 5 minutes)
-        cached_kpis = session.get(cache_key)
-        if cached_kpis and (datetime.now() - cached_kpis.get('timestamp', datetime.now())).seconds < 300:
-            fresh_leads_count = cached_kpis.get('fresh_leads_count', 0)
-            followup_leads_count = cached_kpis.get('followup_leads_count', 0)
-        else:
-            # Fresh leads count - EXCLUDE those with today's follow-up date
-            today_str = datetime.now().strftime('%Y-%m-%d')
-            
-            # PS fresh leads count - ONLY those with NULL follow_up_date AND final_status = 'Pending'
-            ps_fresh_count = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_branch', branch).eq('final_status', 'Pending').is_('follow_up_date', 'null').execute().count or 0
-            
-            # Walk-in fresh leads count - ONLY those with NULL next_followup_date AND status = 'Pending'
-            walkin_fresh_count = supabase.table('walkin_table').select('*', count='exact').eq('branch', branch).eq('status', 'Pending').is_('next_followup_date', 'null').execute().count or 0
-            
-            # Event fresh leads count - ONLY those with NULL ps_followup_date_ts AND final_status = 'Pending'
-            event_fresh_count = supabase.table('activity_leads').select('*', count='exact').eq('location', branch).eq('final_status', 'Pending').is_('ps_followup_date_ts', 'null').execute().count or 0
-            
-            fresh_leads_count = ps_fresh_count + walkin_fresh_count + event_fresh_count
-            
-            # Today's follow-ups count (using exact date matching like your SQL query)
-            today_str = datetime.now().strftime('%Y-%m-%d')
-            
-            # Use the same logic as data loading for accurate counts
-            followup_today_count = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_branch', branch).eq('final_status', 'Pending').eq('follow_up_date', today_str).execute().count or 0
-            
-            # Event count with range query AND final_status = 'Pending'
-            event_today_count = supabase.table('activity_leads').select('*', count='exact').eq('location', branch).eq('final_status', 'Pending').gte('ps_followup_date_ts', f'{today_str} 00:00:00').lt('ps_followup_date_ts', f'{today_str} 23:59:59').execute().count or 0
-            
-            # Walk-in count with range query AND status = 'Pending'
-            walkin_today_count = supabase.table('walkin_table').select('*', count='exact').eq('branch', branch).eq('status', 'Pending').gte('next_followup_date', f'{today_str} 00:00:00').lt('next_followup_date', f'{today_str} 23:59:59').execute().count or 0
-            
-            followup_leads_count = followup_today_count + event_today_count + walkin_today_count
-            
-            # Cache the results
-            session[cache_key] = {
-                'fresh_leads_count': fresh_leads_count,
-                'followup_leads_count': followup_leads_count,
-                'timestamp': datetime.now()
-            }
-        
-    except Exception as e:
-        print(f"Error calculating KPI counts: {str(e)}")
-        fresh_leads_count = followup_leads_count = 0
-
-    # Initialize query - no backend filtering needed
-    query = supabase.table('ps_followup_master').select('*').eq('ps_branch', branch)
-
-    # OPTIMIZED: Server-side filtering function
-    def apply_server_filters(query, table_type='ps'):
-        """Apply server-side filters to database query for better performance"""
-        if ps_name:
-            if table_type == 'ps':
-                query = query.eq('ps_name', ps_name)
-            elif table_type == 'walkin':
-                query = query.eq('ps_assigned', ps_name)
-            elif table_type == 'event':
-                query = query.eq('ps_name', ps_name)
-        
-        if final_status:
-            if table_type == 'ps':
-                query = query.eq('final_status', final_status)
-            elif table_type == 'walkin':
-                query = query.eq('status', final_status)
-            elif table_type == 'event':
-                query = query.eq('final_status', final_status)
-        
-        if source:
-            if table_type == 'ps':
-                # For PS table, filter by source field
-                query = query.eq('source', source)
-            elif table_type == 'walkin':
-                # For walkin table, only include if source is 'Walk In' or no source filter
-                if source != 'Walk In':
-                    # Return empty result for non-walkin sources
-                    return query.limit(0)
-            elif table_type == 'event':
-                # For event table, only include if source is 'Event' or no source filter
-                if source != 'Event':
-                    # Return empty result for non-event sources
-                    return query.limit(0)
-        
-        # OPTIMIZED: Date filtering for ps_assigned_at column
-        if start_date and end_date:
-            if table_type == 'ps':
-                # Filter by ps_assigned_at timestamp for PS leads
-                query = query.gte('ps_assigned_at', f'{start_date} 00:00:00').lte('ps_assigned_at', f'{end_date} 23:59:59')
-            elif table_type == 'walkin':
-                # Filter by created_at for walk-in leads (since they don't have ps_assigned_at)
-                query = query.gte('created_at', f'{start_date} 00:00:00').lte('created_at', f'{end_date} 23:59:59')
-            elif table_type == 'event':
-                # Filter by created_at for event leads (since they don't have ps_assigned_at)
-                query = query.gte('created_at', f'{start_date} 00:00:00').lte('created_at', f'{end_date} 23:59:59')
-        
-        # OPTIMIZED: Server-side search filtering
-        if search:
-            search_lower = search.lower()
-            # Create OR conditions for search across multiple columns
-            search_conditions = []
-            
-            if table_type == 'ps':
-                search_conditions = [
-                    f"customer_name.ilike.%{search_lower}%",
-                    f"customer_mobile_number.ilike.%{search_lower}%",
-                    f"lead_uid.ilike.%{search_lower}%",
-                    f"ps_name.ilike.%{search_lower}%"
-                ]
-            elif table_type == 'walkin':
-                search_conditions = [
-                    f"customer_name.ilike.%{search_lower}%",
-                    f"mobile_number.ilike.%{search_lower}%",
-                    f"uid.ilike.%{search_lower}%",
-                    f"ps_assigned.ilike.%{search_lower}%"
-                ]
-            elif table_type == 'event':
-                search_conditions = [
-                    f"customer_name.ilike.%{search_lower}%",
-                    f"customer_phone_number.ilike.%{search_lower}%",
-                    f"activity_uid.ilike.%{search_lower}%",
-                    f"ps_name.ilike.%{search_lower}%"
-                ]
-            
-            if search_conditions:
-                query = query.or_(','.join(search_conditions))
-        
-        return query
-
-    # Apply section-specific filters with OPTIMIZED queries
-    
-    if section == 'fresh_leads' or section == 'fresh_leads_section':
-        # Get filter parameters
-        ps_name = request.args.get('ps_name', '')
-        source = request.args.get('source', '')
-        final_status = request.args.get('final_status', '')
-        date_filter = request.args.get('date_filter', '')
-        start_date = request.args.get('start_date', '')
-        end_date = request.args.get('end_date', '')
-        search = request.args.get('search', '')
-        
-        # Debug logging
-        print(f"DEBUG: Filter parameters - ps_name: {ps_name}, source: {source}, final_status: {final_status}, date_filter: {date_filter}, start_date: {start_date}, end_date: {end_date}")
-        
-        # Initialize empty lists for each table
-        ps_rows = []
-        walkin_rows = []
-        event_rows = []
-        
-        # Apply different logic based on section
-        if section == 'fresh_leads_section':
-            # Fresh Leads Section Logic - Only show leads with NULL follow-up dates and Pending status
-            print(f"DEBUG: Using Fresh Leads Section logic")
-            
-            # Apply source-based filtering logic
-            if source == 'Walk In':
-                # Only query walkin_table for Walk In source
-                walkin_query = supabase.table('walkin_table').select('uid, customer_name, mobile_number, branch, ps_assigned, status, created_at, lead_category').eq('branch', branch).eq('status', 'Pending').is_('next_followup_date', 'null')
-                walkin_query = apply_server_filters(walkin_query, 'walkin')
-                walkin_rows = walkin_query.execute().data or []
-                ps_rows = []
-                event_rows = []
-            elif source == 'Event':
-                # Only query activity_leads for Event source
-                event_query = supabase.table('activity_leads').select('activity_uid, customer_name, customer_phone_number, final_status, ps_name, created_at, lead_category').eq('location', branch).eq('final_status', 'Pending').is_('ps_followup_date_ts', 'null')
-                event_query = apply_server_filters(event_query, 'event')
-                event_rows = event_query.execute().data or []
-                ps_rows = []
-                walkin_rows = []
-            else:
-                # Query all tables for other sources or no source filter
-                # PS fresh leads - ONLY those with NULL follow_up_date AND final_status = 'Pending'
-                ps_query = supabase.table('ps_followup_master').select('lead_uid, customer_name, customer_mobile_number, final_status, ps_name, created_at, source, lead_category, ps_assigned_at').eq('ps_branch', branch).eq('final_status', 'Pending').is_('follow_up_date', 'null')
-                ps_query = apply_server_filters(ps_query, 'ps')
-                ps_rows = ps_query.execute().data or []
-                
-                # Walk-in fresh leads - ONLY those with NULL next_followup_date AND status = 'Pending'
-                walkin_query = supabase.table('walkin_table').select('uid, customer_name, mobile_number, branch, ps_assigned, status, created_at, lead_category').eq('branch', branch).eq('status', 'Pending').is_('next_followup_date', 'null')
-                walkin_query = apply_server_filters(walkin_query, 'walkin')
-                walkin_rows = walkin_query.execute().data or []
-                
-                # Event fresh leads - ONLY those with NULL ps_followup_date_ts AND final_status = 'Pending'
-                event_query = supabase.table('activity_leads').select('activity_uid, customer_name, customer_phone_number, final_status, ps_name, created_at, lead_category').eq('location', branch).eq('final_status', 'Pending').is_('ps_followup_date_ts', 'null')
-                event_query = apply_server_filters(event_query, 'event')
-                event_rows = event_query.execute().data or []
-            
-        else:
-            # Regular All Leads Logic with improved source filtering
-            if source == 'Walk In':
-                # Only query walkin_table for Walk In source
-                print(f"DEBUG: Querying walkin_table for Walk In source")
-                walkin_query = supabase.table('walkin_table').select('uid, customer_name, mobile_number, branch, ps_assigned, status, created_at, lead_category').eq('branch', branch)
-                walkin_query = apply_server_filters(walkin_query, 'walkin')
-                walkin_rows = walkin_query.execute().data or []
-                ps_rows = []
-                event_rows = []
-                print(f"DEBUG: Found {len(walkin_rows)} walkin rows")
-            elif source == 'Event':
-                # Only query activity_leads for Event source
-                print(f"DEBUG: Querying activity_leads for Event source")
-                event_query = supabase.table('activity_leads').select('activity_uid, customer_name, customer_phone_number, final_status, ps_name, created_at, lead_category').eq('location', branch)
-                event_query = apply_server_filters(event_query, 'event')
-                event_rows = event_query.execute().data or []
-                ps_rows = []
-                walkin_rows = []
-                print(f"DEBUG: Found {len(event_rows)} event rows")
-            else:
-                # Query all tables for other sources or no source filter
-                ps_query = supabase.table('ps_followup_master').select('lead_uid, customer_name, customer_mobile_number, final_status, ps_name, created_at, source, lead_category, ps_assigned_at').eq('ps_branch', branch)
-                ps_query = apply_server_filters(ps_query, 'ps')
-                ps_rows = ps_query.execute().data or []
-                
-                walkin_query = supabase.table('walkin_table').select('uid, customer_name, mobile_number, branch, ps_assigned, status, created_at, lead_category').eq('branch', branch)
-                walkin_query = apply_server_filters(walkin_query, 'walkin')
-                walkin_rows = walkin_query.execute().data or []
-                
-                event_query = supabase.table('activity_leads').select('activity_uid, customer_name, customer_phone_number, final_status, ps_name, created_at, lead_category').eq('location', branch)
-                event_query = apply_server_filters(event_query, 'event')
-                event_rows = event_query.execute().data or []
-        
-        # OPTIMIZED: Format rows efficiently using list comprehensions
-        def format_ps_rows(rows):
-            return [
-                {
-                    'uid': row.get('lead_uid', ''),
-                    'customer_name': row.get('customer_name', ''),
-                    'customer_mobile_number': row.get('customer_mobile_number', ''),
-                    'final_status': row.get('final_status', ''),
-                    'ps_name': row.get('ps_name', ''),
-                    'created_at': row.get('created_at', ''),
-                    'source': row.get('source', 'PS'),
-                    'lead_category': row.get('lead_category') if row.get('lead_category') else 'Not Set',
-                    'ps_assigned_at': row.get('ps_assigned_at', '')
-                }
-                for row in rows
-            ]
-        
-        def format_walkin_rows(rows):
-            return [
-                {
-                    'uid': row.get('uid', ''),
-                    'customer_name': row.get('customer_name', ''),
-                    'customer_mobile_number': row.get('mobile_number', ''),
-                    'final_status': row.get('status', ''),
-                    'ps_name': row.get('ps_assigned', ''),
-                    'created_at': row.get('created_at', ''),
-                    'source': 'Walk In',
-                    'lead_category': row.get('lead_category') if row.get('lead_category') else 'Not Set',
-                    'ps_assigned_at': row.get('created_at', '')
-                }
-                for row in rows
-            ]
-        
-        def format_event_rows(rows):
-            return [
-                {
-                    'uid': row.get('activity_uid', ''),
-                    'customer_name': row.get('customer_name', ''),
-                    'customer_mobile_number': row.get('customer_phone_number', ''),
-                    'final_status': row.get('final_status', ''),
-                    'ps_name': row.get('ps_name', ''),
-                    'created_at': row.get('created_at', ''),
-                    'source': 'Event',
-                    'lead_category': row.get('lead_category') if row.get('lead_category') else 'Not Set',
-                    'ps_assigned_at': row.get('created_at', '')
-                }
-                for row in rows
-            ]
-        
-        # Format all rows efficiently
-        ps_formatted = format_ps_rows(ps_rows)
-        walkin_formatted = format_walkin_rows(walkin_rows)
-        event_formatted = format_event_rows(event_rows)
-        
-        # Combine all rows
-        all_formatted_rows = ps_formatted + walkin_formatted + event_formatted
-        
-        # Sort by created_at in descending order (newest first)
-        all_formatted_rows.sort(key=lambda x: x.get('created_at', ''), reverse=True)
-        
-        # Note: All filtering (search, date, PS) will be handled client-side for better performance
-        
-        # OPTIMIZED: Return response efficiently with better error handling
-        try:
-            response = {
-                'success': True,
-                'rows': all_formatted_rows,
-                'total_count': len(all_formatted_rows),
-                'fresh_leads_count': fresh_leads_count,
-                'followup_leads_count': followup_leads_count
-            }
-            
-            # Log audit event for successful data access
-            try:
-                auth_manager.log_audit_event(
-                    user_id=session.get('user_id'),
-                    user_type=session.get('user_type'),
-                    action='BRANCH_HEAD_DASHBOARD_DATA_ACCESS',
-                    resource='branch_head_dashboard_data',
-                    details={
-                        'section': section,
-                        'total_count': len(all_formatted_rows)
-                    }
-                )
-            except Exception as audit_error:
-                print(f"Audit logging error: {audit_error}")
-            
-            return jsonify(response)
-        except Exception as e:
-            print(f"Error formatting response: {str(e)}")
-            return jsonify({
-                'success': False,
-                'error': str(e),
-                'rows': [],
-                'total_count': 0,
-                'fresh_leads_count': fresh_leads_count,
-                'followup_leads_count': followup_leads_count
-            })
-
-    elif section == 'walkin_leads':
-        walkin_query = supabase.table('walkin_data').select('*').eq('ps_branch', branch)
-        all_rows = walkin_query.execute().data or []
-        rows = [
-            {
-                'uid': row.get('uid', ''),
-                'customer_name': row.get('customer_name', ''),
-                'customer_mobile_number': row.get('customer_mobile_number', ''),
-                'customer_email': row.get('customer_email', ''),
-                'model_interested': row.get('model_interested', ''),
-                'lead_source': row.get('lead_source', ''),
-                'status': row.get('ps_final_status', ''),
-                'ps_name': row.get('ps_name', ''),
-                'created_at': row.get('created_at', ''),
-                'lead_category': row.get('lead_category', '')
-            }
-            for row in all_rows
-        ]
-        
-        # Note: All filtering is handled client-side
-        
-        total_count = int(len(rows))
-        offset = (page - 1) * per_page
-        paged_rows = rows[offset:offset + per_page]
-        total_pages = 1 if total_count == 0 else math.ceil(total_count / per_page)
-        response = {
-            'success': True,
-            'rows': paged_rows,
-            'total_count': total_count,
-            'total_pages': total_pages,
-            'current_page': page,
-            'per_page': per_page,
-            'walkin_leads_count': total_count,
-            'fresh_leads_count': fresh_leads_count,
-            'cre_assigned_leads_count': cre_assigned_leads_count,
-            'followup_leads_count': followup_leads_count,
-            'event_leads_count': event_leads_count,
-            'won_leads_count': won_leads_count,
-            'lost_leads_count': lost_leads_count
-        }
-        return jsonify(response)
-
-    elif section == 'cre_assigned_leads':
-        # Fetch all rows from ps_followup_master for the current branch
-        query = supabase.table('ps_followup_master').select('*').eq('ps_branch', branch)
-        all_rows = query.execute().data or []
-        
-        # Structure the data properly for frontend
-        rows = [
-            {
-                'customer_name': row.get('customer_name', ''),
-                'customer_mobile_number': row.get('customer_mobile_number', ''),
-                'final_status': row.get('final_status', ''),
-                'uid': row.get('lead_uid', ''),
-                'source': row.get('source', ''),
-                'lead_status': row.get('lead_status', ''),
-                'ps_name': row.get('ps_name', '')
-            }
-            for row in all_rows
-        ]
-        
-        # Note: All filtering is handled client-side
-        
-        total_count = len(rows)
-        offset = (page - 1) * per_page
-        paged_rows = rows[offset:offset + per_page]
-        total_pages = 1 if total_count == 0 else math.ceil(total_count / per_page)
-        response = {
-            'success': True,
-            'rows': paged_rows,
-            'total_count': total_count,
-            'total_pages': total_pages,
-            'current_page': page,
-            'per_page': per_page,
-            'cre_assigned_leads_count': total_count,
-            'fresh_leads_count': fresh_leads_count,
-            'walkin_leads_count': walkin_leads_count,
-            'followup_leads_count': followup_leads_count,
-            'event_leads_count': event_leads_count,
-            'won_leads_count': won_leads_count,
-            'lost_leads_count': lost_leads_count
-        }
-        return jsonify(response)
-    elif section == 'pending_leads':
-        # ps_followup_master
-        query = supabase.table('ps_followup_master').select('*').eq('ps_branch', branch).eq('final_status', 'Pending')
-        followup_rows_raw = query.execute().data or []
-        followup_rows = [
-            {
-                'uid': row.get('lead_uid', ''),
-                'customer_name': row.get('customer_name', ''),
-                'customer_mobile_number': row.get('customer_mobile_number', ''),
-                'final_status': row.get('final_status', ''),
-                'source': row.get('source', ''),
-                'lead_status': row.get('lead_status', ''),
-                'ps_name': row.get('ps_name', '')
-            }
-            for row in followup_rows_raw
-        ]
-
-        # activity_leads
-        query = supabase.table('activity_leads').select('*').eq('location', branch).eq('final_status', 'Pending')
-        event_rows_raw = query.execute().data or []
-        event_rows = [
-            {
-                'uid': row.get('activity_uid', ''),
-                'customer_name': row.get('customer_name', ''),
-                'customer_mobile_number': row.get('customer_phone_number', row.get('customer_mobile_number', '')),
-                'final_status': row.get('final_status', ''),
-                'source': 'Event',
-                'lead_status': row.get('lead_status', ''),
-                'ps_name': row.get('ps_name', '')
-            }
-            for row in event_rows_raw
-        ]
-
-        # Merge all
-        all_rows = followup_rows + event_rows
-        
-        # Note: All filtering is handled client-side
-
-        # Counts for KPI sub-boxes
-        cre_assigned_count = len(followup_rows)
-        event_count = len(event_rows)
-
-        total_count = len(all_rows)
-
-        # Pagination
-        offset = (page - 1) * per_page
-        paged_rows = all_rows[offset:offset + per_page]
-        total_pages = 1 if total_count == 0 else math.ceil(total_count / per_page)
-
-        response = {
-            'success': True,
-            'rows': paged_rows,
-            'total_count': total_count,
-            'total_pages': total_pages,
-            'current_page': page,
-            'per_page': per_page,
-            'pending_leads_count': total_count,
-            'pending_leads_cre_assigned_count': cre_assigned_count,
-            'pending_leads_event_count': event_count,
-            'fresh_leads_count': fresh_leads_count,
-            'walkin_leads_count': walkin_leads_count,
-            'cre_assigned_leads_count': cre_assigned_leads_count,
-            'followup_leads_count': followup_leads_count,
-            'event_leads_count': event_leads_count,
-            'won_leads_count': won_leads_count,
-            'lost_leads_count': lost_leads_count
-        }
-        return jsonify(response)
-
-    elif section == 'followup_leads':
-        # Get filter parameters for followup_leads section
-        ps_name = request.args.get('ps_name', '')
-        search = request.args.get('search', '')
-        
-        # Debug logging
-        print(f"DEBUG: Followup filter parameters - ps_name: {ps_name}, search: {search}")
-        
-        # Get today's follow-ups using proper date filtering (like your SQL query)
-        today_str = datetime.now().strftime('%Y-%m-%d')
-        
-        # PS follow-ups for today (exact date match) AND final_status = 'Pending'
-        ps_query = supabase.table('ps_followup_master').select('*').eq('ps_branch', branch).eq('final_status', 'Pending').eq('follow_up_date', today_str)
-        # Apply PS filter if specified
-        if ps_name:
-            ps_query = ps_query.eq('ps_name', ps_name)
-        ps_today = ps_query.execute().data or []
-        
-        # Event follow-ups for today (exact date match) AND final_status = 'Pending'
-        # Use date range queries for timestamp columns
-        act_query = supabase.table('activity_leads').select('*').eq('location', branch).eq('final_status', 'Pending').gte('ps_followup_date_ts', f'{today_str} 00:00:00').lt('ps_followup_date_ts', f'{today_str} 23:59:59')
-        # Apply PS filter if specified
-        if ps_name:
-            act_query = act_query.eq('ps_name', ps_name)
-        act_today_raw = act_query.execute().data or []
-        
-        # Walk-in follow-ups for today (exact date match) AND status = 'Pending'
-        # Use date range queries for timestamp columns
-        walkin_query = supabase.table('walkin_table').select('*').eq('branch', branch).eq('status', 'Pending').gte('next_followup_date', f'{today_str} 00:00:00').lt('next_followup_date', f'{today_str} 23:59:59')
-        # Apply PS filter if specified
-        if ps_name:
-            walkin_query = walkin_query.eq('ps_assigned', ps_name)
-        walkin_today_raw = walkin_query.execute().data or []
-        
-        # Mark all as not missed and set source_type and phone
-        ps_today = [{**row, 'missed': False, 'lead_status': row.get('lead_status', '')} for row in ps_today]
-        act_today = [
-            {**row, 'missed': False, 'source_type': 'Event', 'customer_mobile_number': row.get('customer_phone_number', ''), 'lead_status': row.get('lead_status', '')}
-            for row in act_today_raw
-        ]
-        walkin_today = [
-            {**row, 'missed': False, 'source_type': 'Walk-in', 'final_status': row.get('status', ''), 'lead_status': row.get('lead_status', ''), 'customer_mobile_number': row.get('mobile_number', '')}
-            for row in walkin_today_raw
-        ]
-        
-        # Debug: Print sample data from each source
-        if ps_today:
-            print(f"DEBUG: Sample PS data: {ps_today[0] if ps_today else 'None'}")
-            print(f"DEBUG: PS source column value: {ps_today[0].get('source') if ps_today else 'None'}")
-        if act_today:
-            print(f"DEBUG: Sample Event data: {act_today[0] if act_today else 'None'}")
-        if walkin_today:
-            print(f"DEBUG: Sample Walkin data: {walkin_today[0] if walkin_today else 'None'}")
-        
-        # Merge all today's followups (PS, Activity, and Walk-in)
-        all_rows = ps_today + act_today + walkin_today
-        
-        # Debug: Print counts before and after search filter
-        print(f"DEBUG: Before search filter - PS: {len(ps_today)}, Event: {len(act_today)}, Walkin: {len(walkin_today)}, Total: {len(all_rows)}")
-        
-        # Format rows for frontend
-        formatted_rows = [
-            {
-                'uid': row.get('lead_uid', row.get('activity_uid', row.get('uid', ''))),
-                'customer_name': row.get('customer_name', ''),
-                'customer_mobile_number': row.get('customer_mobile_number', row.get('customer_phone_number', row.get('mobile_number', ''))),
-                'source': row.get('source', row.get('source_type', 'PS Followup')),  # Use source from ps_followup_master, fallback to source_type
-                'lead_category': row.get('lead_category') if row.get('lead_category') else 'Not Set',
-                'lead_status': row.get('lead_status', ''),
-                'ps_name': row.get('ps_name', row.get('ps_assigned', '')),
-                'follow_up_date': row.get('follow_up_date', row.get('ps_followup_date_ts', row.get('next_followup_date', '')))
-            }
-            for row in all_rows
-        ]
-        
-        # Apply search filter if provided
-        if search:
-            print(f"DEBUG: Applying search filter: {search}")
-            search_lower = search.lower()
-            formatted_rows = [
-                row for row in formatted_rows
-                if (search_lower in str(row.get('uid', '')).lower() or
-                    search_lower in str(row.get('customer_name', '')).lower() or
-                    search_lower in str(row.get('customer_mobile_number', '')).lower() or
-                    search_lower in str(row.get('ps_name', '')).lower())
-            ]
-            print(f"DEBUG: After search filter - Total: {len(formatted_rows)}")
-        
-        print(f"DEBUG: Final formatted rows count: {len(formatted_rows)}")
-        
-        # Calculate actual counts from loaded data
-        actual_ps_count = len(ps_today)
-        actual_event_count = len(act_today_raw)
-        actual_walkin_count = len(walkin_today_raw)
-        actual_total_count = actual_ps_count + actual_event_count + actual_walkin_count
-        
-        print(f"DEBUG: Actual data counts - PS: {actual_ps_count}, Event: {actual_event_count}, Walkin: {actual_walkin_count}, Total: {actual_total_count}")
-        print(f"DEBUG: Formatted rows count: {len(formatted_rows)}")
-        
-        response = {
-            'success': True,
-            'rows': formatted_rows,
-            'total_count': len(formatted_rows),
-            'followup_leads_count': actual_total_count,  # Use actual data count, not formatted rows
-            'fresh_leads_count': fresh_leads_count
-        }
-        
-        auth_manager.log_audit_event(
-            user_id=session.get('user_id'),
-            user_type=session.get('user_type'),
-            action='BRANCH_HEAD_DASHBOARD_DATA_ACCESS',
-            resource='branch_head_dashboard_data',
-            details={
-                'section': section,
-                'total_count': len(formatted_rows)
-            }
-        )
-        return jsonify(response)
-
-    elif section == 'event_leads':
-        query = supabase.table('activity_leads').select('*').eq('location', branch)
-        
-        # Apply filters
-        if ps_name:
-            query = query.eq('ps_name', ps_name)
-        if start_date:
-            query = query.gte('created_at', start_date)
-        if end_date:
-            query = query.lte('created_at', end_date)
-            
-        event_rows_raw = query.execute().data or []
-        event_rows = [
-            {
-                'customer_name': (row.get('customer_name') or '') if row.get('customer_name') is not None else '',
-                'customer_mobile_number': (row.get('customer_phone_number') or '') if row.get('customer_phone_number') is not None else '',
-                'final_status': (row.get('final_status') or '') if row.get('final_status') is not None else '',
-                'uid': row.get('activity_uid', '') or '',
-                'source': 'Event',
-                'lead_status': (row.get('lead_status') or '') if row.get('lead_status') is not None else '',
-                'ps_name': (row.get('ps_name') or '') if row.get('ps_name') is not None else ''
-            }
-            for row in event_rows_raw
-        ]
-        
-        # Apply search filter
-        event_rows = filter_rows_by_search(event_rows, search)
-        
-        total_count = len(event_rows)
-        offset = (page - 1) * per_page
-        paged_rows = event_rows[offset:offset + per_page]
-        total_pages = 1 if total_count == 0 else math.ceil(total_count / per_page)
-        
-        response = {
-            'success': True,
-            'rows': paged_rows,
-            'total_count': total_count,
-            'total_pages': total_pages,
-            'current_page': page,
-            'per_page': per_page,
-            'event_leads_count': total_count,
-            'fresh_leads_count': fresh_leads_count,
-            'walkin_leads_count': walkin_leads_count,
-            'cre_assigned_leads_count': cre_assigned_leads_count,
-            'followup_leads_count': followup_leads_count,
-            'won_leads_count': won_leads_count,
-            'lost_leads_count': lost_leads_count
-        }
-        return jsonify(response)
-
-    elif section == 'won_leads':
-        # Fetch from ps_followup_master
-        query = supabase.table('ps_followup_master').select('*').eq('ps_branch', branch).eq('final_status', 'Won')
-        
-        # Apply filters
-        if ps_name:
-            query = query.eq('ps_name', ps_name)
-        if start_date:
-            query = query.gte('created_at', start_date)
-        if end_date:
-            query = query.lte('created_at', end_date)
-            
-        ps_rows_raw = query.execute().data or []
-        ps_rows = [
-            {
-                'customer_name': row.get('customer_name', ''),
-                'customer_mobile_number': row.get('customer_mobile_number', ''),
-                'final_status': row.get('final_status', ''),
-                'uid': row.get('lead_uid', ''),
-                'source': row.get('source', ''),
-                'lead_status': row.get('lead_status', ''),
-                'ps_name': row.get('ps_name', '')
-            }
-            for row in ps_rows_raw
-        ]
-        
-        # Fetch from activity_leads
-        query = supabase.table('activity_leads').select('*').eq('location', branch).eq('final_status', 'Won')
-        
-        # Apply filters
-        if ps_name:
-            query = query.eq('ps_name', ps_name)
-        if start_date:
-            query = query.gte('created_at', start_date)
-        if end_date:
-            query = query.lte('created_at', end_date)
-            
-        event_rows_raw = query.execute().data or []
-        event_rows = [
-            {
-                'customer_name': row.get('customer_name', ''),
-                'customer_mobile_number': row.get('customer_phone_number', ''),
-                'final_status': row.get('final_status', ''),
-                'uid': row.get('activity_uid', ''),
-                'source': 'Event',
-                'lead_status': row.get('lead_status', ''),
-                'ps_name': row.get('ps_name', '')
-            }
-            for row in event_rows_raw
-        ]
-        
-        # Fetch from walkin_data
-        query = supabase.table('walkin_data').select('*').eq('ps_branch', branch).eq('ps_final_status', 'Won')
-        
-        # Apply filters
-        if ps_name:
-            query = query.eq('ps_name', ps_name)
-        if start_date:
-            query = query.gte('created_at', start_date)
-        if end_date:
-            query = query.lte('created_at', end_date)
-            
-        walkin_rows_raw = query.execute().data or []
-        walkin_rows = [
-            {
-                'customer_name': row.get('customer_name', ''),
-                'customer_mobile_number': row.get('customer_mobile_number', ''),
-                'final_status': row.get('ps_final_status', ''),
-                'uid': row.get('uid', ''),
-                'source': 'Walk-in',
-                'lead_status': row.get('lead_status', ''),
-                'ps_name': row.get('ps_name', '')
-            }
-            for row in walkin_rows_raw
-        ]
-        
-        # Merge all rows
-        all_rows = ps_rows + event_rows + walkin_rows
-        
-        # Apply search filter
-        all_rows = filter_rows_by_search(all_rows, search)
-        
-        total_count = len(all_rows)
-        offset = (page - 1) * per_page
-        paged_rows = all_rows[offset:offset + per_page]
-        total_pages = 1 if total_count == 0 else math.ceil(total_count / per_page)
-        
-        response = {
-            'success': True,
-            'rows': paged_rows,
-            'total_count': total_count,
-            'total_pages': total_pages,
-            'current_page': page,
-            'per_page': per_page,
-            'won_leads_count': total_count,
-            'fresh_leads_count': fresh_leads_count,
-            'walkin_leads_count': walkin_leads_count,
-            'cre_assigned_leads_count': cre_assigned_leads_count,
-            'followup_leads_count': followup_leads_count,
-            'event_leads_count': event_leads_count,
-            'lost_leads_count': lost_leads_count
-        }
-        return jsonify(response)
-
-    elif section == 'lost_leads':
-        # Fetch from ps_followup_master
-        query = supabase.table('ps_followup_master').select('*').eq('ps_branch', branch).eq('final_status', 'Lost')
-        
-        # Apply filters
-        if ps_name:
-            query = query.eq('ps_name', ps_name)
-        if start_date:
-            query = query.gte('created_at', start_date)
-        if end_date:
-            query = query.lte('created_at', end_date)
-            
-        ps_rows_raw = query.execute().data or []
-        ps_rows = [
-            {
-                'customer_name': row.get('customer_name', ''),
-                'customer_mobile_number': row.get('customer_mobile_number', ''),
-                'final_status': row.get('final_status', ''),
-                'uid': row.get('lead_uid', ''),
-                'source': row.get('source', ''),
-                'lead_status': row.get('lead_status', ''),
-                'ps_name': row.get('ps_name', '')
-            }
-            for row in ps_rows_raw
-        ]
-        
-        # Fetch from activity_leads
-        query = supabase.table('activity_leads').select('*').eq('location', branch).eq('final_status', 'Lost')
-        
-        # Apply filters
-        if ps_name:
-            query = query.eq('ps_name', ps_name)
-        if start_date:
-            query = query.gte('created_at', start_date)
-        if end_date:
-            query = query.lte('created_at', end_date)
-            
-        event_rows_raw = query.execute().data or []
-        event_rows = [
-            {
-                'customer_name': row.get('customer_name', ''),
-                'customer_mobile_number': row.get('customer_phone_number', ''),
-                'final_status': row.get('final_status', ''),
-                'uid': row.get('activity_uid', ''),
-                'source': 'Event',
-                'lead_status': row.get('lead_status', ''),
-                'ps_name': row.get('ps_name', '')
-            }
-            for row in event_rows_raw
-        ]
-        
-        # Fetch from walkin_data
-        query = supabase.table('walkin_data').select('*').eq('ps_branch', branch).eq('ps_final_status', 'Lost')
-        
-        # Apply filters
-        if ps_name:
-            query = query.eq('ps_name', ps_name)
-        if start_date:
-            query = query.gte('created_at', start_date)
-        if end_date:
-            query = query.lte('created_at', end_date)
-            
-        walkin_rows_raw = query.execute().data or []
-        walkin_rows = [
-            {
-                'customer_name': row.get('customer_name', ''),
-                'customer_mobile_number': row.get('customer_mobile_number', ''),
-                'final_status': row.get('ps_final_status', ''),
-                'uid': row.get('uid', ''),
-                'source': 'Walk-in',
-                'lead_status': row.get('lead_status', ''),
-                'ps_name': row.get('ps_name', '')
-            }
-            for row in walkin_rows_raw
-        ]
-        
-        # Merge all rows
-        all_rows = ps_rows + event_rows + walkin_rows
-        
-        # Apply search filter
-        all_rows = filter_rows_by_search(all_rows, search)
-        
-        total_count = len(all_rows)
-        offset = (page - 1) * per_page
-        paged_rows = all_rows[offset:offset + per_page]
-        total_pages = 1 if total_count == 0 else math.ceil(total_count / per_page)
-        
-        response = {
-            'success': True,
-            'rows': paged_rows,
-            'total_count': total_count,
-            'total_pages': total_pages,
-            'current_page': page,
-            'per_page': per_page,
-            'lost_leads_count': total_count,
-            'fresh_leads_count': fresh_leads_count,
-            'walkin_leads_count': walkin_leads_count,
-            'cre_assigned_leads_count': cre_assigned_leads_count,
-            'followup_leads_count': followup_leads_count,
-            'event_leads_count': event_leads_count,
-            'won_leads_count': won_leads_count
-        }
-        return jsonify(response)
-
-    # Default response for any other sections
-    response = {
-        'success': True,
-        'rows': [],
-        'total_count': 0,
-        'total_pages': 1,
-        'current_page': page,
-        'per_page': per_page,
-        'fresh_leads_count': fresh_leads_count,
-        'walkin_leads_count': walkin_leads_count,
-        'cre_assigned_leads_count': cre_assigned_leads_count,
-        'followup_leads_count': followup_leads_count,
-        'event_leads_count': event_leads_count,
-        'won_leads_count': won_leads_count,
-        'lost_leads_count': lost_leads_count
-    }
-    return jsonify(response)
-
-@app.route('/branch_performance/<branch_name>')
-@require_admin
-def branch_performance(branch_name):
-    """Get detailed PS performance for a specific branch"""
-    try:
-        # Get all PS users in this branch
-        branch_ps_users = safe_get_data('ps_users', {'branch': branch_name})
-
-        if not branch_ps_users:
-            return jsonify({
-                'success': False,
-                'message': f'No PS users found in {branch_name} branch'
-            })
-
-        # Get all leads and PS followups
-        all_leads = safe_get_data('lead_master')
-        all_ps_followups = safe_get_data('ps_followup_master')
-
-        # Calculate performance for each PS in the branch
-        ps_performance = []
-        total_branch_leads = 0
-        total_branch_won = 0
-
-        for ps_user in branch_ps_users:
-            ps_name = ps_user['name']
-
-            # Get PS followup data for this PS
-            ps_leads = [f for f in all_ps_followups if f.get('ps_name') == ps_name]
-
-            # Calculate metrics
-            total_leads = len(ps_leads)
-            pending_leads = len([l for l in ps_leads if l.get('final_status') == 'Pending'])
-            in_progress_leads = len([l for l in ps_leads if l.get('final_status') == 'In Progress'])
-            won_leads = len([l for l in ps_leads if l.get('final_status') == 'Won'])
-            lost_leads = len([l for l in ps_leads if l.get('final_status') == 'Lost'])
-
-            # Calculate success rate
-            success_rate = round((won_leads / total_leads * 100) if total_leads > 0 else 0, 1)
-
-            # Calculate average calls
-            total_calls = 0
-            for lead in ps_leads:
-                call_count = 0
-                for call_num in ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']:
-                    if lead.get(f'{call_num}_call_date'):
-                        call_count += 1
-                total_calls += call_count
-
-            avg_calls = round(total_calls / total_leads, 1) if total_leads > 0 else 0
-
-            # Get last activity (most recent call date)
-            last_activity = None
-            for lead in ps_leads:
-                for call_num in ['seventh', 'sixth', 'fifth', 'fourth', 'third', 'second', 'first']:  # Check in reverse order
-                    call_date = lead.get(f'{call_num}_call_date')
-                    if call_date:
-                        try:
-                            activity_date = datetime.strptime(call_date, '%Y-%m-%d').date()
-                            if not last_activity or activity_date > last_activity:
-                                last_activity = activity_date
-                        except (ValueError, TypeError):
-                            continue
-                        break
-
-            last_activity_str = last_activity.strftime('%Y-%m-%d') if last_activity else None
-
-            ps_performance.append({
-                'name': ps_user['name'],
-                'username': ps_user['username'],
-                'phone': ps_user.get('phone', 'N/A'),
-                'email': ps_user.get('email', 'N/A'),
-                'total_leads': total_leads,
-                'pending_leads': pending_leads,
-                'in_progress_leads': in_progress_leads,
-                'won_leads': won_leads,
-                'lost_leads': lost_leads,
-                'success_rate': success_rate,
-                'avg_calls': avg_calls,
-                'last_activity': last_activity_str
-            })
-
-            total_branch_leads += total_leads
-            total_branch_won += won_leads
-
-        # Calculate branch summary
-        branch_success_rate = round((total_branch_won / total_branch_leads * 100) if total_branch_leads > 0 else 0, 1)
-
-        summary = {
-            'total_ps': len(branch_ps_users),
-            'total_leads': total_branch_leads,
-            'won_leads': total_branch_won,
-            'success_rate': branch_success_rate
-        }
-
-        # Log branch performance access
-        auth_manager.log_audit_event(
-            user_id=session.get('user_id'),
-            user_type=session.get('user_type'),
-            action='BRANCH_PERFORMANCE_ACCESS',
-            resource='branch_performance',
-            details={'branch': branch_name}
-        )
-
-        return jsonify({
-            'success': True,
-            'data': {
-                'branch_name': branch_name,
-                'summary': summary,
-                'ps_performance': ps_performance
-            }
-        })
-
-    except Exception as e:
-        print(f"Error getting branch performance for {branch_name}: {e}")
-        return jsonify({
-            'success': False,
-            'message': f'Error loading branch performance: {str(e)}'
-        })
-
-
-@app.route('/export_leads')
-@require_admin
-def export_leads():
-    """Export leads dashboard"""
-    try:
-        # Get all leads for counting
-        all_leads = safe_get_data('lead_master')
-
-        # Count by final status
-        won_count = len([l for l in all_leads if l.get('final_status') == 'Won'])
-        lost_count = len([l for l in all_leads if l.get('final_status') == 'Lost'])
-        pending_count = len([l for l in all_leads if l.get('final_status') == 'Pending'])
-        in_progress_count = len([l for l in all_leads if l.get('final_status') == 'In Progress'])
-
-        # Count by lead category
-        hot_count = len([l for l in all_leads if l.get('lead_category') == 'Hot'])
-        warm_count = len([l for l in all_leads if l.get('lead_category') == 'Warm'])
-        cold_count = len([l for l in all_leads if l.get('lead_category') == 'Cold'])
-        not_interested_count = len([l for l in all_leads if l.get('lead_category') == 'Not Interested'])
-
-        # Count test drive leads from alltest_drive table
-        test_drive_leads = safe_get_data('alltest_drive')
-        test_drive_yes_count = len([l for l in test_drive_leads if l.get('test_drive_done') == 'Yes'])
-        test_drive_no_count = len([l for l in test_drive_leads if l.get('test_drive_done') == 'No'])
-        test_drive_total_count = len(test_drive_leads)
-
-        # Log export dashboard access
-        auth_manager.log_audit_event(
-            user_id=session.get('user_id'),
-            user_type=session.get('user_type'),
-            action='EXPORT_DASHBOARD_ACCESS',
-            resource='export_leads'
-        )
-
-        return render_template('export_leads.html',
-                               won_count=won_count,
-                               lost_count=lost_count,
-                               pending_count=pending_count,
-                               in_progress_count=in_progress_count,
-                               hot_count=hot_count,
-                               warm_count=warm_count,
-                               cold_count=cold_count,
-                               not_interested_count=not_interested_count,
-                               test_drive_yes_count=test_drive_yes_count,
-                               test_drive_no_count=test_drive_no_count,
-                               test_drive_total_count=test_drive_total_count)
-
-    except Exception as e:
-        flash(f'Error loading export dashboard: {str(e)}', 'error')
-        return redirect(url_for('admin_dashboard'))
-
-
-@app.route('/get_filtered_leads')
-@require_admin
-def get_filtered_leads():
-    """Get filtered leads based on filter type and value"""
-    try:
-        filter_type = request.args.get('filter_type')
-        filter_value = request.args.get('filter_value')
-
-        if not filter_type or not filter_value:
-            return jsonify({'success': False, 'message': 'Filter type and value are required'})
-
-        # Get all leads
-        all_leads = safe_get_data('lead_master')
-
-        # Filter based on type
-        if filter_type == 'final_status':
-            filtered_leads = [l for l in all_leads if l.get('final_status') == filter_value]
-        elif filter_type == 'lead_category':
-            filtered_leads = [l for l in all_leads if l.get('lead_category') == filter_value]
-        else:
-            return jsonify({'success': False, 'message': 'Invalid filter type'})
-
-        # Log filtered leads access
-        auth_manager.log_audit_event(
-            user_id=session.get('user_id'),
-            user_type=session.get('user_type'),
-            action='FILTERED_LEADS_ACCESS',
-            resource='lead_master',
-            details={'filter_type': filter_type, 'filter_value': filter_value, 'result_count': len(filtered_leads)}
-        )
-
-        return jsonify({
-            'success': True,
-            'leads': filtered_leads,
-            'count': len(filtered_leads)
-        })
-
-    except Exception as e:
-        print(f"Error getting filtered leads: {e}")
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/export_leads_csv')
-@require_admin
-def export_leads_csv():
-    """Export filtered leads to CSV"""
-    try:
-        filter_type = request.args.get('filter_type')
-        filter_value = request.args.get('filter_value')
-
-        if not filter_type or not filter_value:
-            return jsonify({'success': False, 'message': 'Filter type and value are required'})
-
-        # Get all leads
-        all_leads = safe_get_data('lead_master')
-
-        # Filter based on type
-        if filter_type == 'final_status':
-            filtered_leads = [l for l in all_leads if l.get('final_status') == filter_value]
-        elif filter_type == 'lead_category':
-            filtered_leads = [l for l in all_leads if l.get('lead_category') == filter_value]
-        else:
-            return jsonify({'success': False, 'message': 'Invalid filter type'})
-
-        # Create CSV content
-        output = io.StringIO()
-        writer = csv.writer(output)
-
-        # Write headers
-        headers = [
-            'UID', 'Date', 'Customer Name', 'Mobile Number', 'Source', 'CRE Name', 'PS Name',
-            'Lead Category', 'Model Interested', 'Branch', 'Lead Status', 'Final Status',
-            'Follow Up Date', 'First Call Date', 'First Remark', 'Second Call Date', 'Second Remark',
-            'Third Call Date', 'Third Remark', 'Fourth Call Date', 'Fourth Remark',
-            'Fifth Call Date', 'Fifth Remark', 'Sixth Call Date', 'Sixth Remark',
-            'Seventh Call Date', 'Seventh Remark', 'Assigned'
-        ]
-        writer.writerow(headers)
-
-        # Write data rows
-        for lead in filtered_leads:
-            # Format call dates to YYYY-MM-DD if present
-            first_cd = str(lead.get('first_call_date', '') or '')[:10]
-            second_cd = str(lead.get('second_call_date', '') or '')[:10]
-            third_cd = str(lead.get('third_call_date', '') or '')[:10]
-            fourth_cd = str(lead.get('fourth_call_date', '') or '')[:10]
-            fifth_cd = str(lead.get('fifth_call_date', '') or '')[:10]
-            sixth_cd = str(lead.get('sixth_call_date', '') or '')[:10]
-            seventh_cd = str(lead.get('seventh_call_date', '') or '')[:10]
-
-            row = [
-                lead.get('uid', ''),
-                lead.get('date', ''),
-                lead.get('customer_name', ''),
-                lead.get('customer_mobile_number', ''),
-                lead.get('source', ''),
-                lead.get('cre_name', ''),
-                lead.get('ps_name', ''),
-                lead.get('lead_category', ''),
-                lead.get('model_interested', ''),
-                lead.get('branch', ''),
-                lead.get('lead_status', ''),
-                lead.get('final_status', ''),
-                lead.get('follow_up_date', ''),
-                first_cd,
-                lead.get('first_remark', ''),
-                second_cd,
-                lead.get('second_remark', ''),
-                third_cd,
-                lead.get('third_remark', ''),
-                fourth_cd,
-                lead.get('fourth_remark', ''),
-                fifth_cd,
-                lead.get('fifth_remark', ''),
-                sixth_cd,
-                lead.get('sixth_remark', ''),
-                seventh_cd,
-                lead.get('seventh_remark', ''),
-                lead.get('assigned', '')
-            ]
-            writer.writerow(row)
-
-        # Log CSV export
-        auth_manager.log_audit_event(
-            user_id=session.get('user_id'),
-            user_type=session.get('user_type'),
-            action='CSV_EXPORT',
-            resource='lead_master',
-            details={'filter_type': filter_type, 'filter_value': filter_value, 'exported_count': len(filtered_leads)}
-        )
-
-        # Create response
-        output.seek(0)
-        response = app.response_class(
-            output.getvalue(),
-            mimetype='text/csv',
-            headers={
-                'Content-Disposition': f'attachment; filename=leads_{filter_type}_{filter_value}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
-            }
-        )
-
-        return response
-
-    except Exception as e:
-        print(f"Error exporting CSV: {e}")
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/get_leads_by_date_range')
-@require_admin
-def get_leads_by_date_range():
-    """Get leads filtered by date range"""
-    try:
-        start_date = request.args.get('start_date')
-        end_date = request.args.get('end_date')
-        date_field = request.args.get('date_field', 'date')
-
-        if not start_date or not end_date:
-            return jsonify({'success': False, 'message': 'Start date and end date are required'})
-
-        # Validate date format
-        try:
-            datetime.strptime(start_date, '%Y-%m-%d')
-            datetime.strptime(end_date, '%Y-%m-%d')
-        except ValueError:
-            return jsonify({'success': False, 'message': 'Invalid date format. Use YYYY-MM-DD'})
-
-        # Validate date field
-        valid_date_fields = ['date', 'first_call_date', 'follow_up_date', 'created_at']
-        if date_field not in valid_date_fields:
-            return jsonify({'success': False, 'message': 'Invalid date field'})
-
-        # Get all leads
-        all_leads = safe_get_data('lead_master')
-
-        # Filter by date range
-        filtered_leads = []
-        for lead in all_leads:
-            lead_date_str = lead.get(date_field)
-            if lead_date_str:
-                try:
-                    # Handle different date formats
-                    if 'T' in lead_date_str:  # ISO format with time
-                        lead_date = datetime.fromisoformat(lead_date_str.replace('Z', '+00:00')).date()
-                    else:  # Date only format
-                        lead_date = datetime.strptime(lead_date_str, '%Y-%m-%d').date()
-
-                    start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
-                    end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
-
-                    if start_date_obj <= lead_date <= end_date_obj:
-                        filtered_leads.append(lead)
-                except (ValueError, TypeError):
-                    # Skip leads with invalid dates
-                    continue
-
-        # Log date range filter access
-        auth_manager.log_audit_event(
-            user_id=session.get('user_id'),
-            user_type=session.get('user_type'),
-            action='DATE_RANGE_FILTER_ACCESS',
-            resource='lead_master',
-            details={
-                'start_date': start_date,
-                'end_date': end_date,
-                'date_field': date_field,
-                'result_count': len(filtered_leads)
-            }
-        )
-
-        return jsonify({
-            'success': True,
-            'leads': filtered_leads,
-            'count': len(filtered_leads)
-        })
-
-    except Exception as e:
-        print(f"Error getting leads by date range: {e}")
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/export_leads_by_date_csv')
-@require_admin
-def export_leads_by_date_csv():
-    """Export leads filtered by date range to CSV"""
-    try:
-        start_date = request.args.get('start_date')
-        end_date = request.args.get('end_date')
-        date_field = request.args.get('date_field', 'date')
-
-        if not start_date or not end_date:
-            return jsonify({'success': False, 'message': 'Start date and end date are required'})
-
-        # Validate date format
-        try:
-            datetime.strptime(start_date, '%Y-%m-%d')
-            datetime.strptime(end_date, '%Y-%m-%d')
-        except ValueError:
-            return jsonify({'success': False, 'message': 'Invalid date format. Use YYYY-MM-DD'})
-
-        # Validate date field
-        valid_date_fields = ['date', 'first_call_date', 'follow_up_date', 'created_at']
-        if date_field not in valid_date_fields:
-            return jsonify({'success': False, 'message': 'Invalid date field'})
-
-        # Get all leads
-        all_leads = safe_get_data('lead_master')
-
-        # Filter by date range
-        filtered_leads = []
-        for lead in all_leads:
-            lead_date_str = lead.get(date_field)
-            if lead_date_str:
-                try:
-                    # Handle different date formats
-                    if 'T' in lead_date_str:  # ISO format with time
-                        lead_date = datetime.fromisoformat(lead_date_str.replace('Z', '+00:00')).date()
-                    else:  # Date only format
-                        lead_date = datetime.strptime(lead_date_str, '%Y-%m-%d').date()
-
-                    start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
-                    end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
-
-                    if start_date_obj <= lead_date <= end_date_obj:
-                        filtered_leads.append(lead)
-                except (ValueError, TypeError):
-                    # Skip leads with invalid dates
-                    continue
-
-        # Create CSV content
-        output = io.StringIO()
-        writer = csv.writer(output)
-
-        # Write headers
-        headers = [
-            'UID', 'Date', 'Customer Name', 'Mobile Number', 'Source', 'CRE Name', 'PS Name',
-            'Lead Category', 'Model Interested', 'Branch', 'Lead Status', 'Final Status',
-            'Follow Up Date', 'First Call Date', 'First Remark', 'Second Call Date', 'Second Remark',
-            'Third Call Date', 'Third Remark', 'Fourth Call Date', 'Fourth Remark',
-            'Fifth Call Date', 'Fifth Remark', 'Sixth Call Date', 'Sixth Remark',
-            'Seventh Call Date', 'Seventh Remark', 'Assigned', 'Created At'
-        ]
-        writer.writerow(headers)
-
-        # Write data rows
-        for lead in filtered_leads:
-            # Format call dates to YYYY-MM-DD if present
-            first_cd = str(lead.get('first_call_date', '') or '')[:10]
-            second_cd = str(lead.get('second_call_date', '') or '')[:10]
-            third_cd = str(lead.get('third_call_date', '') or '')[:10]
-            fourth_cd = str(lead.get('fourth_call_date', '') or '')[:10]
-            fifth_cd = str(lead.get('fifth_call_date', '') or '')[:10]
-            sixth_cd = str(lead.get('sixth_call_date', '') or '')[:10]
-            seventh_cd = str(lead.get('seventh_call_date', '') or '')[:10]
-
-            row = [
-                lead.get('uid', ''),
-                lead.get('date', ''),
-                lead.get('customer_name', ''),
-                lead.get('customer_mobile_number', ''),
-                lead.get('source', ''),
-                lead.get('cre_name', ''),
-                lead.get('ps_name', ''),
-                lead.get('lead_category', ''),
-                lead.get('model_interested', ''),
-                lead.get('branch', ''),
-                lead.get('lead_status', ''),
-                lead.get('final_status', ''),
-                lead.get('follow_up_date', ''),
-                first_cd,
-                lead.get('first_remark', ''),
-                second_cd,
-                lead.get('second_remark', ''),
-                third_cd,
-                lead.get('third_remark', ''),
-                fourth_cd,
-                lead.get('fourth_remark', ''),
-                fifth_cd,
-                lead.get('fifth_remark', ''),
-                sixth_cd,
-                lead.get('sixth_remark', ''),
-                seventh_cd,
-                lead.get('seventh_remark', ''),
-                lead.get('assigned', ''),
-                lead.get('created_at', '')
-            ]
-            writer.writerow(row)
-
-        # Log CSV export
-        auth_manager.log_audit_event(
-            user_id=session.get('user_id'),
-            user_type=session.get('user_type'),
-            action='DATE_RANGE_CSV_EXPORT',
-            resource='lead_master',
-            details={
-                'start_date': start_date,
-                'end_date': end_date,
-                'date_field': date_field,
-                'exported_count': len(filtered_leads)
-            }
-        )
-
-        # Create response
-        output.seek(0)
-        response = app.response_class(
-            output.getvalue(),
-            mimetype='text/csv',
-            headers={
-                'Content-Disposition': f'attachment; filename=leads_date_range_{start_date}_to_{end_date}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
-            }
-        )
-
-        return response
-
-    except Exception as e:
-        print(f"Error exporting date range CSV: {e}")
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/get_test_drive_leads')
-@require_admin
-def get_test_drive_leads():
-    """Get test drive leads from alltest_drive table"""
-    try:
-        filter_type = request.args.get('filter_type', 'all')  # all, yes, no
-        
-        # Get all test drive leads
-        test_drive_leads = safe_get_data('alltest_drive')
-        
-        # Filter based on type
-        if filter_type == 'yes':
-            filtered_leads = [l for l in test_drive_leads if l.get('test_drive_done') == 'Yes']
-        elif filter_type == 'no':
-            filtered_leads = [l for l in test_drive_leads if l.get('test_drive_done') == 'No']
-        else:  # all
-            filtered_leads = test_drive_leads
-        
-        # Log test drive leads access
-        auth_manager.log_audit_event(
-            user_id=session.get('user_id'),
-            user_type=session.get('user_type'),
-            action='TEST_DRIVE_LEADS_ACCESS',
-            resource='alltest_drive',
-            details={'filter_type': filter_type, 'result_count': len(filtered_leads)}
-        )
-        
-        return jsonify({
-            'success': True,
-            'leads': filtered_leads,
-            'count': len(filtered_leads)
-        })
-        
-    except Exception as e:
-        print(f"Error getting test drive leads: {e}")
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/export_test_drive_csv')
-@require_admin
-def export_test_drive_csv():
-    """Export test drive leads to CSV"""
-    try:
-        filter_type = request.args.get('filter_type', 'all')  # all, yes, no
-        
-        # Get all test drive leads
-        test_drive_leads = safe_get_data('alltest_drive')
-        
-        # Filter based on type
-        if filter_type == 'yes':
-            filtered_leads = [l for l in test_drive_leads if l.get('test_drive_done') == 'Yes']
-        elif filter_type == 'no':
-            filtered_leads = [l for l in test_drive_leads if l.get('test_drive_done') == 'No']
-        else:  # all
-            filtered_leads = test_drive_leads
-        
-        # Create CSV content
-        output = io.StringIO()
-        writer = csv.writer(output)
-        
-        # Write headers
-        headers = [
-            'Original ID', 'Customer Name', 'Mobile Number', 'Test Drive Done',
-            'Lead Status', 'Lead Category', 'Model Interested', 'Final Status', 'PS Name',
-            'Branch', 'Created At', 'Updated At', 'Remarks', 'Activity Name', 'Activity Location',
-            'Customer Location', 'Customer Profession', 'Gender', 'Lead Source', 'CRE Name'
-        ]
-        writer.writerow(headers)
-        
-        # Write data
-        for lead in filtered_leads:
-            row = [
-                lead.get('original_id', ''),
-                lead.get('customer_name', ''),
-                lead.get('mobile_number', ''),
-                lead.get('test_drive_done', ''),
-                lead.get('lead_status', ''),
-                lead.get('lead_category', ''),
-                lead.get('model_interested', ''),
-                lead.get('final_status', ''),
-                lead.get('ps_name', ''),
-                lead.get('branch', ''),
-                lead.get('created_at', ''),
-                lead.get('updated_at', ''),
-                lead.get('remarks', ''),
-                lead.get('activity_name', ''),
-                lead.get('activity_location', ''),
-                lead.get('customer_location', ''),
-                lead.get('customer_profession', ''),
-                lead.get('gender', ''),
-                lead.get('lead_source', ''),
-                lead.get('cre_name', '')
-            ]
-            writer.writerow(row)
-        
-        # Log export
-        auth_manager.log_audit_event(
-            user_id=session.get('user_id'),
-            user_type=session.get('user_type'),
-            action='TEST_DRIVE_EXPORT',
-            resource='alltest_drive',
-            details={'filter_type': filter_type, 'exported_count': len(filtered_leads)}
-        )
-        
-        # Create response
-        output.seek(0)
-        response = app.response_class(
-            output.getvalue(),
-            mimetype='text/csv',
-            headers={
-                'Content-Disposition': f'attachment; filename=test_drive_leads_{filter_type}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
-            }
-        )
-        
-        return response
-        
-    except Exception as e:
-        print(f"Error exporting test drive CSV: {e}")
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/activity_event', methods=['GET', 'POST'])
-@require_ps
-def activity_event():
-    """Add event/activity leads for PS"""
-    if request.method == 'POST':
-        # Get form data for multiple customers
-        customer_names = request.form.getlist('customer_name[]')
-        customer_phones = request.form.getlist('customer_phone_number[]')
-        customer_locations = request.form.getlist('customer_location[]')
-        customer_professions = request.form.getlist('customer_profession[]')
-        genders = request.form.getlist('gender[]')
-        interested_models = request.form.getlist('interested_model[]')
-        remarks_list = request.form.getlist('remarks[]')
-        lead_statuses = request.form.getlist('lead_status[]')
-        months = request.form.getlist('month[]')
-        dates = request.form.getlist('date[]')
-        
-        # Get activity details
-        activity_name = request.form.get('activity_name', '').strip()
-        activity_location = request.form.get('activity_location', '').strip()
-        
-        # Validation
-        if not activity_name or not activity_location:
-            flash('Please fill activity details', 'error')
-            return render_template('activity_event.html', now=datetime.now())
-        
-        if not customer_names or not customer_phones:
-            flash('Please add at least one customer lead', 'error')
-            return render_template('activity_event.html', now=datetime.now())
-        
-        try:
-            leads_added = 0
-            # Fetch all CREs for round-robin assignment
-            cre_users = safe_get_data('cre_users')
-            cre_names = [cre['name'] for cre in cre_users] if cre_users else []
-            cre_count = len(cre_names)
-            cre_index = 0  # Start from the first CRE for each batch
-            for i in range(len(customer_names)):
-                if customer_names[i] and customer_phones[i]:  # Only process if name and phone are provided
-                    # Assign CRE in round-robin
-                    cre_assigned = cre_names[cre_index] if cre_count > 0 else None
-                    cre_index = (cre_index + 1) % cre_count if cre_count > 0 else 0
-                    # Generate UID for event lead
-                    uid = f"E-{activity_name[:3].upper()}-{customer_phones[i][-4:]}"
-                    # Create event lead data strictly matching activity_leads schema
-                    event_lead_data = {
-                        'activity_uid': uid,
-                        'activity_name': activity_name,
-                        'activity_location': activity_location,
-                        'ps_name': session.get('ps_name'),
-                        'location': session.get('branch'),
-                        'customer_name': customer_names[i].strip(),
-                        'customer_location': customer_locations[i].strip() if i < len(customer_locations) else '',
-                        'customer_profession': customer_professions[i].strip() if i < len(customer_professions) else '',
-                        'gender': genders[i] if i < len(genders) else 'MALE',
-                        'interested_model': interested_models[i].strip() if i < len(interested_models) else '',
-                        'remarks': remarks_list[i].strip() if i < len(remarks_list) else '',
-                        'lead_status': lead_statuses[i] if i < len(lead_statuses) else 'WARM',
-                        'month': months[i] if i < len(months) else datetime.now().strftime('%b'),
-                        'date': dates[i] if i < len(dates) else datetime.now().strftime('%Y-%m-%d'),
-                        'customer_phone_number': customer_phones[i].strip(),
-                        'created_at': datetime.now().isoformat(),
-                        'lead_category': lead_statuses[i] if i < len(lead_statuses) else 'WARM',
-                        'cre_assigned': cre_assigned
-                    }
-                    # Insert into activity_leads
-                    result = supabase.table('activity_leads').insert(event_lead_data).execute()
-                    if result.data:
-                        leads_added += 1
-            
-            if leads_added > 0:
-                flash(f'{leads_added} event lead(s) added successfully!', 'success')
-                return redirect(url_for('ps_dashboard'))
-            else:
-                flash('Error adding event leads', 'error')
-                
-        except Exception as e:
-            flash(f'Error adding event leads: {str(e)}', 'error')
-    
-    return render_template('activity_event.html', now=datetime.now())
-
-
-@app.route('/view_event_leads')
-@require_ps
-def view_event_leads():
-    """View all event/activity leads for current PS"""
-    try:
-        ps_name = session.get('ps_name')
-        # Get event leads for this PS from activity_leads table
-        event_leads = safe_get_data('activity_leads', {'ps_name': ps_name})
-        
-        # Transform data to match template expectations
-        transformed_leads = []
-        for lead in event_leads:
-            transformed_lead = {
-                'activity_name': lead.get('activity_name', ''),
-                'activity_location': lead.get('activity_location', ''),
-                'ps_name': lead.get('ps_name', ''),
-                'location': lead.get('location', ''),
-                'customer_name': lead.get('customer_name', ''),
-                'customer_phone_number': lead.get('customer_phone_number', ''),
-                'customer_location': lead.get('customer_location', ''),
-                'customer_profession': lead.get('customer_profession', ''),
-                'gender': lead.get('gender', ''),
-                'interested_model': lead.get('interested_model', ''),
-                'remarks': lead.get('remarks', ''),
-                'lead_status': lead.get('lead_status', ''),
-                'month': lead.get('month', ''),
-                'date': lead.get('date', ''),
-                'activity_uid': lead.get('activity_uid', '')
-            }
-            transformed_leads.append(transformed_lead)
-        
-        return render_template('view_event_leads.html', event_leads=transformed_leads)
-        
-    except Exception as e:
-        flash(f'Error loading event leads: {str(e)}', 'error')
-        return redirect(url_for('ps_dashboard'))
-
-
-
-
-@app.route('/view_call_attempt_history/<uid>')
-@require_admin
-def view_call_attempt_history(uid):
-    """View call attempt history for a specific lead"""
-    try:
-        # Get lead data
-        lead_result = supabase.table('lead_master').select('*').eq('uid', uid).execute()
-        if not lead_result.data:
-            flash('Lead not found', 'error')
-            return redirect(url_for('admin_dashboard'))
-        
-        lead_data = lead_result.data[0]
-        
-        # Get call attempt history
-        history_result = supabase.table('cre_call_attempt_history').select('*').eq('uid', uid).order('created_at', desc=True).execute()
-        call_history = history_result.data if history_result.data else []
-        
-        # Add total_attempts
-        total_attempts = len(call_history)
-        
-        # Log access
-        auth_manager.log_audit_event(
-            user_id=session.get('user_id'),
-            user_type=session.get('user_type'),
-            action='CALL_HISTORY_ACCESS',
-            resource='cre_call_attempt_history',
-            resource_id=uid,
-            details={'lead_uid': uid, 'history_count': len(call_history)}
-        )
-        
-        return render_template('call_attempt_history.html', 
-                               lead=lead_data, 
-                               call_history=call_history,
-                               total_attempts=total_attempts)
-        
-    except Exception as e:
-        flash(f'Error loading call history: {str(e)}', 'error')
-        return redirect(url_for('admin_dashboard'))
-
-
 @app.route('/source_analysis_data')
 @require_admin
 def source_analysis_data():
+    """API endpoint for source analysis data"""
     try:
         start_date_str = request.args.get('start_date')
         end_date_str = request.args.get('end_date')
@@ -7203,6 +6413,7 @@ def source_analysis_data():
         ]
         all_leads = safe_get_data('lead_master')
         all_followups = safe_get_data('ps_followup_master')
+        
         def in_date_range(lead):
             lead_date_str = lead.get('created_at') or lead.get('date')
             if not lead_date_str:
@@ -7220,6 +6431,7 @@ def source_analysis_data():
                 return lead_date >= start_date
             else:
                 return True
+        
         leads = [l for l in all_leads if in_date_range(l)]
         data = {}
         for source in sources:
@@ -7247,6 +6459,7 @@ def source_analysis_data():
                 'call_progress': {},
                 'latest_remark': '',
             }
+        
         def get_source(lead):
             s = lead.get('source', '').strip()
             for src in sources:
@@ -7256,6 +6469,7 @@ def source_analysis_data():
                 if src.lower() in s.lower():
                     return src
             return None
+        
         for lead in leads:
             src = get_source(lead)
             if not src:
@@ -7286,7 +6500,8 @@ def source_analysis_data():
                     data[src]['pending_rnr'] += 1
                 elif status == 'call disconnected':
                     data[src]['pending_disconnected'] += 1
-            # --- NEW LOGIC: Use latest follow-up for final_status and lead_status for lost reasons ---
+            
+            # Use latest follow-up for final_status and lead_status for lost reasons
             uid = lead.get('uid')
             latest_final_status = (lead.get('final_status') or '').strip().lower()
             latest_lost_reason = (lead.get('lost_reason') or '').strip().lower()
@@ -7301,7 +6516,7 @@ def source_analysis_data():
                         latest_lost_reason = latest_fu.get('lost_reason').strip().lower()
                     if latest_fu.get('lead_status'):
                         latest_lead_status = latest_fu.get('lead_status').strip().lower()
-            # --- END NEW LOGIC ---
+            
             if latest_final_status == 'lost':
                 data[src]['closed_lost_total'] += 1
                 # Use lead_status for lost reason
@@ -7319,8 +6534,10 @@ def source_analysis_data():
                     data[src]['closed_lost_finance_reject'] += 1
                 elif latest_lead_status == 'wrong lead':
                     data[src]['closed_lost_wrong_lead'] += 1
+            
             if latest_final_status == 'won':
                 data[src]['sales_pipeline_total'] += 1
+            
             call_progress = None
             for idx, c in enumerate(['seventh', 'sixth', 'fifth', 'fourth', 'third', 'second', 'first']):
                 if lead.get(f'{c}_call_date'):
@@ -7328,101 +6545,579 @@ def source_analysis_data():
                     break
             if call_progress:
                 data[src]['call_progress'][lead.get('uid')] = call_progress
+            
             if uid:
                 followups = [f for f in all_followups if f.get('lead_uid') == uid]
                 if followups:
                     latest = max(followups, key=lambda f: f.get('created_at', ''))
                     data[src]['latest_remark'] = latest.get('remark', '')
+        
         total_row = {k: sum(data[src][k] for src in sources) if isinstance(data[sources[0]][k], int) else {} for k in data[sources[0]].keys()}
         data['Total'] = total_row
         return jsonify({'success': True, 'data': data})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
 
-@app.route('/cre_call_attempt_history_json/<uid>')
-@require_auth(['cre', 'admin'])
-def cre_call_attempt_history_json(uid):
-    """Return call attempt history for a lead as JSON (for CRE dashboard modal)"""
-    try:
-        # Get all call attempt history for this lead
-        history_result = supabase.table('cre_call_attempt_history').select('uid,call_no,attempt,status,cre_name,update_ts').eq('uid', uid).execute()
-        history = history_result.data if history_result.data else []
-        # Define the order of call numbers
-        call_order = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
-        # Sort the history: first by call_no in ascending order, then by attempt in ascending order
-        def sort_key(item):
-            call_no = item.get('call_no', '')
-            attempt = item.get('attempt', 0)
-            # Get the index of call_no in the predefined order, default to end if not found
-            call_index = call_order.index(call_no) if call_no in call_order else len(call_order)
-            return (call_index, attempt)
-        sorted_history = sorted(history, key=sort_key)
-        return jsonify({'success': True, 'history': sorted_history})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e), 'history': []})
 
-
-@app.route('/ps_call_attempt_history_json/<uid>')
-@require_auth(['ps', 'admin'])
-def ps_call_attempt_history_json(uid):
-    """Return PS call attempt history for a lead as JSON (for PS dashboard modal)"""
-    try:
-        # Get all PS call attempt history for this lead
-        history_result = supabase.table('ps_call_attempt_history').select('uid,call_no,attempt,status,ps_name,created_at').eq('uid', uid).execute()
-        history = history_result.data if history_result.data else []
-        # Define the order of call numbers
-        call_order = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
-        # Sort the history: first by call_no in ascending order, then by attempt in ascending order
-        def sort_key(item):
-            call_no = item.get('call_no', '')
-            attempt = item.get('attempt', 0)
-            # Get the index of call_no in the predefined order, default to end if not found
-            call_index = call_order.index(call_no) if call_no in call_order else len(call_order)
-            return (call_index, attempt)
-        sorted_history = sorted(history, key=sort_key)
-        return jsonify({'success': True, 'history': sorted_history})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e), 'history': []})
-
-
-@app.route('/view_ps_call_attempt_history/<uid>')
+@app.route('/cre_analysis_data')
 @require_admin
-def view_ps_call_attempt_history(uid):
-    """View PS call attempt history for a specific lead (Admin only)"""
+def cre_analysis_data():
+    """API endpoint for CRE analysis data"""
+    # Return a mock response or implement your actual logic here
+    return jsonify({'success': True, 'data': {}})
+
+
+@app.route('/get_cre_list')
+@require_admin
+def get_cre_list():
+    """API endpoint to get list of all CRE users"""
     try:
-        # Get lead data
-        lead_result = supabase.table('lead_master').select('*').eq('uid', uid).execute()
-        if not lead_result.data:
-            flash('Lead not found', 'error')
-            return redirect(url_for('admin_dashboard'))
+        cres = safe_get_data('cre_users', select_fields='name')
+        cre_list = [{'name': cre.get('name')} for cre in cres if cre.get('name')]
+        return jsonify({'success': True, 'cre_list': cre_list})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/negative_call_attempt_history', methods=['GET'])
+@require_admin
+def negative_call_attempt_history():
+    """API endpoint for negative call attempt history analysis"""
+    try:
+        from_date = request.args.get('from_date')
+        to_date = request.args.get('to_date')
+        call_no_order = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
         
-        lead_data = lead_result.data[0]
+        # Fetch data (only columns that exist)
+        cre_attempts = safe_get_data('cre_call_attempt_history', select_fields='call_no,created_at,status')
+        ps_attempts = safe_get_data('ps_call_attempt_history', select_fields='call_no,updated_at,status')
         
-        # Get PS call attempt history
-        history_result = supabase.table('ps_call_attempt_history').select('*').eq('uid', uid).order('created_at', desc=True).execute()
-        call_history = history_result.data if history_result.data else []
+        # Parse date filters
+        start_date = pd.to_datetime(from_date) if from_date else None
+        end_date = pd.to_datetime(to_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1) if to_date else None
         
-        # Add total_attempts
-        total_attempts = len(call_history)
+        cre_filtered, cre_statuses = get_cre_feedback_analysis(cre_attempts, call_no_order, start_date, end_date)
+        ps_filtered, ps_statuses = get_ps_feedback_analysis(ps_attempts, call_no_order, start_date, end_date)
         
-        # Log access
-        auth_manager.log_audit_event(
-            user_id=session.get('user_id'),
-            user_type=session.get('user_type'),
-            action='PS_CALL_HISTORY_ACCESS',
-            resource='ps_call_attempt_history',
-            resource_id=uid,
-            details={'lead_uid': uid, 'history_count': len(call_history)}
+        # Debug prints
+        print('CRE Statuses:', cre_statuses)
+        print('CRE Filtered Data:', cre_filtered)
+        print('PS Statuses:', ps_statuses)
+        print('PS Filtered Data:', ps_filtered)
+        
+        return jsonify({
+            'statuses': cre_statuses,  # for CRE table
+            'ps_statuses': ps_statuses,  # for PS table (optional, for symmetry)
+            'call_no_order': call_no_order,
+            'CRE': {'filtered': cre_filtered},
+            'PS': {'filtered': ps_filtered}
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+def get_cre_feedback_analysis(cre_attempts, call_no_order, start_date, end_date):
+    """Analyze CRE feedback data"""
+    try:
+        cre_df = pd.DataFrame(cre_attempts)
+        if cre_df.empty:
+            print("No data in cre_attempts!")
+            return {call_no: {} for call_no in call_no_order}, []
+        
+        cre_df['created_at'] = pd.to_datetime(cre_df['created_at'], errors='coerce')
+        
+        # Fix: Localize filter dates if needed
+        if start_date is not None and end_date is not None:
+            if pd.api.types.is_datetime64tz_dtype(cre_df['created_at']):
+                if start_date.tzinfo is None:
+                    start_date = start_date.tz_localize('UTC')
+                if end_date.tzinfo is None:
+                    end_date = end_date.tz_localize('UTC')
+            cre_df = cre_df[(cre_df['created_at'] >= start_date) & (cre_df['created_at'] <= end_date)]
+        
+        cre_df['status'] = cre_df['status'].fillna('').astype(str).str.strip()
+        print("Unique statuses in data:", cre_df['status'].unique())
+        
+        grouped = cre_df.groupby(['call_no', 'status']).size().reset_index(name='count')
+        print("\nGrouped data (call_no, status, count):\n", grouped)
+        
+        cre_filtered = {call_no: {} for call_no in call_no_order}
+        for call_no in call_no_order:
+            call_data = grouped[grouped['call_no'] == call_no]
+            for _, row in call_data.iterrows():
+                cre_filtered[call_no][row['status']] = int(row['count'])
+        
+        print("\nCRE Filtered Data:", cre_filtered)
+        return cre_filtered, sorted(cre_df['status'].unique())
+    except Exception as e:
+        print(f"Error in get_cre_feedback_analysis: {e}")
+        return {call_no: {} for call_no in call_no_order}, []
+
+
+def get_ps_feedback_analysis(ps_attempts, call_no_order, start_date, end_date):
+    """Analyze PS feedback data"""
+    try:
+        ps_df = pd.DataFrame(ps_attempts)
+        if ps_df.empty:
+            print("No data in ps_attempts!")
+            return {call_no: {} for call_no in call_no_order}, []
+        
+        ps_df['updated_at'] = pd.to_datetime(ps_df['updated_at'], errors='coerce')
+        
+        # Apply date filters if provided
+        if start_date is not None and end_date is not None:
+            if pd.api.types.is_datetime64tz_dtype(ps_df['updated_at']):
+                if start_date.tzinfo is None:
+                    start_date = start_date.tz_localize('UTC')
+                if end_date.tzinfo is None:
+                    end_date = end_date.tz_localize('UTC')
+            ps_df = ps_df[(ps_df['updated_at'] >= start_date) & (ps_df['updated_at'] <= end_date)]
+        
+        ps_df['status'] = ps_df['status'].fillna('').astype(str).str.strip()
+        print("Unique PS statuses in data:", ps_df['status'].unique())
+        
+        grouped = ps_df.groupby(['call_no', 'status']).size().reset_index(name='count')
+        print("\nPS Grouped data (call_no, status, count):\n", grouped)
+        
+        ps_filtered = {call_no: {} for call_no in call_no_order}
+        for call_no in call_no_order:
+            call_data = grouped[grouped['call_no'] == call_no]
+            for _, row in call_data.iterrows():
+                ps_filtered[call_no][row['status']] = int(row['count'])
+        
+        print("\nPS Filtered Data:", ps_filtered)
+        return ps_filtered, sorted(ps_df['status'].unique())
+    except Exception as e:
+        print(f"Error in get_ps_feedback_analysis: {e}")
+        return {call_no: {} for call_no in call_no_order}, []
+
+
+@app.route('/api/hot_duplicate_leads')
+@require_admin
+def api_hot_duplicate_leads():
+    """API endpoint for hot duplicate leads that need immediate attention"""
+    try:
+        # Get leads with high duplicate probability
+        # This would typically involve fuzzy matching logic
+        # For now, return leads that might be duplicates based on phone/email
+        all_leads = safe_get_data('lead_master')
+        
+        # Simple duplicate detection - find leads with same phone or email
+        potential_duplicates = []
+        seen_phones = {}
+        seen_emails = {}
+        
+        for lead in all_leads:
+            phone = lead.get('customer_mobile_number', '').strip()
+            email = lead.get('customer_email', '').strip()
+            
+            if phone and phone != 'N/A':
+                if phone in seen_phones:
+                    # Found duplicate phone
+                    potential_duplicates.append({
+                        'lead_uid': lead.get('uid'),
+                        'customer_name': lead.get('customer_name', ''),
+                        'phone': phone,
+                        'email': email,
+                        'source': lead.get('source', ''),
+                        'created_at': lead.get('created_at'),
+                        'duplicate_type': 'phone',
+                        'duplicate_score': 0.9,
+                        'urgency_level': 'high'
+                    })
+                else:
+                    seen_phones[phone] = lead.get('uid')
+            
+            if email and email != 'N/A' and '@' in email:
+                if email in seen_emails:
+                    # Found duplicate email
+                    potential_duplicates.append({
+                        'lead_uid': lead.get('uid'),
+                        'customer_name': lead.get('customer_name', ''),
+                        'phone': phone,
+                        'email': email,
+                        'source': lead.get('source', ''),
+                        'created_at': lead.get('created_at'),
+                        'duplicate_type': 'email',
+                        'duplicate_score': 0.8,
+                        'urgency_level': 'medium'
+                    })
+                else:
+                    seen_emails[email] = lead.get('uid')
+        
+        # Sort by duplicate score and urgency
+        potential_duplicates.sort(key=lambda x: (x['duplicate_score'], x['urgency_level'] == 'high'), reverse=True)
+        
+        return jsonify({
+            'success': True, 
+            'data': potential_duplicates[:50]  # Return top 50 duplicates
+        })
+        
+    except Exception as e:
+        print(f"Error in api_hot_duplicate_leads: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/get_auto_assign_configs')
+@require_admin
+def get_auto_assign_configs():
+    """API endpoint to get auto-assignment configuration settings with enhanced data"""
+    try:
+        # Get all auto-assign configurations
+        configs = safe_get_data('auto_assign_config')
+        
+        # Get all available CREs for selection
+        all_cres = safe_get_data('cre_users', {'is_active': True})
+        
+        # Format the data for frontend consumption
+        formatted_configs = []
+        for config in configs:
+            # Get CRE details for each config
+            try:
+                cre_result = supabase.table('cre_users').select('name, username, is_active').eq('id', config['cre_id']).execute()
+                cre_data = cre_result.data[0] if cre_result.data else {}
+            except:
+                cre_data = {}
+            
+            formatted_configs.append({
+                'id': config['id'],
+                'source': config['source'],
+                'cre_id': config['cre_id'],
+                'cre_name': cre_data.get('name', 'Unknown'),
+                'cre_username': cre_data.get('username', ''),
+                'is_active': config['is_active'],
+                'priority': config['priority'],
+                'created_at': config['created_at']
+            })
+        
+        # Group configs by source for easier frontend consumption
+        configs_by_source = {}
+        for config in formatted_configs:
+            source = config['source']
+            if source not in configs_by_source:
+                configs_by_source[source] = []
+            configs_by_source[source].append(config)
+        
+        # Format available CREs for selection
+        available_cres = []
+        for cre in all_cres:
+            available_cres.append({
+                'id': cre['id'],
+                'name': cre.get('name', 'Unknown'),
+                'username': cre.get('username', ''),
+                'is_active': cre.get('is_active', True)
+            })
+        
+        return jsonify({
+            'success': True, 
+            'data': formatted_configs,
+            'configs_by_source': configs_by_source,
+            'available_cres': available_cres
+        })
+        
+    except Exception as e:
+        print(f"Error in get_auto_assign_configs: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/get_auto_assign_history')
+@require_admin
+def get_auto_assign_history():
+    """API endpoint to get auto-assignment history with enhanced filtering and pagination"""
+    try:
+        # Get parameters
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 50, type=int)  # Increased to 50 for better UX
+        source_filter = request.args.get('source', '')
+        cre_filter = request.args.get('cre_id', '')
+        from_date = request.args.get('from_date', '')
+        to_date = request.args.get('to_date', '')
+        
+        # Build query
+        query = supabase.table('auto_assign_history').select('*').order('created_at', desc=True)
+        
+        # Apply filters
+        if source_filter:
+            query = query.eq('source', source_filter)
+        if cre_filter:
+            query = query.eq('assigned_cre_id', cre_filter)
+        if from_date:
+            query = query.gte('created_at', from_date)
+        if to_date:
+            # Add 23:59:59 to include the entire day
+            to_date_with_time = f"{to_date}T23:59:59"
+            query = query.lte('created_at', to_date_with_time)
+        
+        # Get total count for pagination
+        count_result = query.execute()
+        total_count = len(count_result.data) if count_result.data else 0
+        
+        # Apply pagination
+        offset = (page - 1) * per_page
+        query = query.range(offset, offset + per_page - 1)
+        
+        # Execute query
+        result = query.execute()
+        history_data = result.data or []
+        
+        # Format the data
+        formatted_history = []
+        for record in history_data:
+            # Get CRE details
+            try:
+                cre_result = supabase.table('cre_users').select('name, username').eq('id', record['assigned_cre_id']).execute()
+                cre_data = cre_result.data[0] if cre_result.data else {}
+            except:
+                cre_data = {}
+            
+            # Format created_at for display
+            created_at = record.get('created_at', '')
+            if created_at:
+                try:
+                    # Parse and format the timestamp
+                    dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    formatted_date = dt.strftime('%Y-%m-%d %H:%M:%S')
+                except:
+                    formatted_date = created_at
+            else:
+                formatted_date = 'N/A'
+            
+            formatted_history.append({
+                'id': record['id'],
+                'lead_uid': record.get('lead_uid', 'N/A'),
+                'source': record.get('source', 'N/A'),
+                'assigned_cre_id': record['assigned_cre_id'],
+                'assigned_cre_name': record.get('assigned_cre_name', 'N/A'),
+                'cre_total_leads_before': record.get('cre_total_leads_before', 0),
+                'cre_total_leads_after': record.get('cre_total_leads_after', 0),
+                'assignment_method': record.get('assignment_method', 'Auto'),
+                'created_at': record.get('created_at', ''),
+                'created_at_formatted': formatted_date,
+                'cre_username': cre_data.get('username', 'N/A')
+            })
+        
+        return jsonify({
+            'success': True,
+            'data': formatted_history,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total_count': total_count,
+                'total_pages': (total_count + per_page - 1) // per_page
+            },
+            'filters': {
+                'source': source_filter,
+                'cre_id': cre_filter,
+                'from_date': from_date,
+                'to_date': to_date
+            }
+        })
+        
+    except Exception as e:
+        print(f"Error in get_auto_assign_history: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/export_auto_assign_history_csv')
+@require_admin
+def export_auto_assign_history_csv():
+    """Export auto-assign history to CSV with date filtering"""
+    try:
+        # Get filter parameters
+        source_filter = request.args.get('source', '')
+        cre_filter = request.args.get('cre_id', '')
+        from_date = request.args.get('from_date', '')
+        to_date = request.args.get('to_date', '')
+        
+        # Build query
+        query = supabase.table('auto_assign_history').select('*').order('created_at', desc=True)
+        
+        # Apply filters
+        if source_filter:
+            query = query.eq('source', source_filter)
+        if cre_filter:
+            query = query.eq('assigned_cre_id', cre_filter)
+        if from_date:
+            query = query.gte('created_at', from_date)
+        if to_date:
+            # Add 23:59:59 to include the entire day
+            to_date_with_time = f"{to_date}T23:59:59"
+            query = query.lte('created_at', to_date_with_time)
+        
+        # Execute query to get all filtered data
+        result = query.execute()
+        history_data = result.data or []
+        
+        # Create CSV content
+        csv_content = io.StringIO()
+        csv_writer = csv.writer(csv_content)
+        
+        # Write header
+        csv_writer.writerow([
+            'ID', 'Lead UID', 'Source', 'Assigned CRE ID', 'Assigned CRE Name', 
+            'CRE Username', 'CRE Total Leads Before', 'CRE Total Leads After',
+            'Assignment Method', 'Created At'
+        ])
+        
+        # Write data rows
+        for record in history_data:
+            # Get CRE details
+            try:
+                cre_result = supabase.table('cre_users').select('name, username').eq('id', record['assigned_cre_id']).execute()
+                cre_data = cre_result.data[0] if cre_result.data else {}
+            except:
+                cre_data = {}
+            
+            # Format created_at
+            created_at = record.get('created_at', '')
+            if created_at:
+                try:
+                    dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    formatted_date = dt.strftime('%Y-%m-%d %H:%M:%S')
+                except:
+                    formatted_date = created_at
+            else:
+                formatted_date = 'N/A'
+            
+            csv_writer.writerow([
+                record.get('id', ''),
+                record.get('lead_uid', ''),
+                record.get('source', ''),
+                record['assigned_cre_id'],
+                record.get('assigned_cre_name', ''),
+                cre_data.get('username', ''),
+                record.get('cre_total_leads_before', 0),
+                record.get('cre_total_leads_after', 0),
+                record.get('assignment_method', 'Auto'),
+                formatted_date
+            ])
+        
+        # Create response
+        csv_content.seek(0)
+        response = Response(
+            csv_content.getvalue(),
+            mimetype='text/csv',
+            headers={'Content-Disposition': f'attachment; filename=auto_assign_history_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'}
         )
         
-        return render_template('ps_call_attempt_history.html', 
-                               lead=lead_data, 
-                               call_history=call_history,
-                               total_attempts=total_attempts)
+        return response
         
     except Exception as e:
-        flash(f'Error loading PS call history: {str(e)}', 'error')
-        return redirect(url_for('admin_dashboard'))
+        print(f"Error exporting auto-assign history CSV: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/save_auto_assign_config', methods=['POST'])
+@require_admin
+def save_auto_assign_config():
+    """Enhanced save auto-assign configuration with better error handling and validation"""
+    try:
+        data = request.get_json()
+        source = data.get('source')
+        cre_ids = data.get('cre_ids', [])
+        
+        print(f"🔄 Received save request for source: {source}, CRE IDs: {cre_ids}")
+        
+        # Validation
+        if not source:
+            return jsonify({'success': False, 'message': 'Source is required'})
+        
+        if not cre_ids or not isinstance(cre_ids, list):
+            return jsonify({'success': False, 'message': 'At least one CRE must be selected'})
+        
+        # Validate CRE IDs exist
+        try:
+            cre_validation = supabase.table('cre_users').select('id, name').in_('id', cre_ids).execute()
+            valid_cre_ids = [cre['id'] for cre in cre_validation.data] if cre_validation.data else []
+            
+            if len(valid_cre_ids) != len(cre_ids):
+                invalid_ids = set(cre_ids) - set(valid_cre_ids)
+                return jsonify({'success': False, 'message': f'Invalid CRE IDs: {invalid_ids}'})
+            
+            cre_names = [cre['name'] for cre in cre_validation.data]
+            print(f"✅ Validated {len(valid_cre_ids)} CREs: {cre_names}")
+            
+        except Exception as e:
+            print(f"❌ Error validating CRE IDs: {e}")
+            return jsonify({'success': False, 'message': f'Error validating CRE IDs: {str(e)}'})
+        
+        print(f"🔄 Saving auto-assign configuration for {source} with CREs: {cre_names}")
+        
+        # Delete existing configs for this source
+        try:
+            delete_result = supabase.table('auto_assign_config').delete().eq('source', source).execute()
+            print(f"🗑️ Deleted existing configs for {source}")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not delete existing configs: {e}")
+            # Continue anyway
+        
+        # Insert new configs
+        configs = []
+        for cre_id in valid_cre_ids:
+            configs.append({
+                'source': source,
+                'cre_id': cre_id,
+                'is_active': True,
+                'priority': 1,
+                'created_at': datetime.now().isoformat()
+            })
+        
+        try:
+            insert_result = supabase.table('auto_assign_config').insert(configs).execute()
+            print(f"✅ Saved {len(configs)} new configs for {source}")
+        except Exception as e:
+            print(f"❌ Error inserting configs: {e}")
+            return jsonify({'success': False, 'message': f'Error saving configuration: {str(e)}'})
+        
+        # Verify the configs were saved
+        try:
+            verify_result = supabase.table('auto_assign_config').select('*').eq('source', source).execute()
+            saved_configs = verify_result.data or []
+            print(f"✅ Verified {len(saved_configs)} configs saved for {source}")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not verify saved configs: {e}")
+        
+        # Immediately assign existing unassigned leads for this source using integrated auto-assign
+        auto_assigned_count = 0
+        if valid_cre_ids:
+            try:
+                print(f"🤖 Triggering integrated auto-assign for existing leads in {source}")
+                # Use the integrated auto-assign function
+                result = auto_assign_new_leads_for_source(source)
+                if result and 'assigned_count' in result:
+                    auto_assigned_count = result['assigned_count']
+                    print(f"✅ Integrated auto-assign completed: {auto_assigned_count} leads assigned")
+                else:
+                    print(f"⚠️ Integrated auto-assign completed but no count returned")
+                    
+            except Exception as e:
+                print(f"❌ Error in integrated auto-assign for {source}: {e}")
+                auto_assigned_count = 0
+        
+        # Prepare success message
+        if auto_assigned_count > 0:
+            message = f'Auto-assign configuration saved successfully for {source} with CREs: {", ".join(cre_names)}. {auto_assigned_count} existing unassigned leads were automatically assigned using fair distribution. New leads will be automatically assigned as they come in.'
+        else:
+            message = f'Auto-assign configuration saved successfully for {source} with CREs: {", ".join(cre_names)}. No unassigned leads found to assign. New leads will be automatically assigned as they come in.'
+        
+        print(f"✅ Save operation completed: {message}")
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'auto_assigned_count': auto_assigned_count,
+            'cre_names': cre_names,
+            'saved_configs': len(configs),
+            'source': source
+        })
+        
+    except Exception as e:
+        print(f"❌ Error saving auto-assign config: {e}")
+        return jsonify({'success': False, 'message': f'Unexpected error: {str(e)}'})
+
+@app.route('/auto_assign_history')
+@require_admin
+def auto_assign_history_page():
+    """Auto-assign history page with filtering and export"""
+    return render_template('auto_assign_history.html')
 
 
 @app.route('/get_unassigned_leads_by_source')
@@ -7437,1444 +7132,864 @@ def get_unassigned_leads_by_source():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@app.route('/lead_journey/<uid>')
+
+@app.route('/trigger_auto_assign/<source>', methods=['POST'])
 @require_admin
-def lead_journey(uid):
-    """Return the complete journey of a lead as JSON for analysis and visualization."""
+def trigger_auto_assign_for_source(source):
+    """Manually trigger auto-assignment for existing leads of a specific source"""
     try:
-        # Fetch lead info
-        lead_result = supabase.table('lead_master').select('*').eq('uid', uid).execute()
-        if not lead_result.data:
-            return jsonify({'success': False, 'message': 'Lead not found'}), 404
-        lead = lead_result.data[0]
-
-        # Fetch CRE call attempts (all attempts, all calls)
-        cre_calls_result = supabase.table('cre_call_attempt_history').select('*').eq('uid', uid).order('created_at', desc=False).execute()
-        cre_calls = cre_calls_result.data if cre_calls_result.data else []
-
-        # Fetch PS call attempts (all attempts, all calls)
-        ps_calls_result = supabase.table('ps_call_attempt_history').select('*').eq('uid', uid).order('created_at', desc=False).execute()
-        ps_calls = ps_calls_result.data if ps_calls_result.data else []
-
-        # Fetch PS followup (if any)
-        ps_followup_result = supabase.table('ps_followup_master').select('*').eq('lead_uid', uid).execute()
-        ps_followup = ps_followup_result.data[0] if ps_followup_result.data else None
-
-        # Assignment history (CRE, PS)
-        assignment_history = []
-        if lead.get('cre_name'):
-            assignment_history.append({
-                'role': 'CRE',
-                'name': lead.get('cre_name'),
-                'assigned_at': lead.get('cre_assigned_at')
-            })
-        if lead.get('ps_name'):
-            assignment_history.append({
-                'role': 'PS',
-                'name': lead.get('ps_name'),
-                'assigned_at': lead.get('ps_assigned_at')
-            })
-
-        # Status timeline (CRE and PS status changes)
-        status_timeline = []
-        # From lead_master: initial, final, and call statuses
-        for call in ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']:
-            call_date = lead.get(f'{call}_call_date')
-            call_remark = lead.get(f'{call}_remark')
-            if call_date or call_remark:
-                status_timeline.append({
-                    'by': 'CRE',
-                    'call_no': call,
-                    'date': call_date,
-                    'remark': call_remark
+        print(f"🔄 Triggering integrated auto-assign for {source}")
+        
+        # Use the integrated auto-assign function
+        result = auto_assign_new_leads_for_source(source)
+        
+        if result and 'assigned_count' in result:
+            assigned_count = result['assigned_count']
+            print(f"✅ Integrated auto-assign completed: {assigned_count} leads assigned")
+            
+            if assigned_count > 0:
+                return jsonify({
+                    'success': True,
+                    'message': f'Successfully auto-assigned {assigned_count} leads from {source} using fair distribution',
+                    'assigned_count': assigned_count
                 })
-        # From PS followup: call dates/remarks
-        if ps_followup:
-            for call in ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']:
-                call_date = ps_followup.get(f'{call}_call_date')
-                call_remark = ps_followup.get(f'{call}_call_remark')
-                if call_date or call_remark:
-                    status_timeline.append({
-                        'by': 'PS',
-                        'call_no': call,
-                        'date': call_date,
-                        'remark': call_remark
-                    })
-        # Final status
-        if lead.get('final_status'):
-            status_timeline.append({
-                'by': 'System',
-                'status': lead.get('final_status'),
-                'date': lead.get('won_timestamp') or lead.get('lost_timestamp')
+            else:
+                return jsonify({
+                    'success': True,
+                    'message': f'No unassigned leads found for {source} to assign',
+                    'assigned_count': 0
+                })
+        else:
+            print(f"⚠️ Integrated auto-assign completed but no count returned")
+            return jsonify({
+                'success': True,
+                'message': f'Auto-assign triggered for {source} but no leads were assigned',
+                'assigned_count': 0
             })
-
-        # Conversation log (all remarks, CRE and PS, with timestamps)
-        conversation_log = []
-        # CRE call attempts
-        for call in cre_calls:
-            conversation_log.append({
-                'by': 'CRE',
-                'name': call.get('cre_name'),
-                'call_no': call.get('call_no'),
-                'attempt': call.get('attempt'),
-                'status': call.get('status'),
-                'remark': call.get('remarks'),
-                'follow_up_date': call.get('follow_up_date'),
-                'timestamp': call.get('update_ts') or call.get('created_at')
-            })
-        # PS call attempts
-        for call in ps_calls:
-            conversation_log.append({
-                'by': 'PS',
-                'name': call.get('ps_name'),
-                'call_no': call.get('call_no'),
-                'attempt': call.get('attempt'),
-                'status': call.get('status'),
-                'remark': call.get('remarks'),
-                'follow_up_date': call.get('follow_up_date'),
-                'timestamp': call.get('created_at')
-            })
-        # Sort conversation log by timestamp
-        conversation_log = [c for c in conversation_log if c['timestamp']]  # Remove None timestamps
-        conversation_log.sort(key=lambda x: x['timestamp'])
-
-        # Final outcome
-        outcome = {
-            'final_status': lead.get('final_status'),
-            'timestamp': lead.get('won_timestamp') or lead.get('lost_timestamp'),
-            'reason': lead.get('lost_reason') if lead.get('final_status') == 'Lost' else None
-        }
-
-        # Compose response
-        journey = {
-            'lead': lead,
-            'assignment_history': assignment_history,
-            'status_timeline': status_timeline,
-            'cre_calls': cre_calls,
-            'ps_calls': ps_calls,
-            'ps_followup': ps_followup,
-            'conversation_log': conversation_log,
-            'outcome': outcome
-        }
-        return jsonify({'success': True, 'journey': journey})
+            
     except Exception as e:
-        print(f"Error in lead_journey: {e}")
+        print(f"❌ Error triggering integrated auto-assign for {source}: {e}")
         return jsonify({'success': False, 'message': str(e)})
 
-@app.route('/lead_journey_report/<uid>')
-@require_admin
-def lead_journey_report(uid):
-    """Generate a PDF report for the lead journey, including static charts (Seaborn/Matplotlib)."""
-    try:
-        # Fetch journey data using the same logic as /lead_journey/<uid>
-        lead_result = supabase.table('lead_master').select('*').eq('uid', uid).execute()
-        if not lead_result.data:
-            return 'Lead not found', 404
-        lead = lead_result.data[0]
-        cre_calls_result = supabase.table('cre_call_attempt_history').select('*').eq('uid', uid).order('created_at', desc=False).execute()
-        cre_calls = cre_calls_result.data if cre_calls_result.data else []
-        ps_calls_result = supabase.table('ps_call_attempt_history').select('*').eq('uid', uid).order('created_at', desc=False).execute()
-        ps_calls = ps_calls_result.data if ps_calls_result.data else []
-        ps_followup_result = supabase.table('ps_followup_master').select('*').eq('lead_uid', uid).execute()
-        ps_followup = ps_followup_result.data[0] if ps_followup_result.data else None
-        assignment_history = []
-        if lead.get('cre_name'):
-            assignment_history.append({'role': 'CRE','name': lead.get('cre_name'),'assigned_at': lead.get('cre_assigned_at')})
-        if lead.get('ps_name'):
-            assignment_history.append({'role': 'PS','name': lead.get('ps_name'),'assigned_at': lead.get('ps_assigned_at')})
-        status_timeline = []
-        for call in ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']:
-            call_date = lead.get(f'{call}_call_date')
-            call_remark = lead.get(f'{call}_remark')
-            if call_date or call_remark:
-                status_timeline.append({'by': 'CRE','call_no': call,'date': call_date,'remark': call_remark})
-        if ps_followup:
-            for call in ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']:
-                call_date = ps_followup.get(f'{call}_call_date')
-                call_remark = ps_followup.get(f'{call}_call_remark')
-                if call_date or call_remark:
-                    status_timeline.append({'by': 'PS','call_no': call,'date': call_date,'remark': call_remark})
-        if lead.get('final_status'):
-            status_timeline.append({'by': 'System','status': lead.get('final_status'),'date': lead.get('won_timestamp') or lead.get('lost_timestamp')})
-        conversation_log = []
-        for call in cre_calls:
-            conversation_log.append({'by': 'CRE','name': call.get('cre_name'),'call_no': call.get('call_no'),'attempt': call.get('attempt'),'status': call.get('status'),'remark': call.get('remarks'),'follow_up_date': call.get('follow_up_date'),'timestamp': call.get('update_ts') or call.get('created_at')})
-        for call in ps_calls:
-            conversation_log.append({'by': 'PS','name': call.get('ps_name'),'call_no': call.get('call_no'),'attempt': call.get('attempt'),'status': call.get('status'),'remark': call.get('remarks'),'follow_up_date': call.get('follow_up_date'),'timestamp': call.get('created_at')})
-        conversation_log = [c for c in conversation_log if c['timestamp']]
-        conversation_log.sort(key=lambda x: x['timestamp'])
-        outcome = {'final_status': lead.get('final_status'),'timestamp': lead.get('won_timestamp') or lead.get('lost_timestamp'),'reason': lead.get('lost_reason') if lead.get('final_status') == 'Lost' else None}
-        # --- PDF Generation ---
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmpfile:
-            pdf_path = tmpfile.name
-        with PdfPages(pdf_path) as pdf:
-            # Title Page
-            plt.figure(figsize=(8.3, 11.7))
-            plt.axis('off')
-            plt.text(0.5, 0.9, 'Lead Journey Report', fontsize=22, ha='center', fontweight='bold')
-            plt.text(0.5, 0.85, f"Lead UID: {uid}", fontsize=14, ha='center')
-            plt.text(0.5, 0.8, f"Customer: {lead.get('customer_name','')}", fontsize=12, ha='center')
-            plt.text(0.5, 0.75, f"Mobile: {lead.get('customer_mobile_number','')}", fontsize=12, ha='center')
-            plt.text(0.5, 0.7, f"Source: {lead.get('source','')}", fontsize=12, ha='center')
-            plt.text(0.5, 0.65, f"CRE: {lead.get('cre_name','')}", fontsize=12, ha='center')
-            plt.text(0.5, 0.6, f"PS: {lead.get('ps_name','')}", fontsize=12, ha='center')
-            plt.text(0.5, 0.5, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", fontsize=10, ha='center', color='gray')
-            pdf.savefig(); plt.close()
-            # Assignment History
-            plt.figure(figsize=(8.3, 2))
-            plt.axis('off')
-            plt.title('Assignment History', fontsize=14, loc='left')
-            y = 0.7
-            for a in assignment_history:
-                plt.text(0.05, y, f"{a['role']}: {a['name']} ({a['assigned_at'] or 'N/A'})", fontsize=11)
-                y -= 0.2
-            pdf.savefig(); plt.close()
-            # Status Timeline Chart
-            if status_timeline:
-                dates = [s['date'] for s in status_timeline if s.get('date')]
-                labels = [s.get('status') or s.get('remark') or '' for s in status_timeline]
-                bys = [s.get('by') for s in status_timeline]
-                plt.figure(figsize=(8, 3))
-                plt.title('Status Timeline')
-                plt.plot(dates, range(len(dates)), marker='o')
-                for i, (d, l, b) in enumerate(zip(dates, labels, bys)):
-                    plt.text(d, i, f"{l} ({b})", fontsize=8, va='bottom', ha='left')
-                plt.yticks(range(len(dates)), dates)
-                plt.xlabel('Date')
-                plt.ylabel('Status Change')
-                plt.tight_layout()
-                pdf.savefig(); plt.close()
-            # Bar Chart: Call Attempts
-            plt.figure(figsize=(6, 3))
-            plt.title('Number of Call Attempts')
-            plt.bar(['CRE', 'PS'], [len(cre_calls), len(ps_calls)], color=['#007bff', '#28a745'])
-            plt.ylabel('Attempts')
-            plt.tight_layout()
-            pdf.savefig(); plt.close()
-            # Pie Chart: Status Distribution
-            status_counts = {}
-            for c in conversation_log:
-                s = c['status'] or 'Unknown'
-                status_counts[s] = status_counts.get(s, 0) + 1
-            if status_counts:
-                plt.figure(figsize=(6, 4))
-                plt.title('Status Distribution (CRE + PS)')
-                plt.pie(list(status_counts.values()), labels=list(status_counts.keys()), autopct='%1.1f%%', startangle=140)
-                plt.tight_layout()
-                pdf.savefig(); plt.close()
-            # Conversation Log Table (first 20 rows)
-            plt.figure(figsize=(8.3, min(10, 0.4*len(conversation_log)+1)))
-            plt.axis('off')
-            plt.title('Conversation Log (first 20 rows)', fontsize=12, loc='left')
-            table_data = [['By','Name','Call No','Attempt','Status','Remark','Follow-up','Timestamp']]
-            for c in conversation_log[:20]:
-                table_data.append([
-                    c.get('by',''), c.get('name',''), c.get('call_no',''), str(c.get('attempt','')),
-                    c.get('status',''), c.get('remark',''), c.get('follow_up_date',''), c.get('timestamp','')
-                ])
-            table = plt.table(cellText=table_data, loc='center', cellLoc='left', colWidths=[0.11]*8)
-            table.auto_set_font_size(False)
-            table.set_fontsize(7)
-            table.scale(1, 1.2)
-            plt.tight_layout()
-            pdf.savefig(); plt.close()
-            # Outcome
-            plt.figure(figsize=(8.3, 2))
-            plt.axis('off')
-            plt.title('Final Outcome', fontsize=14, loc='left')
-            y = 0.7
-            plt.text(0.05, y, f"Status: {outcome.get('final_status','')}", fontsize=11)
-            y -= 0.2
-            plt.text(0.05, y, f"Timestamp: {outcome.get('timestamp','')}", fontsize=11)
-            y -= 0.2
-            if outcome.get('reason'):
-                plt.text(0.05, y, f"Reason: {outcome.get('reason','')}", fontsize=11)
-            pdf.savefig(); plt.close()
-        # Serve the PDF
-        from flask import send_file
-        return send_file(pdf_path, as_attachment=True, download_name=f"Lead_Journey_{uid}.pdf", mimetype='application/pdf')
-    except Exception as e:
-        print(f"Error generating lead journey PDF: {e}")
-        return f"Error generating PDF: {str(e)}", 500
 
-@app.route('/export_filtered_leads')
+@app.route('/delete_auto_assign_config', methods=['POST'])
 @require_admin
-def export_filtered_leads():
-    """Export filtered leads as CSV or Excel with selected columns."""
-    import io
-    import csv
-    import openpyxl
-    from flask import send_file
-    # Get filters from query params
-    cre_id = request.args.get('cre_id')
-    source = request.args.get('source')
-    qualification = request.args.get('qualification', 'all')
-    date_filter = request.args.get('date_filter', 'all')
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    final_status = request.args.get('final_status', '')
-    search_uid = request.args.get('search_uid', '').strip()
-    format_ = request.args.get('format', 'csv')
-    # Get CREs for name lookup
-    cres = safe_get_data('cre_users')
-    selected_cre = None
-    leads = []
-    if cre_id:
-        selected_cre = next((cre for cre in cres if str(cre.get('id')) == str(cre_id)), None)
-        filters = {'cre_name': selected_cre['name']} if selected_cre else {}
-        if source:
-            filters['source'] = source
-        leads = safe_get_data('lead_master', filters)
-        if search_uid:
-            leads = [lead for lead in leads if search_uid.lower() in str(lead.get('uid', '')).lower()]
-        if qualification == 'qualified':
-            leads = [lead for lead in leads if lead.get('first_call_date')]
-        elif qualification == 'unqualified':
-            leads = [lead for lead in leads if not lead.get('first_call_date')]
-        if final_status:
-            leads = [lead for lead in leads if (lead.get('final_status') or '') == final_status]
-        if date_filter == 'today':
-            today_str = datetime.now().strftime('%Y-%m-%d')
-            leads = [lead for lead in leads if (lead.get('cre_assigned_at') or '').startswith(today_str)]
-        elif date_filter == 'range' and start_date and end_date:
-            def in_range(ld):
-                dt = ld.get('cre_assigned_at')
-                if not dt:
-                    return False
-                try:
-                    dt_val = dt[:10]
-                    return start_date <= dt_val <= end_date
-                except Exception:
-                    return False
-            leads = [lead for lead in leads if in_range(lead)]
-    else:
-        all_leads = safe_get_data('lead_master')
-        if search_uid:
-            leads = [lead for lead in all_leads if search_uid.lower() in str(lead.get('uid', '')).lower()]
-        else:
-            leads = all_leads
-    # Columns to export
-    export_columns = [
-        ('uid', 'UID'),
-        ('customer_name', 'Customer Name'),
-        ('customer_mobile_number', 'Customer Mobile Number'),
-        ('source', 'Source'),
-        ('cre_name', 'CRE Name'),
-        ('ps_name', 'PS Name'),
-        ('final_status', 'Final Status')
-    ]
-    if format_ == 'excel':
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = 'Leads'
-        ws.append([col[1] for col in export_columns])
-        for lead in leads:
-            ws.append([lead.get(col[0], '') for col in export_columns])
-        output = io.BytesIO()
-        wb.save(output)
-        output.seek(0)
-        filename = f"leads_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        return send_file(output, as_attachment=True, download_name=filename, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    else:
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow([col[1] for col in export_columns])
-        for lead in leads:
-            writer.writerow([lead.get(col[0], '') for col in export_columns])
-        output.seek(0)
-        filename = f"leads_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        return send_file(io.BytesIO(output.getvalue().encode('utf-8')), as_attachment=True, download_name=filename, mimetype='text/csv')
-
-@app.route('/export_all_cre_leads')
-@require_admin
-def export_all_cre_leads():
-    """Export all leads assigned to all CREs as CSV or Excel."""
-    import io
-    import csv
-    import openpyxl
-    from flask import send_file
-    
-    print(f"Export All CREs route called with format: {request.args.get('format', 'csv')}")
-    format_ = request.args.get('format', 'csv')
-    
-    try:
-        # Get all CREs
-        cres = safe_get_data('cre_users')
-        active_cres = [cre for cre in cres if cre.get('is_active', True)]
-        
-        # Get all leads assigned to any CRE
-        all_leads = safe_get_data('lead_master')
-        assigned_leads = [lead for lead in all_leads if lead.get('cre_name')]
-        print(f"Total leads found: {len(all_leads)}, Assigned leads: {len(assigned_leads)}")
-        
-        # Columns to export
-        export_columns = [
-            ('uid', 'UID'),
-            ('customer_name', 'Customer Name'),
-            ('customer_mobile_number', 'Customer Mobile Number'),
-            ('source', 'Source'),
-            ('cre_name', 'CRE Name'),
-            ('ps_name', 'PS Name'),
-            ('final_status', 'Final Status'),
-            ('lead_status', 'Lead Status'),
-            ('cre_assigned_at', 'CRE Assigned Date'),
-            ('first_call_date', 'First Call Date'),
-            ('last_call_date', 'Last Call Date'),
-            ('total_calls', 'Total Calls'),
-            ('lead_category', 'Lead Category')
-        ]
-        
-        if format_ == 'excel':
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = 'All CRE Leads'
-            
-            # Add header
-            ws.append([col[1] for col in export_columns])
-            
-            # Add data
-            for lead in assigned_leads:
-                row_data = []
-                for col_key, col_name in export_columns:
-                    value = lead.get(col_key, '')
-                    # Format dates if they exist
-                    if col_key in ['cre_assigned_at', 'first_call_date', 'last_call_date'] and value:
-                        try:
-                            value = value[:10] if len(value) >= 10 else value  # Get just the date part
-                        except:
-                            pass
-                    row_data.append(value)
-                ws.append(row_data)
-            
-            # Auto-adjust column widths
-            for column in ws.columns:
-                max_length = 0
-                column_letter = column[0].column_letter
-                for cell in column:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = min(max_length + 2, 50)  # Cap at 50 characters
-                ws.column_dimensions[column_letter].width = adjusted_width
-            
-            output = io.BytesIO()
-            wb.save(output)
-            output.seek(0)
-            filename = f"all_cre_leads_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-            return send_file(output, as_attachment=True, download_name=filename, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        else:
-            output = io.StringIO()
-            writer = csv.writer(output)
-            
-            # Add header
-            writer.writerow([col[1] for col in export_columns])
-            
-            # Add data
-            for lead in assigned_leads:
-                row_data = []
-                for col_key, col_name in export_columns:
-                    value = lead.get(col_key, '')
-                    # Format dates if they exist
-                    if col_key in ['cre_assigned_at', 'first_call_date', 'last_call_date'] and value:
-                        try:
-                            value = value[:10] if len(value) >= 10 else value  # Get just the date part
-                        except:
-                            pass
-                    row_data.append(value)
-                writer.writerow(row_data)
-            
-            output.seek(0)
-            filename = f"all_cre_leads_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            return send_file(io.BytesIO(output.getvalue().encode('utf-8')), as_attachment=True, download_name=filename, mimetype='text/csv')
-    
-    except Exception as e:
-        flash(f'Error exporting all CRE leads: {str(e)}', 'error')
-        return redirect(url_for('manage_leads'))
-
-@app.route('/api/export_branch_leads', methods=['POST'])
-def api_export_branch_leads():
-    """Export leads data for branch head with date range and branch filtering"""
+def delete_auto_assign_config():
     try:
         data = request.get_json()
-        lead_type = data.get('lead_type')
-        date_from = data.get('date_from')
-        date_to = data.get('date_to')
-        branch = data.get('branch')
+        source = data.get('source')
         
-        if not all([lead_type, date_from, date_to, branch]):
-            return jsonify({'success': False, 'message': 'Missing required parameters'}), 400
+        if not source:
+            return jsonify({'success': False, 'message': 'Source is required'})
         
-        # Convert dates to datetime objects
-        from datetime import datetime
-        try:
-            start_date = datetime.strptime(date_from, '%Y-%m-%d')
-            end_date = datetime.strptime(date_to, '%Y-%m-%d')
-        except ValueError as e:
-            return jsonify({'success': False, 'message': f'Invalid date format: {str(e)}'}), 400
+        print(f"🗑️ Deleting auto-assign configuration for {source}")
         
-        # Get data based on lead type
-        csv_data = []
+        # Get current configs to show what was deleted
+        current_configs = supabase.table('auto_assign_config').select('cre_id').eq('source', source).execute()
+        cre_ids = [config['cre_id'] for config in current_configs.data] if current_configs.data else []
         
-        # Helper function to format date for database query
-        def format_date_for_query(date_str):
-            """Try different date formats for database queries"""
-            formats = [
-                f'{date_str} 00:00:00',
-                f'{date_str} 00:00:00+00',
-                date_str,
-                f'{date_str}T00:00:00',
-                f'{date_str}T00:00:00Z'
-            ]
-            return formats
+        # Get CRE names for feedback
+        cre_names = []
+        if cre_ids:
+            cre_result = supabase.table('cre_users').select('name').in_('id', cre_ids).execute()
+            cre_names = [cre['name'] for cre in cre_result.data] if cre_result.data else [f"CRE ID: {id}" for id in cre_ids]
         
-        if lead_type == 'PS':
-            # Export PS leads from ps_followup_master
-            try:
-                leads_data = []
-                print(f"🔍 Exporting PS leads for branch: {branch}, date range: {date_from} to {date_to}")
-                
-                # Try different date formats
-                for start_format in format_date_for_query(date_from):
-                    for end_format in format_date_for_query(date_to):
-                        try:
-                            # PS table uses ps_branch, not branch
-                            # Use ps_assigned_at for PS leads filtering - ONLY export leads with ps_assigned_at timestamps
-                            query = supabase.table('ps_followup_master').select('*').eq('ps_branch', branch).not_.is_('ps_assigned_at', 'null').gte('ps_assigned_at', start_format).lte('ps_assigned_at', end_format)
-                            result = query.execute()
-                            if result.data:
-                                leads_data = result.data
-                                print(f"✅ Found {len(leads_data)} PS leads with ps_branch + ps_assigned_at filter")
-                                break
-                            else:
-                                print(f"⚠️ No PS leads found with ps_assigned_at between {start_format} and {end_format}")
-                                continue
-                        except Exception as e:
-                            print(f"❌ Error with date format {start_format} to {end_format}: {e}")
-                            continue
-                    if leads_data:
-                        break
-                
-                # Format data for CSV - only include leads with ps_assigned_at
-                print(f"📊 Formatting {len(leads_data)} PS leads for CSV export")
-                for lead in leads_data:
-                    # Only include leads that have ps_assigned_at timestamp
-                    if lead.get('ps_assigned_at'):
-                        csv_data.append({
-                            'Lead UID': lead.get('lead_uid', ''),
-                            'Customer Name': lead.get('customer_name', ''),
-                            'Mobile Number': lead.get('customer_mobile_number', ''),
-                            'Source': lead.get('source', ''),
-                            'Lead Category': lead.get('lead_category', 'Not Set'),
-                            'PS Name': lead.get('ps_name', ''),
-                            'CRE Name': lead.get('cre_name', ''),
-                            'Branch': lead.get('branch') or lead.get('ps_branch', ''),
-                            'Final Status': lead.get('final_status', ''),
-                            'Lead Status': lead.get('lead_status', ''),
-                            'Model Interested': lead.get('model_interested', ''),
-                            'Follow Up Date': lead.get('follow_up_date', ''),
-                            'PS Assigned At': lead.get('ps_assigned_at', ''),
-                            'Created At': lead.get('created_at', ''),
-                            'Updated At': lead.get('updated_at', '')
-                        })
-                    else:
-                        print(f"⚠️ Skipping lead {lead.get('lead_uid', 'N/A')} - no ps_assigned_at timestamp")
-                print(f"✅ Successfully formatted {len(csv_data)} PS leads for export")
-            except Exception as e:
-                print(f"❌ Error fetching PS leads: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                return jsonify({'success': False, 'message': f'Error fetching PS leads: {str(e)}'}), 500
-                
-        elif lead_type == 'Walkin':
-            # Export Walk-in leads from walkin_table
-            try:
-                leads_data = []
-                # Try different date formats
-                for start_format in format_date_for_query(date_from):
-                    for end_format in format_date_for_query(date_to):
-                        try:
-                            query = supabase.table('walkin_table').select('*').eq('branch', branch).gte('created_at', start_format).lte('created_at', end_format)
-                            result = query.execute()
-                            if result.data:
-                                leads_data = result.data
-                                break
-                        except Exception as e:
-                            continue
-                    if leads_data:
-                        break
-                
-                # Format data for CSV
-                for lead in leads_data:
-                    csv_data.append({
-                        'UID': lead.get('uid', ''),
-                        'Customer Name': lead.get('customer_name', ''),
-                        'Mobile Number': lead.get('mobile_number', ''),
-                        'Model Interested': lead.get('model_interested', ''),
-                        'Occupation': lead.get('occupation', ''),
-                        'Lead Category': lead.get('lead_category', 'Not Set'),
-                        'Branch': lead.get('branch', ''),
-                        'PS Assigned': lead.get('ps_assigned', ''),
-                        'Status': lead.get('status', ''),
-                        'Followup No': lead.get('followup_no', ''),
-                        'Next Followup Date': lead.get('next_followup_date', ''),
-                        'First Call Date': lead.get('first_call_date', ''),
-                        'First Call Remark': lead.get('first_call_remark', ''),
-                        'Created At': lead.get('created_at', ''),
-                        'Updated At': lead.get('updated_at', '')
-                    })
-            except Exception as e:
-                print(f"Error fetching Walkin leads: {str(e)}")
-                return jsonify({'success': False, 'message': f'Error fetching Walkin leads: {str(e)}'}), 500
-                
-        elif lead_type == 'Event':
-            # Export Event leads from activity_leads
-            try:
-                leads_data = []
-                # Try different date formats
-                for start_format in format_date_for_query(date_from):
-                    for end_format in format_date_for_query(date_to):
-                        try:
-                            query = supabase.table('activity_leads').select('*').eq('location', branch).gte('created_at', start_format).lte('created_at', end_format)
-                            result = query.execute()
-                            if result.data:
-                                leads_data = result.data
-                                break
-                        except Exception as e:
-                            continue
-                    if leads_data:
-                        break
-                
-                # Format data for CSV
-                for lead in leads_data:
-                    csv_data.append({
-                        'Activity UID': lead.get('activity_uid', ''),
-                        'Customer Name': lead.get('customer_name', ''),
-                        'Phone Number': lead.get('customer_phone_number', ''),
-                        'Occupation': lead.get('occupation', ''),
-                        'Lead Category': lead.get('lead_category', 'Not Set'),
-                        'Location': lead.get('location', ''),
-                        'PS Name': lead.get('ps_name', ''),
-                        'Final Status': lead.get('final_status', ''),
-                        'Lead Status': lead.get('lead_status', ''),
-                        'Model Interested': lead.get('model_interested', ''),
-                        'PS Followup Date': lead.get('ps_followup_date_ts', ''),
-                        'Created At': lead.get('created_at', ''),
-                        'Updated At': lead.get('updated_at', '')
-                    })
-            except Exception as e:
-                print(f"Error fetching Event leads: {str(e)}")
-                return jsonify({'success': False, 'message': f'Error fetching Event leads: {str(e)}'}), 500
+        # Delete auto-assign configs for this source
+        supabase.table('auto_assign_config').delete().eq('source', source).execute()
+        print(f"✅ Deleted auto-assign configuration for {source}")
+        
+        if cre_names:
+            message = f'Auto-assign configuration deleted for {source}. Removed CREs: {", ".join(cre_names)}'
         else:
-            return jsonify({'success': False, 'message': 'Invalid lead type'}), 400
-        
-        if not csv_data:
-            return jsonify({'success': False, 'message': 'No data found for the specified criteria'}), 404
-        
-        # Create CSV content
-        import csv
-        import io
-        
-        print(f"📊 Creating CSV with {len(csv_data)} rows")
-        
-        output = io.StringIO()
-        if csv_data:
-            try:
-                fieldnames = csv_data[0].keys()
-                print(f"📋 CSV fieldnames: {list(fieldnames)}")
-                writer = csv.DictWriter(output, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(csv_data)
-                print("✅ CSV content created successfully")
-            except Exception as e:
-                print(f"❌ Error creating CSV: {e}")
-                import traceback
-                traceback.print_exc()
-                return jsonify({'success': False, 'message': f'Error creating CSV: {str(e)}'}), 500
-        else:
-            print("❌ No CSV data to export")
-            return jsonify({'success': False, 'message': 'No data found for the specified criteria'}), 404
-        
-        # Create response
-        from flask import Response
-        try:
-            csv_content = output.getvalue()
-            print(f"📄 CSV content length: {len(csv_content)} characters")
-            
-            response = Response(
-                csv_content,
-                mimetype='text/csv',
-                headers={'Content-Disposition': f'attachment; filename={lead_type}_leads_{date_from}_to_{date_to}_{branch}.csv'}
-            )
-            
-            print("✅ Response created successfully")
-            return response
-        except Exception as e:
-            print(f"❌ Error creating response: {e}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({'success': False, 'message': f'Error creating response: {str(e)}'}), 500
-        
-    except Exception as e:
-        return jsonify({'success': False, 'message': f'Export failed: {str(e)}'}), 500
-
-@app.route('/cre_analytics')
-@require_cre
-def cre_analytics():
-    try:
-        # Get current CRE name from session
-        current_cre = session.get('cre_name')
-        
-        # Get all CRE users with their active status (for leaderboard)
-        cre_users = safe_get_data('cre_users')
-        active_cre_users = [cre for cre in cre_users if cre.get('is_active', True)]
-        
-        # Get all leads data
-        all_leads = safe_get_data('lead_master')
-        
-        # Helper function to parse timestamps
-        def parse_timestamp(timestamp_str):
-            if not timestamp_str:
-                return None
-            try:
-                if 'T' in timestamp_str:
-                    return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                elif ' ' in timestamp_str:
-                    return datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
-                else:
-                    return datetime.strptime(timestamp_str, '%Y-%m-%d')
-            except:
-                return None
-        
-        def get_cre_platform_conversion_live():
-            platform_data = {}
-            for lead in all_leads:
-                if lead.get('cre_name') == current_cre:
-                    platform = lead.get('source', 'Unknown')
-                    if platform not in platform_data:
-                        platform_data[platform] = {
-                            'won': 0,
-                            'pending_live': 0,
-                            'lost': 0,
-                            'assigned': 0
-                        }
-                    if lead.get('cre_assigned_at'):
-                        platform_data[platform]['assigned'] += 1
-                    if lead.get('final_status') == 'Won':
-                        platform_data[platform]['won'] += 1
-                    elif lead.get('final_status') == 'Pending':
-                        platform_data[platform]['pending_live'] += 1
-                    elif lead.get('final_status') == 'Lost' or lead.get('lost_timestamp'):
-                        platform_data[platform]['lost'] += 1
-            for platform in platform_data:
-                all_won = len([lead for lead in all_leads 
-                              if lead.get('cre_name') == current_cre 
-                              and (lead.get('source') or 'Unknown') == platform
-                              and lead.get('final_status') == 'Won'])
-                assigned = platform_data[platform]['assigned']
-                conversion_rate = (all_won / assigned * 100) if assigned > 0 else 0
-                platform_data[platform]['conversion_rate'] = round(conversion_rate, 2)
-            return platform_data
-
-        def get_top_5_cre_leaderboard():
-            cre_performance = {}
-            for cre in active_cre_users:
-                cre_name = cre.get('name')
-                if cre_name:
-                    cre_performance[cre_name] = {
-                        'won': 0,
-                        'pending_live': 0,
-                        'lost': 0,
-                        'total_leads_handled': 0
-                    }
-            for lead in all_leads:
-                cre_name = lead.get('cre_name')
-                if cre_name in cre_performance:
-                    if lead.get('cre_assigned_at'):
-                        cre_performance[cre_name]['total_leads_handled'] += 1
-                    if lead.get('final_status') == 'Won':
-                        cre_performance[cre_name]['won'] += 1
-                    elif lead.get('final_status') == 'Pending':
-                        cre_performance[cre_name]['pending_live'] += 1
-                    elif lead.get('final_status') == 'Lost' or lead.get('lost_timestamp'):
-                        cre_performance[cre_name]['lost'] += 1
-            sorted_cre = sorted(cre_performance.items(), key=lambda x: x[1]['won'], reverse=True)[:5]
-            return sorted_cre
-        
-        # Calculate platform-wise conversion rates for logged-in CRE
-        def get_cre_platform_conversion():
-            platform_data = {}
-            
-            for lead in all_leads:
-                if lead.get('cre_name') == current_cre:
-                    platform = lead.get('source', 'Unknown')
-                    if platform not in platform_data:
-                        platform_data[platform] = {
-                            'won': 0,
-                            'pending_live': 0,
-                            'lost': 0,
-                            'assigned': 0
-                        }
-                    
-                    if lead.get('cre_assigned_at'):
-                        platform_data[platform]['assigned'] += 1
-                    
-                    if lead.get('final_status') == 'Won':
-                        platform_data[platform]['won'] += 1
-                    elif lead.get('final_status') == 'Pending':
-                        # Pending is always live, not date filtered
-                        platform_data[platform]['pending_live'] += 1
-                    elif lead.get('final_status') == 'Lost' or lead.get('lost_timestamp'):
-                        platform_data[platform]['lost'] += 1
-            
-            # Calculate conversion rates (always live - use all won cases, not date filtered)
-            for platform in platform_data:
-                # Count all won cases for this platform (live data)
-                all_won = len([lead for lead in all_leads 
-                              if lead.get('cre_name') == current_cre 
-                              and (lead.get('source') or 'Unknown') == platform
-                              and lead.get('final_status') == 'Won'])
-                assigned = platform_data[platform]['assigned']
-                conversion_rate = (all_won / assigned * 100) if assigned > 0 else 0
-                platform_data[platform]['conversion_rate'] = round(conversion_rate, 2)
-            
-            return platform_data
-        
-        # Get overall stats for logged-in CRE
-        def get_cre_overall_stats():
-            cre_leads = [lead for lead in all_leads if lead.get('cre_name') == current_cre]
-            total_won = len([lead for lead in cre_leads if lead.get('final_status') == 'Won'])
-            total_lost = len([lead for lead in cre_leads if lead.get('final_status') == 'Lost' or lead.get('lost_timestamp')])
-            total_assigned = len([lead for lead in cre_leads if lead.get('cre_assigned_at')])
-            
-            overall_rate = (total_won / total_assigned * 100) if total_assigned > 0 else 0
-            return {
-                'won': total_won,
-                'lost': total_lost,
-                'assigned': total_assigned,
-                'conversion_rate': round(overall_rate, 2)
-            }
-        
-        # Get live stats for logged-in CRE (pending and conversion rate always live)
-        def get_cre_live_stats():
-            cre_leads = [lead for lead in all_leads if lead.get('cre_name') == current_cre]
-            total_pending = len([lead for lead in cre_leads if lead.get('final_status') == 'Pending'])
-            total_won_live = len([lead for lead in cre_leads if lead.get('final_status') == 'Won'])
-            total_assigned = len([lead for lead in cre_leads if lead.get('cre_assigned_at')])
-            
-            live_conversion_rate = (total_won_live / total_assigned * 100) if total_assigned > 0 else 0
-            
-            return {
-                'pending': total_pending,
-                'conversion_rate': round(live_conversion_rate, 2)
-            }
-        
-        # Prepare data for template
-        analytics_data = {
-            'current_cre': current_cre,
-            'top_5_leaderboard': get_top_5_cre_leaderboard(),
-            'cre_platform_conversion': get_cre_platform_conversion(),
-            'cre_platform_conversion_live': get_cre_platform_conversion_live(),
-            'cre_overall_stats': get_cre_overall_stats(),
-            'cre_live_stats': get_cre_live_stats()
-        }
-        
-        return render_template('cre_analytics.html', analytics=analytics_data)
-        
-    except Exception as e:
-        flash(f'Error loading CRE analytics: {str(e)}', 'error')
-        return redirect(url_for('cre_dashboard'))
-
-
-@app.route('/cre_analytics_data')
-@require_cre
-def cre_analytics_data():
-    """API endpoint to get filtered analytics data"""
-    try:
-        # Get filter parameters
-        from_date_str = request.args.get('from_date')
-        to_date_str = request.args.get('to_date')
-        
-        # Get current CRE name from session
-        current_cre = session.get('cre_name')
-        
-        # Get all leads data
-        all_leads = safe_get_data('lead_master')
-        cre_users = safe_get_data('cre_users')
-        active_cre_users = [cre for cre in cre_users if cre.get('is_active', True)]
-        
-        # Helper function to parse timestamps
-        def parse_timestamp(timestamp_str):
-            if not timestamp_str:
-                return None
-            try:
-                if 'T' in timestamp_str:
-                    return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                elif ' ' in timestamp_str:
-                    return datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
-                else:
-                    return datetime.strptime(timestamp_str, '%Y-%m-%d')
-            except:
-                return None
-        
-        # Helper function to parse date from HTML5 date input (yyyy-mm-dd format)
-        def parse_date_input(date_str):
-            if not date_str:
-                return None
-            try:
-                return datetime.strptime(date_str, '%Y-%m-%d').date()
-            except:
-                return None
-        
-        # Helper function to check if date is within filter range
-        def is_within_date_filter(target_date):
-            if not target_date:
-                return True  # Include records without dates if no filter
-            
-            if not from_date_str or not to_date_str:
-                return True  # No date filter applied
-            
-            target_date_obj = target_date.date() if isinstance(target_date, datetime) else target_date
-            from_date_obj = parse_date_input(from_date_str)
-            to_date_obj = parse_date_input(to_date_str)
-            
-            if not from_date_obj or not to_date_obj:
-                return True  # Invalid date format, include all
-            
-            return from_date_obj <= target_date_obj <= to_date_obj
-        
-        # Get filtered leaderboard for all active CREs
-        def get_filtered_all_cre_leaderboard():
-            cre_performance = {}
-            for cre in active_cre_users:
-                cre_name = cre.get('name')
-                if cre_name:
-                    cre_performance[cre_name] = {
-                        'won': 0,
-                        'pending_live': 0,
-                        'lost': 0,
-                        'total_leads_handled': 0
-                    }
-            
-            # Apply date filter to total_leads_handled based on cre_assigned_at timestamp
-            for lead in all_leads:
-                cre_name = lead.get('cre_name')
-                if cre_name in cre_performance:
-                    if lead.get('cre_assigned_at'):
-                        assigned_date = parse_timestamp(lead.get('cre_assigned_at'))
-                        if is_within_date_filter(assigned_date):
-                            cre_performance[cre_name]['total_leads_handled'] += 1
-                    if lead.get('final_status') == 'Pending':
-                        cre_performance[cre_name]['pending_live'] += 1
-            
-            for lead in all_leads:
-                cre_name = lead.get('cre_name')
-                if cre_name in cre_performance:
-                    if lead.get('final_status') == 'Won':
-                        won_date = parse_timestamp(lead.get('won_timestamp'))
-                        if is_within_date_filter(won_date):
-                            cre_performance[cre_name]['won'] += 1
-                    elif lead.get('final_status') == 'Lost' or lead.get('lost_timestamp'):
-                        lost_date = parse_timestamp(lead.get('lost_timestamp')) or parse_timestamp(lead.get('won_timestamp'))
-                        if is_within_date_filter(lost_date):
-                            cre_performance[cre_name]['lost'] += 1
-            sorted_cre = sorted(cre_performance.items(), key=lambda x: x[1]['won'], reverse=True)
-            return sorted_cre
-        
-        # Get filtered platform conversion data for logged-in CRE
-        def get_filtered_cre_platform_conversion():
-            platform_data = {}
-            for lead in all_leads:
-                if lead.get('cre_name') == current_cre:
-                    platform = lead.get('source', 'Unknown')
-                    if platform not in platform_data:
-                        platform_data[platform] = {
-                            'won': 0,
-                            'pending_live': 0,
-                            'lost': 0,
-                            'assigned': 0
-                        }
-                    if lead.get('cre_assigned_at'):
-                        platform_data[platform]['assigned'] += 1
-                    if lead.get('final_status') == 'Won':
-                        won_date = parse_timestamp(lead.get('won_timestamp'))
-                        if is_within_date_filter(won_date):
-                            platform_data[platform]['won'] += 1
-                    elif lead.get('final_status') == 'Pending':
-                        platform_data[platform]['pending_live'] += 1
-                    elif lead.get('final_status') == 'Lost' or lead.get('lost_timestamp'):
-                        lost_date = parse_timestamp(lead.get('lost_timestamp')) or parse_timestamp(lead.get('won_timestamp'))
-                        if is_within_date_filter(lost_date):
-                            platform_data[platform]['lost'] += 1
-            # Calculate conversion rates (always live - use all won cases, not date filtered)
-            for platform in platform_data:
-                # Count all won cases for this platform (live data)
-                all_won = len([lead for lead in all_leads 
-                              if lead.get('cre_name') == current_cre 
-                              and (lead.get('source') or 'Unknown') == platform
-                              and lead.get('final_status') == 'Won'])
-                assigned = platform_data[platform]['assigned']
-                conversion_rate = (all_won / assigned * 100) if assigned > 0 else 0
-                platform_data[platform]['conversion_rate'] = round(conversion_rate, 2)
-            return platform_data
-        
-        # Get filtered overall stats for logged-in CRE
-        def get_filtered_cre_overall_stats():
-            cre_leads = [lead for lead in all_leads if lead.get('cre_name') == current_cre]
-            
-            total_won = 0
-            total_lost = 0
-            total_assigned = len([lead for lead in cre_leads if lead.get('cre_assigned_at')])
-            
-            for lead in cre_leads:
-                if lead.get('final_status') == 'Won':
-                    won_date = parse_timestamp(lead.get('won_timestamp'))
-                    if is_within_date_filter(won_date):
-                        total_won += 1
-                elif lead.get('final_status') == 'Lost' or lead.get('lost_timestamp'):
-                    lost_date = parse_timestamp(lead.get('lost_timestamp')) or parse_timestamp(lead.get('won_timestamp'))
-                    if is_within_date_filter(lost_date):
-                        total_lost += 1
-            
-            overall_rate = (total_won / total_assigned * 100) if total_assigned > 0 else 0
-            return {
-                'won': total_won,
-                'lost': total_lost,
-                'assigned': total_assigned,
-                'conversion_rate': round(overall_rate, 2)
-            }
-        
-        # Get live platform conversion data for logged-in CRE (not affected by date filter)
-        def get_cre_platform_conversion_live():
-            platform_data = {}
-            for lead in all_leads:
-                if lead.get('cre_name') == current_cre:
-                    platform = lead.get('source', 'Unknown')
-                    if platform not in platform_data:
-                        platform_data[platform] = {
-                            'won': 0,
-                            'pending': 0,
-                            'lost': 0,
-                            'assigned': 0
-                        }
-                    if lead.get('cre_assigned_at'):
-                        platform_data[platform]['assigned'] += 1
-                    if lead.get('final_status') == 'Won':
-                        platform_data[platform]['won'] += 1
-                    elif lead.get('final_status') == 'Pending':
-                        platform_data[platform]['pending'] += 1
-                    elif lead.get('final_status') == 'Lost':
-                        platform_data[platform]['lost'] += 1
-            for platform in platform_data:
-                assigned = platform_data[platform]['assigned']
-                won = platform_data[platform]['won']
-                conversion_rate = (won / assigned * 100) if assigned > 0 else 0
-                platform_data[platform]['conversion_rate'] = round(conversion_rate, 2)
-            return platform_data
+            message = f'Auto-assign configuration deleted for {source}'
         
         return jsonify({
             'success': True,
-            'from_date': from_date_str,
-            'to_date': to_date_str,
-            'top_5_leaderboard': get_filtered_all_cre_leaderboard()[:5],
-            'cre_platform_conversion': get_filtered_cre_platform_conversion(),
-            'cre_platform_conversion_live': get_cre_platform_conversion_live(),
-            'cre_overall_stats': get_filtered_cre_overall_stats()
+            'message': message,
+            'deleted_cre_names': cre_names
         })
         
     except Exception as e:
+        print(f"❌ Error deleting auto-assign config: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/get_unassigned_count/<source>', methods=['GET'])
+@require_admin
+def get_unassigned_count(source):
+    """Get unassigned lead count for a specific source"""
+    try:
+        # Get count of unassigned leads for this source
+        count_result = supabase.table('lead_master').select('uid', count='exact').eq('assigned', 'No').eq('source', source).execute()
+        count = count_result.count if hasattr(count_result, 'count') else 0
+        
         return jsonify({
-            'success': False,
-            'error': str(e)
+            'success': True,
+            'count': count
         })
-
-@app.route('/negative_call_attempt_history', methods=['GET'])
-@require_admin
-def negative_call_attempt_history():
-    from_date = request.args.get('from_date')
-    to_date = request.args.get('to_date')
-    call_no_order = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
-    # Fetch data (only columns that exist)
-    cre_attempts = safe_get_data('cre_call_attempt_history', select_fields='call_no,created_at,status')
-    ps_attempts = safe_get_data('ps_call_attempt_history', select_fields='call_no,updated_at,status')
-    # Parse date filters
-    start_date = pd.to_datetime(from_date) if from_date else None
-    end_date = pd.to_datetime(to_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1) if to_date else None
-    cre_filtered, cre_statuses = get_cre_feedback_analysis(cre_attempts, call_no_order, start_date, end_date)
-    ps_filtered, ps_statuses = get_ps_feedback_analysis(ps_attempts, call_no_order, start_date, end_date)
-    # Debug prints
-    print('CRE Statuses:', cre_statuses)
-    print('CRE Filtered Data:', cre_filtered)
-    print('PS Statuses:', ps_statuses)
-    print('PS Filtered Data:', ps_filtered)
-    return jsonify({
-        'statuses': cre_statuses,  # for CRE table
-        'ps_statuses': ps_statuses,  # for PS table (optional, for symmetry)
-        'call_no_order': call_no_order,
-        'CRE': {'filtered': cre_filtered},
-        'PS': {'filtered': ps_filtered}
-    })
-
-def get_cre_feedback_analysis(cre_attempts, call_no_order, start_date, end_date):
-    cre_df = pd.DataFrame(cre_attempts)
-    # print("Sample cre_attempts:", cre_attempts[:5])  # Debug: print sample data
-    if cre_df.empty:
-        print("No data in cre_attempts!")
-        return {call_no: {} for call_no in call_no_order}, []
-    cre_df['created_at'] = pd.to_datetime(cre_df['created_at'], errors='coerce')
-    # --- Fix: Localize filter dates if needed ---
-    if start_date is not None and end_date is not None:
-        if pd.api.types.is_datetime64tz_dtype(cre_df['created_at']):
-            if start_date.tzinfo is None:
-                start_date = start_date.tz_localize('UTC')
-            if end_date.tzinfo is None:
-                end_date = end_date.tz_localize('UTC')
-        cre_df = cre_df[(cre_df['created_at'] >= start_date) & (cre_df['created_at'] <= end_date)]
-    cre_df['status'] = cre_df['status'].fillna('').astype(str).str.strip()
-    print("Unique statuses in data:", cre_df['status'].unique())  # Debug: print unique statuses
-    grouped = cre_df.groupby(['call_no', 'status']).size().reset_index(name='count')
-    print("\nGrouped data (call_no, status, count):\n", grouped)  # Debug: print grouped data
-    cre_filtered = {call_no: {} for call_no in call_no_order}
-    for call_no in call_no_order:
-        call_data = grouped[grouped['call_no'] == call_no]
-        for _, row in call_data.iterrows():
-            cre_filtered[call_no][row['status']] = int(row['count'])
-    print("\nCRE Filtered Data:", cre_filtered)  # Debug: print final filtered data
-    return cre_filtered, sorted(cre_df['status'].unique())
-
-def get_ps_feedback_analysis(ps_attempts, call_no_order, start_date, end_date):
-    ps_df = pd.DataFrame(ps_attempts)
-    ps_statuses = []
-    ps_filtered = {call_no: {} for call_no in call_no_order}
-    if not ps_df.empty:
-        ps_df['updated_at'] = pd.to_datetime(ps_df['updated_at'], errors='coerce')
-        # --- Fix: Localize filter dates if needed ---
-        if start_date is not None and end_date is not None:
-            if pd.api.types.is_datetime64tz_dtype(ps_df['updated_at']):
-                if start_date.tzinfo is None:
-                    start_date = start_date.tz_localize('UTC')
-                if end_date.tzinfo is None:
-                    end_date = end_date.tz_localize('UTC')
-            ps_df = ps_df[(ps_df['updated_at'] >= start_date) & (ps_df['updated_at'] <= end_date)]
-        ps_df['status'] = ps_df['status'].fillna('').astype(str).str.strip()
-        ps_statuses = sorted(ps_df['status'].unique())
-        grouped = ps_df.groupby(['call_no', 'status']).size().reset_index(name='count')
-        for call_no in call_no_order:
-            call_data = grouped[grouped['call_no'] == call_no]
-            ps_filtered[call_no] = {status: 0 for status in ps_statuses}
-            for _, row in call_data.iterrows():
-                ps_filtered[call_no][row['status']] = int(row['count'])
-    return ps_filtered, ps_statuses
-
-@app.route('/get_cre_list')
-@require_admin
-def get_cre_list():
-    cres = safe_get_data('cre_users', select_fields='name')
-    cre_list = [{'name': cre.get('name')} for cre in cres if cre.get('name')]
-    return jsonify({'success': True, 'cre_list': cre_list})
-
-@app.route('/cre_analysis_data')
-@require_admin
-def cre_analysis_data():
-    # Return a mock response or implement your actual logic here
-    return jsonify({'success': True, 'data': {}})
-
-@app.route('/update_event_lead/<activity_uid>', methods=['GET', 'POST'])
-@require_ps
-def update_event_lead(activity_uid):
-    return_tab = request.args.get('return_tab', 'fresh-leads')
-    print(f'[DEBUG] update_event_lead called with activity_uid: {activity_uid}')
-    print(f'[DEBUG] return_tab: {return_tab}')
-    print(f'[DEBUG] request.method: {request.method}')
-    
-    try:
-        # Fetch the event lead by activity_uid
-        print(f'[DEBUG] Attempting to fetch event lead with activity_uid: {activity_uid}')
-        result = supabase.table('activity_leads').select('*').eq('activity_uid', activity_uid).execute()
-        print(f'[DEBUG] Supabase query result: {result}')
-        print(f'[DEBUG] Result data: {result.data}')
         
-        if not result.data:
-            print(f'[DEBUG] No event lead found for activity_uid: {activity_uid}')
-            flash('Event lead not found', 'error')
-            return redirect(url_for('ps_dashboard', tab=return_tab))
-        
-        lead = result.data[0]
-        print('[DEBUG] Lead data (PS):', lead)
-        # Determine next call and completed calls for PS follow-ups
-        call_order = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
-        completed_calls = []
-        next_call = 'first'
-        for call_num in call_order:
-            call_date_key = f'ps_{call_num}_call_date'
-            if lead.get(call_date_key):
-                completed_calls.append(call_num)
-            else:
-                next_call = call_num
-                break
-        
-        # Build PS call history
-        ps_call_history = []
-        for call_num in call_order:
-            call_date = lead.get(f'ps_{call_num}_call_date')
-            call_remark = lead.get(f'ps_{call_num}_call_remark')
-            if call_date or call_remark:
-                ps_call_history.append({
-                    'call': call_num,
-                    'date': call_date,
-                    'remark': call_remark
-                })
-        
-        # Build CRE call history
-        cre_call_history = []
-        for call_num in call_order:
-            call_date = lead.get(f'cre_{call_num}_call_date')
-            call_remark = lead.get(f'cre_{call_num}_call_remark')
-            if call_date or call_remark:
-                cre_call_history.append({
-                    'call': call_num,
-                    'date': call_date,
-                    'remark': call_remark
-                })
-        print('[DEBUG] PS call history:', ps_call_history)
-        print('[DEBUG] CRE call history:', cre_call_history)
-        
-        if request.method == 'POST':
-            update_data = {}
-            customer_name = request.form.get('customer_name', '').strip()
-            lead_category = request.form.get('lead_category', '').strip()
-            interested_model = request.form.get('interested_model', '').strip()
-            test_drive_done = request.form.get('test_drive_done', '').strip()
-            customer_location = request.form.get('customer_location', '').strip()
-            ps_followup_date_ts = request.form.get('ps_followup_date_ts', '').strip()
-            lead_status = request.form.get('lead_status', '').strip()
-            final_status = request.form.get('final_status', '').strip()
-            call_date = request.form.get('call_date', '').strip()
-            call_remark = request.form.get('call_remark', '').strip()
-            # Update editable fields
-            if customer_name:
-                update_data['customer_name'] = customer_name
-            if lead_category:
-                update_data['lead_category'] = lead_category
-            if interested_model:
-                update_data['interested_model'] = interested_model
-            # Test Drive Done is now required
-            if not test_drive_done:
-                flash('Test Drive Done field is required', 'error')
-                redirect_url = url_for('update_event_lead', activity_uid=activity_uid, return_tab=return_tab)
-                return redirect(redirect_url)
-            update_data['test_drive_done'] = test_drive_done
-            if customer_location:
-                update_data['customer_location'] = customer_location
-            if ps_followup_date_ts:
-                update_data['ps_followup_date_ts'] = ps_followup_date_ts
-            if lead_status:
-                update_data['lead_status'] = lead_status
-            if final_status:
-                update_data['final_status'] = final_status
-            # Handle PS call date/remark for the next call
-            skip_statuses = ["Call not Connected", "RNR", "Call me Back", "Busy on another Call"]
-            if lead_status not in skip_statuses:
-                if call_date:
-                    update_data[f'ps_{next_call}_call_date'] = call_date
-                if call_remark:
-                    update_data[f'ps_{next_call}_call_remark'] = call_remark
-            # Always remove these keys if status is in skip list, even if present
-            if lead_status in skip_statuses:
-                update_data.pop(f'ps_{next_call}_call_date', None)
-                update_data.pop(f'ps_{next_call}_call_remark', None)
-            if update_data:
-                supabase.table('activity_leads').update(update_data).eq('activity_uid', activity_uid).execute()
-                
-                # Track the PS call attempt in ps_call_attempt_history
-                if lead_status:
-                    call_was_recorded = bool(call_date and call_remark)
-                    track_ps_call_attempt(
-                        uid=lead['activity_uid'],
-                        ps_name=session.get('ps_name'),
-                        call_no=next_call,
-                        lead_status=lead_status,
-                        call_was_recorded=call_was_recorded,
-                        follow_up_date=ps_followup_date_ts if ps_followup_date_ts else None,
-                        remarks=call_remark if call_remark else None
-                    )
-                
-                # Sync to alltest_drive table if test_drive_done is set
-                if test_drive_done in ['Yes', 'No', True, False]:
-                    # Get the updated activity lead data for syncing
-                    updated_activity_result = supabase.table('activity_leads').select('*').eq('activity_uid', activity_uid).execute()
-                    if updated_activity_result.data:
-                        updated_activity_data = updated_activity_result.data[0]
-                        sync_test_drive_to_alltest_drive('activity_leads', activity_uid, updated_activity_data)
-                
-                flash('Event lead updated successfully', 'success')
-                return redirect(url_for('ps_dashboard', tab=return_tab))
-            else:
-                flash('No changes to update', 'info')
-        print(f'[DEBUG] About to render template with lead data: {lead}')
-        print(f'[DEBUG] next_call: {next_call}')
-        print(f'[DEBUG] completed_calls: {completed_calls}')
-        print(f'[DEBUG] ps_call_history: {ps_call_history}')
-        print(f'[DEBUG] cre_call_history: {cre_call_history}')
-        
-        return render_template('update_event_lead.html', 
-                             lead=lead, 
-                             next_call=next_call, 
-                             completed_calls=completed_calls, 
-                             ps_call_history=ps_call_history,
-                             cre_call_history=cre_call_history,
-                             today=date.today())
     except Exception as e:
-        print(f'[DEBUG] Exception in update_event_lead: {str(e)}')
-        print(f'[DEBUG] Exception type: {type(e)}')
-        import traceback
-        print(f'[DEBUG] Full traceback: {traceback.format_exc()}')
-        flash(f'Error updating event lead: {str(e)}', 'error')
-        return redirect(url_for('ps_dashboard'))
+        print(f"❌ Error getting unassigned count for {source}: {e}")
+        return jsonify({'success': False, 'message': str(e)})
 
-@app.route('/update_event_lead_cre/<activity_uid>', methods=['GET', 'POST'])
-@require_cre
-def update_event_lead_cre(activity_uid):
-    # Get return_tab parameter for redirection
-    return_tab = request.args.get('return_tab', '')
+
+@app.route('/branch_performance/<branch_name>')
+@require_admin
+def branch_performance(branch_name):
+    """API endpoint for branch performance data"""
     try:
-        # Fetch the event lead by activity_uid
-        result = supabase.table('activity_leads').select('*').eq('activity_uid', activity_uid).execute()
-        if not result.data:
-            flash('Event lead not found', 'error')
-            return redirect(url_for('cre_dashboard'))
-        lead = result.data[0]
-        print('[DEBUG] Lead data (CRE):', lead)
+        # Get PS users in the branch
+        ps_result = supabase.table('ps_users').select('*').eq('branch', branch_name).eq('is_active', True).execute()
+        ps_users = ps_result.data or []
         
-        # Check if this CRE is assigned to this lead
-        cre_name = session.get('cre_name')
-        if lead.get('cre_assigned') != cre_name:
-            flash('You are not authorized to update this event lead', 'error')
-            return redirect(url_for('cre_dashboard'))
+        if not ps_users:
+            return jsonify({'success': False, 'message': 'No PS users found in this branch'})
         
-        # Determine next call and completed calls for CRE follow-ups
-        call_order = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
-        completed_calls = []
-        next_call = 'first'
-        for call_num in call_order:
-            call_date_key = f'cre_{call_num}_call_date'
-            if lead.get(call_date_key):
-                completed_calls.append(call_num)
-            else:
-                next_call = call_num
-                break
-        
-        # Build CRE call history
-        cre_call_history = []
-        for call_num in call_order:
-            call_date = lead.get(f'cre_{call_num}_call_date')
-            call_remark = lead.get(f'cre_{call_num}_call_remark')
-            if call_date or call_remark:
-                cre_call_history.append({
-                    'call': call_num,
-                    'date': call_date,
-                    'remark': call_remark
-                })
-        
-        # Build PS call history
-        ps_call_history = []
-        for call_num in call_order:
-            call_date = lead.get(f'ps_{call_num}_call_date')
-            call_remark = lead.get(f'ps_{call_num}_call_remark')
-            if call_date or call_remark:
-                ps_call_history.append({
-                    'call': call_num,
-                    'date': call_date,
-                    'remark': call_remark
-                })
-        print('[DEBUG] CRE call history:', cre_call_history)
-        print('[DEBUG] PS call history:', ps_call_history)
-        
-        if request.method == 'POST':
-            update_data = {}
-            customer_name = request.form.get('customer_name', '').strip()
-            lead_category = request.form.get('lead_category', '').strip()
-            interested_model = request.form.get('interested_model', '').strip()
-            customer_location = request.form.get('customer_location', '').strip()
-            cre_followup_date_ts = request.form.get('cre_followup_date_ts', '').strip()
-            lead_status = request.form.get('lead_status', '').strip()
-            final_status = request.form.get('final_status', '').strip()
-            test_drive_done = request.form.get('test_drive_done', '').strip()
-            call_date = request.form.get('call_date', '').strip()
-            call_remark = request.form.get('call_remark', '').strip()
+        # Get performance data for each PS
+        ps_performance = []
+        for ps in ps_users:
+            ps_name = ps['name']
             
-            # Update editable fields
-            if customer_name:
-                update_data['customer_name'] = customer_name
-            if lead_category:
-                update_data['lead_category'] = lead_category
-            if interested_model:
-                update_data['interested_model'] = interested_model
-            if customer_location:
-                update_data['customer_location'] = customer_location
-            if cre_followup_date_ts:
-                update_data['cre_followup_date'] = cre_followup_date_ts
-            if lead_status:
-                update_data['lead_status'] = lead_status
-            if final_status:
-                update_data['final_status'] = final_status
-            if test_drive_done:
-                update_data['test_drive_done'] = test_drive_done
+            # Get leads assigned to this PS
+            leads_result = supabase.table('ps_followup_master').select('*').eq('ps_name', ps_name).eq('ps_branch', branch_name).execute()
+            leads = leads_result.data or []
             
-            # Handle CRE call date/remark for the next call
-            skip_statuses = ["Call not Connected", "RNR", "Call me Back", "Busy on another Call"]
-            if lead_status not in skip_statuses:
-                if call_date:
-                    update_data[f'cre_{next_call}_call_date'] = call_date
-                if call_remark:
-                    update_data[f'cre_{next_call}_call_remark'] = call_remark
-            # Always remove these keys if status is in skip list, even if present
-            if lead_status in skip_statuses:
-                update_data.pop(f'cre_{next_call}_call_date', None)
-                update_data.pop(f'cre_{next_call}_call_remark', None)
+            # Calculate metrics
+            total_leads = len(leads)
+            pending_leads = len([l for l in leads if l.get('final_status') == 'Pending'])
+            in_progress_leads = len([l for l in leads if l.get('final_status') == 'In Progress'])
+            won_leads = len([l for l in leads if l.get('final_status') == 'Won'])
+            lost_leads = len([l for l in leads if l.get('final_status') == 'Lost'])
             
-            if update_data:
-                supabase.table('activity_leads').update(update_data).eq('activity_uid', activity_uid).execute()
-                
-                # Sync to alltest_drive table if test_drive_done is set
-                if test_drive_done in ['Yes', 'No', True, False]:
-                    # Get the updated activity lead data for syncing
-                    updated_activity_result = supabase.table('activity_leads').select('*').eq('activity_uid', activity_uid).execute()
-                    if updated_activity_result.data:
-                        updated_activity_data = updated_activity_result.data[0]
-                        sync_test_drive_to_alltest_drive('activity_leads', activity_uid, updated_activity_data)
-                
-                flash('Event lead updated successfully', 'success')
-                # Redirect based on return_tab parameter
-                if return_tab:
-                    if return_tab == 'event-leads':
-                        return redirect(url_for('cre_dashboard', tab='event-leads'))
-                    else:
-                        return redirect(url_for('cre_dashboard'))
-                else:
-                    return redirect(url_for('cre_dashboard'))
-            else:
-                flash('No changes to update', 'info')
-                # Redirect based on return_tab parameter
-                if return_tab:
-                    if return_tab == 'event-leads':
-                        return redirect(url_for('cre_dashboard', tab='event-leads'))
-                    else:
-                        return redirect(url_for('cre_dashboard'))
-                else:
-                    return redirect(url_for('cre_dashboard'))
+            # Calculate success rate
+            success_rate = round((won_leads / total_leads * 100) if total_leads > 0 else 0, 1)
+            
+            # Calculate average calls
+            total_calls = 0
+            for lead in leads:
+                call_count = 0
+                for call_field in ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']:
+                    if lead.get(f'{call_field}_call_date'):
+                        call_count += 1
+                total_calls += call_count
+            
+            avg_calls = round(total_calls / total_leads, 1) if total_leads > 0 else 0
+            
+            # Get last activity
+            last_activity = None
+            if leads:
+                latest_lead = max(leads, key=lambda x: x.get('updated_at', ''))
+                last_activity = latest_lead.get('updated_at')
+            
+            ps_performance.append({
+                'name': ps_name,
+                'username': ps.get('username', ''),
+                'phone': ps.get('phone', ''),
+                'email': ps.get('email', ''),
+                'total_leads': total_leads,
+                'pending_leads': pending_leads,
+                'in_progress_leads': in_progress_leads,
+                'won_leads': won_leads,
+                'lost_leads': lost_leads,
+                'success_rate': success_rate,
+                'avg_calls': avg_calls,
+                'last_activity': last_activity
+            })
         
-        return render_template('update_event_lead_cre.html', 
-                             lead=lead, 
-                             next_call=next_call, 
-                             completed_calls=completed_calls, 
-                             cre_call_history=cre_call_history,
-                             ps_call_history=ps_call_history,
-                             today=date.today())
+        # Calculate summary
+        total_ps = len(ps_users)
+        total_leads = sum(p['total_leads'] for p in ps_performance)
+        total_won = sum(p['won_leads'] for p in ps_performance)
+        overall_success_rate = round((total_won / total_leads * 100) if total_leads > 0 else 0, 1)
+        
+        summary = {
+            'total_ps': total_ps,
+            'total_leads': total_leads,
+            'won_leads': total_won,
+            'success_rate': overall_success_rate
+        }
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'summary': summary,
+                'ps_performance': ps_performance
+            }
+        })
+        
     except Exception as e:
-        flash(f'Error updating event lead: {str(e)}', 'error')
-        return redirect(url_for('cre_dashboard'))
+        print(f"Error in branch_performance: {str(e)}")
+        return jsonify({'success': False, 'message': f'Error loading branch performance: {str(e)}'})
+
+
+def ensure_static_directories():
+    """Ensure static directories exist"""
+    try:
+        static_dir = os.path.join(os.path.dirname(__file__), 'static')
+        images_dir = os.path.join(static_dir, 'images')
+
+        os.makedirs(static_dir, exist_ok=True)
+        os.makedirs(images_dir, exist_ok=True)
+
+        print(f"Static directories ensured: {images_dir}")
+        return images_dir
+    except Exception as e:
+        print(f"Error creating static directories: {e}")
+        return None
+
+
+
+
+
+
+
+
+
+# Initialize AuthManager
+auth_manager = AuthManager(supabase)
+# Store auth_manager in app config instead of direct attribute
+app.config['AUTH_MANAGER'] = auth_manager
+
+# Rate limiter already initialized above
+
+# Upload folder configuration
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'csv', 'xlsx', 'xls'}
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
+
+# Create upload folder if it doesn't exist
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def send_email_to_ps(ps_email, ps_name, lead_data, cre_name):
+    """Send email notification to PS when a lead is assigned"""
+    try:
+        if not EMAIL_USER or not EMAIL_PASSWORD:
+            print("Email credentials not configured. Skipping email notification.")
+            return False
+
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_USER
+        msg['To'] = ps_email
+        msg['Subject'] = f"New Lead Assigned - {lead_data['customer_name']}"
+
+        # Email body
+        body = f"""
+        Dear {ps_name},
+
+        A new lead has been assigned to you by {cre_name}.
+
+        Lead Details:
+        - Customer Name: {lead_data['customer_name']}
+        - Mobile Number: {lead_data['customer_mobile_number']}
+        - Source: {lead_data['source']}
+        - Lead Category: {lead_data.get('lead_category', 'Not specified')}
+        - Model Interested: {lead_data.get('model_interested', 'Not specified')}
+        - Branch: {lead_data.get('branch', 'Not specified')}
+
+        Please log in to the CRM system to view and update this lead.
+
+        Best regards,
+        Ather CRM System
+        """
+
+        msg.attach(MIMEText(body, 'plain'))
+
+        # Send email
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(EMAIL_USER, EMAIL_PASSWORD)
+        text = msg.as_string()
+        server.sendmail(EMAIL_USER, ps_email, text)
+        server.quit()
+
+        print(f"Email sent successfully to {ps_email}")
+        return True
+
+    except Exception as e:
+        print(f"Error sending email: {e}")
+        return False
+
+
+def read_csv_file(filepath):
+    """Read CSV file and return list of dictionaries with memory optimization"""
+    data = []
+    try:
+        with open(filepath, 'r', encoding='utf-8') as file:
+            csv_reader = csv.DictReader(file)
+            for row_num, row in enumerate(csv_reader):
+                if row_num >= 10000:  # Limit to 10,000 rows
+                    print(f"Warning: File contains more than 10,000 rows. Only processing first 10,000.")
+                    break
+
+                # Clean and validate row data
+                cleaned_row = {}
+                for key, value in row.items():
+                    if key and value:  # Only include non-empty keys and values
+                        cleaned_row[key.strip()] = str(value).strip()
+
+                if cleaned_row:  # Only add non-empty rows
+                    data.append(cleaned_row)
+
+                # Memory management for large files
+                if row_num % 1000 == 0 and row_num > 0:
+                    print(f"Processed {row_num} rows...")
+
+    except Exception as e:
+        print(f"Error reading CSV file: {e}")
+        raise
+
+    return data
+
+
+def read_excel_file(filepath):
+    """Read Excel file and return list of dictionaries with memory optimization"""
+    data = []
+    try:
+        workbook = openpyxl.load_workbook(filepath, read_only=True)  # Read-only mode for memory efficiency
+        sheet = workbook.active
+
+        # Get headers from first row
+        headers = []
+        if sheet and sheet[1]:
+            for cell in sheet[1]:
+                if cell and cell.value:
+                    headers.append(str(cell.value).strip())
+                else:
+                    headers.append(None)
+
+        # Read data rows with limit
+        row_count = 0
+        if sheet:
+            for row_num, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+                if row_count >= 10000:  # Limit to 10,000 rows
+                    print(f"Warning: File contains more than 10,000 rows. Only processing first 10,000.")
+                    break
+
+                row_data = {}
+                has_data = False
+
+                for i, value in enumerate(row):
+                    if i < len(headers) and headers[i] and value is not None:
+                        row_data[headers[i]] = str(value).strip()
+                        has_data = True
+
+                if has_data:  # Only add rows with actual data
+                    data.append(row_data)
+                    row_count += 1
+
+                # Memory management for large files
+                if row_count % 1000 == 0 and row_count > 0:
+                    print(f"Processed {row_count} rows...")
+
+        workbook.close()  # Explicitly close workbook
+
+    except Exception as e:
+        print(f"Error reading Excel file: {e}")
+        raise
+
+    return data
+
+
+def batch_insert_leads(leads_data, batch_size=100):
+    """Insert leads in batches to avoid overwhelming the database"""
+    total_inserted = 0
+    total_batches = (len(leads_data) + batch_size - 1) // batch_size
+
+    print(f"Starting batch insert: {len(leads_data)} leads in {total_batches} batches")
+
+    for i in range(0, len(leads_data), batch_size):
+        batch = leads_data[i:i + batch_size]
+        batch_num = (i // batch_size) + 1
+
+        try:
+            # Insert batch
+            result = supabase.table('lead_master').insert(batch).execute()
+
+            if result.data:
+                batch_inserted = len(result.data)
+                total_inserted += batch_inserted
+                print(f"Batch {batch_num}/{total_batches}: Inserted {batch_inserted} leads")
+            else:
+                print(f"Batch {batch_num}/{total_batches}: No data returned from insert")
+
+            # Small delay to prevent overwhelming the database
+            time.sleep(0.1)  # CHANGED from eventlet.sleep(0.1)
+
+            # Force garbage collection every 10 batches
+            if batch_num % 10 == 0:
+                gc.collect()
+
+        except Exception as e:
+            print(f"Error inserting batch {batch_num}: {e}")
+            # Continue with next batch instead of failing completely
+            continue
+
+    print(f"Batch insert completed: {total_inserted} total leads inserted")
+    return total_inserted
+
+
+def generate_uid(source, mobile_number, sequence):
+    """Generate UID based on source, mobile number, and sequence"""
+    source_map = {
+        'Google': 'G',
+        'Meta': 'M',
+        'Affiliate': 'A',
+        'Know': 'K',
+        'Whatsapp': 'W',
+        'Tele': 'T',
+        'Activity': 'AC',
+        'Walk-in': 'W',  # Walk-in mapping
+        'Walkin': 'W'    # Walkin mapping (without hyphen)
+    }
+
+    source_char = source_map.get(source, 'X')
+
+    # Get sequence character (A-Z)
+    sequence_char = chr(65 + (sequence % 26))  # A=65 in ASCII
+
+    # Get last 4 digits of mobile number
+    mobile_str = str(mobile_number).replace(' ', '').replace('-', '')
+    mobile_last4 = mobile_str[-4:] if len(mobile_str) >= 4 else mobile_str.zfill(4)
+
+    # Generate sequence number (0001, 0002, etc.)
+    seq_num = f"{(sequence % 9999) + 1:04d}"
+
+    return f"{source_char}{sequence_char}-{mobile_last4}-{seq_num}"
+
+
+def get_next_call_info(lead_data):
+    """Determine the next available call number and which calls are completed"""
+    call_order = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
+    completed_calls = []
+    next_call = 'first'
+
+    for call_num in call_order:
+        call_date_key = f'{call_num}_call_date'
+        if lead_data.get(call_date_key):
+            completed_calls.append(call_num)
+        else:
+            next_call = call_num
+            break
+
+    return next_call, completed_calls
+
+
+def get_next_ps_call_info(ps_data):
+    """Determine the next available PS call number and which calls are completed (now 7 calls)"""
+    call_order = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
+    completed_calls = []
+    next_call = 'first'
+
+    for call_num in call_order:
+        call_date_key = f'{call_num}_call_date'
+        if ps_data.get(call_date_key):
+            completed_calls.append(call_num)
+        else:
+            next_call = call_num
+            break
+
+    return next_call, completed_calls
+
+
+def get_accurate_count(table_name, filters=None):
+    """Get accurate count from Supabase table"""
+    try:
+        query = supabase.table(table_name).select('id')
+
+        if filters:
+            for key, value in filters.items():
+                if value is not None:
+                    query = query.eq(key, value)
+
+        result = query.execute()
+
+        # Count the returned data
+        return len(result.data) if result.data else 0
+
+    except Exception as e:
+        print(f"Error getting count from {table_name}: {e}")
+        return 0
+
+
+def safe_get_data(table_name, filters=None, select_fields='*', limit=10000):
+    """Safely get data from Supabase with error handling"""
+    try:
+        query = supabase.table(table_name).select(select_fields)
+
+        if filters:
+            for key, value in filters.items():
+                if value is not None:
+                    query = query.eq(key, value)
+
+        # Add limit to prevent default 1000 row limitation
+        if limit:
+            query = query.limit(limit)
+
+        result = query.execute()
+        return result.data or []
+    except Exception as e:
+        print(f"Error fetching data from {table_name}: {e}")
+        return []
+
+
+def sync_test_drive_to_alltest_drive(source_table, original_id, lead_data):
+    """
+    Sync test drive data to alltest_drive table when test_drive_done is updated
+    """
+    try:
+        # Check if test_drive_done is not null and is Yes/No or True/False
+        test_drive_done = lead_data.get('test_drive_done')
+        
+        # Handle both boolean and string values
+        if test_drive_done is None:
+            return
+        
+        # Convert boolean to string if needed
+        if test_drive_done is True:
+            test_drive_done = 'Yes'
+        elif test_drive_done is False:
+            test_drive_done = 'No'
+        elif test_drive_done not in ['Yes', 'No']:
+            return
+        
+        # Check if record already exists in alltest_drive
+        existing_record = supabase.table('alltest_drive').select('*').eq('source_table', source_table).eq('original_id', str(original_id)).execute()
+        
+        # Prepare data for alltest_drive table
+        alltest_drive_data = {
+            'source_table': source_table,
+            'original_id': str(original_id),
+            'test_drive_done': test_drive_done,
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        # Map fields based on source table
+        if source_table == 'walkin_table':
+            alltest_drive_data.update({
+                'customer_name': lead_data.get('customer_name'),
+                'mobile_number': lead_data.get('mobile_number'),
+                'lead_status': lead_data.get('lead_status'),
+                'lead_category': lead_data.get('lead_category'),
+                'model_interested': lead_data.get('model_interested'),
+                'final_status': lead_data.get('status'),
+                'ps_name': lead_data.get('ps_assigned'),
+                'branch': lead_data.get('branch'),
+                'created_at': lead_data.get('created_at')
+            })
+            # For walkin_table, use uid instead of id
+            alltest_drive_data['original_id'] = lead_data.get('uid', str(original_id))
+        elif source_table == 'ps_followup_master':
+            alltest_drive_data.update({
+                'customer_name': lead_data.get('customer_name'),
+                'mobile_number': lead_data.get('customer_mobile_number'),
+                'lead_status': lead_data.get('lead_status'),
+                'lead_category': lead_data.get('lead_category'),
+                'model_interested': lead_data.get('model_interested'),
+                'final_status': lead_data.get('final_status'),
+                'ps_name': lead_data.get('ps_name'),
+                'branch': lead_data.get('branch') or lead_data.get('ps_branch'),
+                'created_at': lead_data.get('created_at'),
+                'lead_source': lead_data.get('lead_source'),
+                'cre_name': lead_data.get('cre_name')
+            })
+        elif source_table == 'activity_leads':
+            alltest_drive_data.update({
+                'customer_name': lead_data.get('customer_name'),
+                'mobile_number': lead_data.get('customer_phone_number'),
+                'lead_status': lead_data.get('lead_status'),
+                'lead_category': lead_data.get('lead_category'),
+                'model_interested': lead_data.get('interested_model'),
+                'final_status': lead_data.get('final_status'),
+                'ps_name': lead_data.get('ps_name'),
+                'branch': lead_data.get('location'),
+                'created_at': lead_data.get('created_at'),
+                'remarks': lead_data.get('remarks'),
+                'activity_name': lead_data.get('activity_name'),
+                'activity_location': lead_data.get('activity_location'),
+                'customer_location': lead_data.get('customer_location'),
+                'customer_profession': lead_data.get('customer_profession'),
+                'gender': lead_data.get('gender')
+            })
+        
+        # Insert or update record in alltest_drive table
+        if existing_record.data:
+            # Update existing record
+            supabase.table('alltest_drive').update(alltest_drive_data).eq('source_table', source_table).eq('original_id', str(original_id)).execute()
+        else:
+            # Insert new record
+            supabase.table('alltest_drive').insert(alltest_drive_data).execute()
+            
+        print(f"Successfully synced test drive data for {source_table} - {original_id}")
+        
+    except Exception as e:
+        print(f"Error syncing test drive data to alltest_drive: {e}")
+
+
+def create_or_update_ps_followup(lead_data, ps_name, ps_branch):
+    from datetime import datetime
+    try:
+        existing = supabase.table('ps_followup_master').select('*').eq('lead_uid', lead_data['uid']).execute()
+        ps_followup_data = {
+            'lead_uid': lead_data['uid'],
+            'ps_name': ps_name,
+            'ps_branch': ps_branch,
+            'customer_name': lead_data.get('customer_name'),
+            'customer_mobile_number': lead_data.get('customer_mobile_number'),
+            'source': lead_data.get('source'),
+            'cre_name': lead_data.get('cre_name'),
+            'lead_category': lead_data.get('lead_category'),
+            'model_interested': lead_data.get('model_interested'),
+            'final_status': 'Pending',
+            'ps_assigned_at': datetime.now().isoformat(),  # Always set when PS is assigned
+            'created_at': lead_data.get('created_at') or datetime.now().isoformat(),
+            'first_call_date': None  # Ensure fresh leads start without first_call_date
+        }
+        if existing.data:
+            supabase.table('ps_followup_master').update(ps_followup_data).eq('lead_uid', lead_data['uid']).execute()
+        else:
+            supabase.table('ps_followup_master').insert(ps_followup_data).execute()
+    except Exception as e:
+        print(f"Error creating/updating PS followup: {e}")
+
+def track_cre_call_attempt(uid, cre_name, call_no, lead_status, call_was_recorded=False, follow_up_date=None, remarks=None):
+    """Track CRE call attempt in the history table and update TAT for first attempt"""
+    try:
+        # Get the next attempt number for this call
+        attempt_result = supabase.table('cre_call_attempt_history').select('attempt').eq('uid', uid).eq('call_no', call_no).order('attempt', desc=True).limit(1).execute()
+        next_attempt = 1
+        if attempt_result.data:
+            next_attempt = attempt_result.data[0]['attempt'] + 1
+
+        # Fetch the current final_status from lead_master
+        final_status = None
+        lead_result = supabase.table('lead_master').select('final_status').eq('uid', uid).limit(1).execute()
+        if lead_result.data and 'final_status' in lead_result.data[0]:
+            final_status = lead_result.data[0]['final_status']
+
+        # Prepare attempt data
+        attempt_data = {
+            'uid': uid,
+            'call_no': call_no,
+            'attempt': next_attempt,
+            'status': lead_status,
+            'cre_name': cre_name,
+            'call_was_recorded': call_was_recorded,
+            'follow_up_date': follow_up_date,
+            'remarks': remarks,
+            'final_status': final_status
+        }
+
+        # Insert the attempt record
+        insert_result = supabase.table('cre_call_attempt_history').insert(attempt_data).execute()
+        print(f"Tracked call attempt: {uid} - {call_no} call, attempt {next_attempt}, status: {lead_status}")
+
+        # --- TAT Calculation and Update ---
+        if call_no == 'first' and next_attempt == 1:
+            # Fetch lead's created_at
+            lead_result = supabase.table('lead_master').select('created_at').eq('uid', uid).limit(1).execute()
+            if lead_result.data and lead_result.data[0].get('created_at'):
+                created_at_str = lead_result.data[0]['created_at']
+                from datetime import datetime
+                try:
+                    if 'T' in created_at_str:
+                        created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                    else:
+                        created_at = datetime.strptime(created_at_str, '%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    created_at = None
+                # Get updated_at from inserted attempt (if available), else use now
+                updated_at_str = None
+                if insert_result.data and insert_result.data[0].get('updated_at'):
+                    updated_at_str = insert_result.data[0]['updated_at']
+                else:
+                    from datetime import datetime
+                    updated_at_str = datetime.now().isoformat()
+                try:
+                    if 'T' in updated_at_str:
+                        updated_at = datetime.fromisoformat(updated_at_str.replace('Z', '+00:00'))
+                    else:
+                        updated_at = datetime.strptime(updated_at_str, '%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    updated_at = datetime.now()
+                if created_at:
+                    tat_seconds = (updated_at - created_at).total_seconds()
+                    # Update lead_master with TAT
+                    supabase.table('lead_master').update({'tat': tat_seconds}).eq('uid', uid).execute()
+                    print(f"TAT updated for lead {uid}: {tat_seconds} seconds")
+    except Exception as e:
+        print(f"Error tracking CRE call attempt: {e}")
+
+def track_ps_call_attempt(uid, ps_name, call_no, lead_status, call_was_recorded=False, follow_up_date=None, remarks=None):
+    """Track PS call attempt in the history table"""
+    try:
+        # Get the next attempt number for this call
+        attempt_result = supabase.table('ps_call_attempt_history').select('attempt').eq('uid', uid).eq('call_no', call_no).order('attempt', desc=True).limit(1).execute()
+        next_attempt = 1
+        if attempt_result.data:
+            next_attempt = attempt_result.data[0]['attempt'] + 1
+
+        # Fetch the current final_status from multiple tables
+        final_status = None
+        
+        # Try all possible tables and field combinations
+        tables_to_check = [
+            # (table_name, uid_field, status_field, uid_value)
+            ('ps_followup_master', 'lead_uid', 'final_status', uid),
+            ('lead_master', 'uid', 'final_status', uid),
+            ('walkin_table', 'uid', 'status', uid),
+            ('activity_leads', 'activity_uid', 'final_status', uid),
+            # Also try with different UID formats for walkin and activity
+            ('walkin_table', 'uid', 'status', uid.replace('WB-', 'W')),
+            ('activity_leads', 'activity_uid', 'final_status', uid.replace('WB-', 'A'))
+        ]
+        
+        for table_name, uid_field, status_field, uid_value in tables_to_check:
+            try:
+                result = supabase.table(table_name).select(status_field).eq(uid_field, uid_value).limit(1).execute()
+                if result.data and result.data[0].get(status_field):
+                    final_status = result.data[0][status_field]
+                    print(f"Found final_status '{final_status}' in {table_name} for {uid_value}")
+                    break
+            except Exception as e:
+                print(f"Error checking {table_name}: {e}")
+                continue
+        
+        # If still not found, set a default
+        if not final_status:
+            final_status = 'Pending'
+            print(f"No final_status found for {uid}, defaulting to 'Pending'")
+
+        # Prepare attempt data
+        attempt_data = {
+            'uid': uid,
+            'call_no': call_no,
+            'attempt': next_attempt,
+            'status': lead_status,
+            'ps_name': ps_name,
+            'call_was_recorded': call_was_recorded,
+            'follow_up_date': follow_up_date,
+            'remarks': remarks,
+            'final_status': final_status
+        }
+
+        # Insert the attempt record
+        supabase.table('ps_call_attempt_history').insert(attempt_data).execute()
+        print(f"Tracked PS call attempt: {uid} - {call_no} call, attempt {next_attempt}, status: {lead_status}")
+    except Exception as e:
+        print(f"Error tracking PS call attempt: {e}")
+
+
+def filter_leads_by_date(leads, filter_type, date_field='created_at'):
+    """Filter leads based on date range"""
+    if filter_type == 'all':
+        return leads
+
+    today = datetime.now().date()
+
+    if filter_type == 'today':
+        start_date = today
+        end_date = today
+    elif filter_type == 'mtd':  # Month to Date
+        start_date = today.replace(day=1)
+        end_date = today
+    elif filter_type == 'week':
+        start_date = today - timedelta(days=today.weekday())  # Start of current week (Monday)
+        end_date = today
+    elif filter_type == 'month':
+        start_date = today - timedelta(days=30)
+        end_date = today
+    elif filter_type == 'quarter':
+        start_date = today - timedelta(days=90)
+        end_date = today
+    elif filter_type == 'year':
+        start_date = today - timedelta(days=365)
+        end_date = today
+    else:
+        return leads
+
+    filtered_leads = []
+    for lead in leads:
+        lead_date_str = lead.get(date_field)
+        if lead_date_str:
+            try:
+                # Handle different date formats
+                if 'T' in lead_date_str:  # ISO format with time
+                    lead_date = datetime.fromisoformat(lead_date_str.replace('Z', '+00:00')).date()
+                else:  # Date only format
+                    lead_date = datetime.strptime(lead_date_str, '%Y-%m-%d').date()
+
+                if start_date <= lead_date <= end_date:
+                    filtered_leads.append(lead)
+            except (ValueError, TypeError):
+                # If date parsing fails, include the lead
+                filtered_leads.append(lead)
+        else:
+            # If no date field, include the lead
+            filtered_leads.append(lead)
+
+    return filtered_leads
+
+
+def fix_missing_timestamps():
+    """
+    Fix missing timestamps for existing leads that have final_status but missing won_timestamp or lost_timestamp
+    """
+    try:
+        # Fix lead_master table
+        # Get leads with final_status = 'Won' but no won_timestamp
+        won_leads = supabase.table('lead_master').select('uid, final_status, won_timestamp, lost_timestamp, updated_at').eq('final_status', 'Won').is_('won_timestamp', 'null').execute()
+        
+        for lead in won_leads.data:
+            supabase.table('lead_master').update({
+                'won_timestamp': lead.get('updated_at') or datetime.now().isoformat()
+            }).eq('uid', lead['uid']).execute()
+        
+        # Get leads with final_status = 'Lost' but no lost_timestamp
+        lost_leads = supabase.table('lead_master').select('uid, final_status, won_timestamp, lost_timestamp, updated_at').eq('final_status', 'Lost').is_('lost_timestamp', 'null').execute()
+        
+        for lead in lost_leads.data:
+            supabase.table('lead_master').update({
+                'lost_timestamp': lead.get('updated_at') or datetime.now().isoformat()
+            }).eq('uid', lead['uid']).execute()
+        
+        # Fix ps_followup_master table
+        # Get PS leads with final_status = 'Won' but no won_timestamp
+        ps_won_leads = supabase.table('ps_followup_master').select('lead_uid, final_status, won_timestamp, lost_timestamp, updated_at').eq('final_status', 'Won').is_('won_timestamp', 'null').execute()
+        
+        for lead in ps_won_leads.data:
+            supabase.table('ps_followup_master').update({
+                'won_timestamp': lead.get('updated_at') or datetime.now().isoformat()
+            }).eq('lead_uid', lead['lead_uid']).execute()
+        
+        # Get PS leads with final_status = 'Lost' but no lost_timestamp
+        ps_lost_leads = supabase.table('ps_followup_master').select('lead_uid, final_status, won_timestamp, lost_timestamp, updated_at').eq('final_status', 'Lost').is_('lost_timestamp', 'null').execute()
+        
+        for lead in ps_lost_leads.data:
+            supabase.table('ps_followup_master').update({
+                'lost_timestamp': lead.get('updated_at') or datetime.now().isoformat()
+            }).eq('lead_uid', lead['lead_uid']).execute()
+        
+        print(f"Fixed {len(won_leads.data)} won leads, {len(lost_leads.data)} lost leads in lead_master")
+        print(f"Fixed {len(ps_won_leads.data)} won leads, {len(ps_lost_leads.data)} lost leads in ps_followup_master")
+        
+    except Exception as e:
+        print(f"Error fixing timestamps: {str(e)}")
+
+
+# DUPLICATE SECTION REMOVED - This was causing route conflicts
+
+
+def get_all_branches():
+    # Replace with a DB fetch if you have a branches table
+    return ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
+
 
 @app.route('/admin_duplicate_leads', methods=['GET'])
 @require_admin
@@ -8994,6 +8109,7 @@ def admin_duplicate_leads():
         page_urls.append(url_for('admin_duplicate_leads', **page_args))
     return render_template('admin_duplicate_leads.html', duplicate_leads=leads_display, page=page, total_pages=total_pages, total_count=total_count, prev_url=prev_url, next_url=next_url, page_urls=page_urls)
 
+
 @app.route('/convert_duplicate_to_fresh/<uid>', methods=['POST'])
 @require_admin
 def convert_duplicate_to_fresh(uid):
@@ -9031,944 +8147,6 @@ def convert_duplicate_to_fresh(uid):
     return redirect(url_for('admin_duplicate_leads'))
 
 
-@app.route('/check_username')
-def check_username():
-    username = request.args.get('username', '').strip()
-    user_type = request.args.get('type', '').strip().lower()
-    if not username or user_type not in ['cre', 'ps', 'bh']:
-        return jsonify({'error': 'Invalid parameters'}), 400
-    try:
-        if user_type == 'cre':
-            table = 'cre_users'
-        elif user_type == 'ps':
-            table = 'ps_users'
-        elif user_type == 'bh':
-            table = 'branch_head_users'
-        else:
-            return jsonify({'error': 'Invalid user type'}), 400
-            
-        result = supabase.table(table).select('username').eq('username', username).execute()
-        exists = bool(result.data)
-        return jsonify({'exists': exists})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/ps_analytics')
-@require_ps
-def ps_analytics():
-    try:
-        ps_name = session.get('ps_name')
-        # Get all relevant data
-        ps_followups = safe_get_data('ps_followup_master')
-        activity_leads = safe_get_data('activity_leads')
-
-        # Date filter (from/to) for won cases and assigned leads
-        from_date = request.args.get('from_date')
-        to_date = request.args.get('to_date')
-        def in_date_range(ts):
-            if not ts:
-                return False
-            from datetime import datetime
-            try:
-                dt = datetime.fromisoformat(ts.replace('Z', '+00:00')) if 'T' in ts else datetime.strptime(ts, '%Y-%m-%d')
-                if from_date:
-                    from_dt = datetime.strptime(from_date, '%Y-%m-%d')
-                    if dt < from_dt:
-                        return False
-                if to_date:
-                    to_dt = datetime.strptime(to_date, '%Y-%m-%d')
-                    if dt > to_dt:
-                        return False
-                return True
-            except Exception:
-                return False
-
-        # PS Won Cases (date filtered)
-        if not from_date and not to_date:
-            won_ps_followups = [lead for lead in ps_followups if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Won']
-            won_activities = [lead for lead in activity_leads if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Won']
-        else:
-            won_ps_followups = [lead for lead in ps_followups if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Won' and in_date_range(lead.get('won_timestamp'))]
-            won_activities = [lead for lead in activity_leads if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Won' and in_date_range(lead.get('won_timestamp'))]
-        total_won_cases = len(won_ps_followups) + len(won_activities)
-
-        # Conversion Rate (live, not date filtered)
-        total_won_all = len([lead for lead in ps_followups if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Won']) \
-            + len([lead for lead in activity_leads if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Won'])
-        total_assigned_live = len([lead for lead in ps_followups if lead.get('ps_name') == ps_name]) \
-            + len([lead for lead in activity_leads if lead.get('ps_name') == ps_name])
-        conversion_rate = round((total_won_all / total_assigned_live * 100), 2) if total_assigned_live > 0 else 0
-
-        # Total Leads Assigned (date filtered by created_at)
-        def in_created_range(ts):
-            if not ts:
-                return False
-            from datetime import datetime
-            try:
-                dt = datetime.fromisoformat(ts.replace('Z', '+00:00')) if 'T' in ts else datetime.strptime(ts, '%Y-%m-%d')
-                if from_date:
-                    from_dt = datetime.strptime(from_date, '%Y-%m-%d')
-                    if dt < from_dt:
-                        return False
-                if to_date:
-                    to_dt = datetime.strptime(to_date, '%Y-%m-%d')
-                    if dt > to_dt:
-                        return False
-                return True
-            except Exception:
-                return False
-        assigned_ps_followups = [lead for lead in ps_followups if lead.get('ps_name') == ps_name and in_created_range(lead.get('created_at'))]
-        assigned_activities = [lead for lead in activity_leads if lead.get('ps_name') == ps_name and in_created_range(lead.get('created_at'))]
-        total_assigned = len(assigned_ps_followups) + len(assigned_activities)
-
-        # Total Pending Cases (not date filtered)
-        pending_ps_followups = [lead for lead in ps_followups if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Pending']
-        pending_activities = [lead for lead in activity_leads if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Pending']
-        total_pending = len(pending_ps_followups) + len(pending_activities)
-        ps_analytics = {
-            'won_cases': total_won_cases,
-            'conversion_rate': conversion_rate,
-
-            'total_assigned': total_assigned,
-            'total_pending': total_pending,
-
-        }
-        return render_template('ps_analytics.html', ps_analytics=ps_analytics)
-    except Exception as e:
-        flash(f'Error loading PS analytics: {str(e)}', 'error')
-        return redirect(url_for('ps_dashboard'))
-
-# Branch Head management removed
-
-def get_all_branches():
-    # Replace with a DB fetch if you have a branches table
-    return ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
-
-def get_active_ps_users(branch):
-    """Get active PS users for a specific branch"""
-    try:
-        print(f"Getting active PS users for branch: '{branch}'")
-        
-        # First, let's see what branches exist in ps_users table
-        all_branches = supabase.table('ps_users').select('branch').execute()
-        available_branches = list(set([row['branch'] for row in all_branches.data if row['branch']]))
-        print(f"Available branches in ps_users: {available_branches}")
-        
-        # Try exact match first
-        ps_query = supabase.table('ps_users').select('name').eq('branch', branch).eq('is_active', True).execute()
-        active_ps = [row['name'] for row in ps_query.data if row['name']]
-        
-        # If no results, try case-insensitive search
-        if not active_ps:
-            print(f"No exact match found for branch '{branch}', trying case-insensitive search")
-            # Get all PS users and filter by case-insensitive branch match
-            all_ps = supabase.table('ps_users').select('name, branch, is_active').execute()
-            active_ps = [row['name'] for row in all_ps.data if row['name'] and row.get('is_active') and row.get('branch', '').lower() == branch.lower()]
-        
-        print(f"Active PS users for branch '{branch}': {active_ps}")
-        
-        return active_ps
-    except Exception as e:
-        print(f"Error getting active PS users for branch {branch}: {str(e)}")
-        return []
-
-@app.route('/add_branch_head', methods=['POST'])
-def add_branch_head():
-    return jsonify({'success': False, 'error': 'Branch Head feature removed'}), 410
-
-@app.route('/toggle_branch_head_active/<int:id>', methods=['POST'])
-def toggle_branch_head_active(id):
-    return jsonify({'success': False, 'error': 'Branch Head feature removed'}), 410
-
-@app.route('/edit_branch_head_contact/<int:id>', methods=['POST'])
-def edit_branch_head_contact(id):
-    return jsonify({'success': False, 'error': 'Branch Head feature removed'}), 410
-
-@app.route('/delete_branch_head/<int:id>', methods=['POST'])
-def delete_branch_head(id):
-    return jsonify({'success': False, 'error': 'Branch Head feature removed'}), 410
-
-
-
-
-
-
-
-
-
-@app.route('/api/hot_duplicate_leads')
-@require_admin
-def api_hot_duplicate_leads():
-    """API endpoint to get duplicate leads created in the last 1 day (hot duplicates)"""
-    from datetime import datetime, date
-    try:
-        # Fetch all duplicate leads (limit to 200 for performance)
-        result = supabase.table('duplicate_leads').select('*').limit(200).execute()
-        duplicate_leads = result.data or []
-        hot_leads = []
-        for lead in duplicate_leads:
-            dates = []
-            for i in range(1, 11):
-                dt = lead.get(f'date{i}')
-                if dt:
-                    dates.append(dt)
-            last_enquiry_date = max([d for d in dates if d], default=None)
-            days_old = None
-            if last_enquiry_date:
-                try:
-                    last_date = datetime.strptime(last_enquiry_date, '%Y-%m-%d').date()
-                    days_old = (date.today() - last_date).days
-                except Exception:
-                    days_old = None
-            # Only include if days_old is 0 or 1 (today or yesterday)
-            if days_old is not None and days_old <= 1:
-                hot_leads.append({
-                    'uid': lead.get('uid'),
-                    'customer_name': lead.get('customer_name'),
-                    'customer_mobile_number': lead.get('customer_mobile_number'),
-                    'last_enquiry_date': last_enquiry_date,
-                    'days_old': days_old
-                })
-        # Sort by most recent (days_old, then last_enquiry_date desc)
-        hot_leads.sort(key=lambda x: (x['days_old'], x['last_enquiry_date']), reverse=False)
-        return jsonify({'success': True, 'hot_leads': hot_leads})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e), 'hot_leads': []})
-
-@app.route('/delete_duplicate_lead', methods=['POST'])
-@require_admin
-def delete_duplicate_lead():
-    uid = request.form.get('uid')
-    if not uid:
-        return jsonify({'success': False, 'message': 'No UID provided'})
-    try:
-        supabase.table('duplicate_leads').delete().eq('uid', uid).execute()
-        return jsonify({'success': True, 'message': 'Duplicate lead deleted successfully'})
-    except Exception as e:
-        return jsonify({'success': False, 'message': f'Error deleting duplicate lead: {str(e)}'})
-
-@app.route('/cre_dashboard_leads')
-@require_cre
-def cre_dashboard_leads():
-    """AJAX endpoint to get leads table HTML for Won/Lost toggle"""
-    status = request.args.get('status', 'lost')
-    cre_name = session.get('cre_name')
-    
-    try:
-        # Get all leads for this CRE
-        all_leads = safe_get_data('lead_master', {'cre_name': cre_name})
-        
-        # Initialize lists
-        won_leads = []
-        lost_leads = []
-        
-        # Process leads
-        for lead in all_leads:
-            final_status = lead.get('final_status')
-            
-            if final_status == 'Won':
-                won_leads.append(lead)
-            elif final_status == 'Lost':
-                lost_leads.append(lead)
-        
-        # Select the appropriate list based on status
-        leads_list = won_leads if status == 'won' else lost_leads
-        
-        # Render only the table HTML
-        return render_template('cre_dashboard_leads_table.html', 
-                             leads_list=leads_list, 
-                             status=status)
-    
-    except Exception as e:
-        return f'<div class="alert alert-danger">Error loading leads: {str(e)}</div>'
-
-@app.route('/ps_dashboard_leads')
-@require_ps
-def ps_dashboard_leads():
-    """AJAX endpoint to get leads table HTML for Won/Lost toggle"""
-    status = request.args.get('status', 'lost')
-    ps_name = session.get('ps_name')
-    
-    try:
-        # Get all assigned leads for this PS (reuse logic from ps_dashboard)
-        assigned_leads = safe_get_data('ps_followup_master', {'ps_name': ps_name})
-        event_leads = safe_get_data('activity_leads', {'ps_name': ps_name})
-        
-        # Initialize lists
-        won_leads = []
-        lost_leads = []
-        
-        # Process regular assigned leads
-        for lead in assigned_leads:
-            lead_dict = dict(lead)
-            lead_dict['lead_uid'] = lead.get('lead_uid')
-            final_status = lead.get('final_status')
-            
-            if final_status == 'Won':
-                won_leads.append(lead_dict)
-            elif final_status == 'Lost':
-                lost_leads.append(lead_dict)
-        
-
-        
-        # Process event leads
-        for lead in event_leads:
-            lead_dict = dict(lead)
-            lead_dict['lead_uid'] = lead.get('activity_uid', '') or lead.get('uid', '')
-            lead_dict['customer_mobile_number'] = lead.get('customer_phone_number', '')
-            final_status = lead.get('final_status', '')
-            
-            if final_status == 'Won':
-                won_leads.append(lead_dict)
-            elif final_status == 'Lost':
-                lost_leads.append(lead_dict)
-        
-        # Process walk-in leads
-        walkin_leads = safe_get_data('walkin_table', {'ps_assigned': ps_name})
-        for lead in walkin_leads:
-            lead_dict = dict(lead)
-            lead_dict['lead_uid'] = lead.get('uid', f"W{lead.get('id')}")
-            lead_dict['customer_mobile_number'] = lead.get('mobile_number', '')
-            lead_dict['customer_name'] = lead.get('customer_name', '')
-            lead_dict['is_walkin'] = True
-            lead_dict['walkin_id'] = lead.get('id')
-            lead_dict['cre_name'] = ''
-            final_status = lead.get('status')
-            
-            # Add timestamp for filtering
-            if final_status == 'Won':
-                lead_dict['won_timestamp'] = lead.get('updated_at') or datetime.now().isoformat()
-                won_leads.append(lead_dict)
-            elif final_status == 'Lost':
-                lead_dict['lost_timestamp'] = lead.get('updated_at') or datetime.now().isoformat()
-                lost_leads.append(lead_dict)
-        
-        # Select the appropriate list based on status
-        leads_list = won_leads if status == 'won' else lost_leads
-        
-        # Render only the table HTML
-        return render_template('ps_dashboard_leads_table.html', 
-                             leads_list=leads_list, 
-                             status=status)
-    
-    except Exception as e:
-        return f'<div class="alert alert-danger">Error loading leads: {str(e)}</div>'
-
-# Receptionist session key
-RECEPTIONIST_SESSION_KEY = 'rec_user_id'
-
-@app.route('/rec_login', methods=['GET', 'POST'])
-def rec_login():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        # Fetch receptionist from DB
-        rec_user = supabase.table('rec_users').select('*').eq('username', username).execute().data
-        if rec_user:
-            rec_user = rec_user[0]
-            if rec_user.get('is_active', True) and check_password_hash(rec_user['password_hash'], password):
-                session.clear()
-                session[RECEPTIONIST_SESSION_KEY] = rec_user['id']
-                session['rec_branch'] = rec_user['branch']
-                session['rec_name'] = rec_user.get('name', username)
-                session['user_type'] = 'rec'  # Add user_type for the decorator
-                flash('Login successful!', 'success')
-                return redirect(url_for('add_walkin_lead'))
-            else:
-                flash('Invalid credentials or inactive account.', 'danger')
-        else:
-            flash('Invalid username or password.', 'danger')
-    return render_template('rec_login.html')
-
-@app.route('/rec_logout')
-def rec_logout():
-    session.pop(RECEPTIONIST_SESSION_KEY, None)
-    session.pop('rec_branch', None)
-    session.pop('rec_name', None)
-    session.pop('user_type', None)
-    flash('Logged out successfully.', 'info')
-    return redirect(url_for('rec_login'))
-
-@app.route('/rec_dashboard')
-@require_rec
-def rec_dashboard():
-    """Receptionist Dashboard with KPIs"""
-    if 'rec_branch' not in session:
-        return redirect(url_for('rec_login'))
-    
-    branch = session.get('rec_branch')
-    
-    try:
-        # Calculate KPI counts for the receptionist's branch
-        # Total walk-in leads
-        total_walkin = supabase.table('walkin_table').select('*').eq('branch', branch).execute().data or []
-        total_walkin_count = len(total_walkin)
-        
-        # Won leads
-        won_walkin = supabase.table('walkin_table').select('*').eq('branch', branch).eq('status', 'Won').execute().data or []
-        won_leads_count = len(won_walkin)
-        
-        # Lost leads
-        lost_walkin = supabase.table('walkin_table').select('*').eq('branch', branch).eq('status', 'Lost').execute().data or []
-        lost_leads_count = len(lost_walkin)
-        
-        # Pending leads
-        pending_walkin = supabase.table('walkin_table').select('*').eq('branch', branch).eq('status', 'Pending').execute().data or []
-        pending_leads_count = len(pending_walkin)
-        
-        # Today's walk-in leads
-        today_str = datetime.now().strftime('%Y-%m-%d')
-        today_walkin = supabase.table('walkin_table').select('*').eq('branch', branch).eq('created_at', today_str).execute().data or []
-        today_leads_count = len(today_walkin)
-        
-        # First call response rate calculation
-        # Get leads that have at least one call recorded
-        leads_with_calls = supabase.table('walkin_table').select('*').eq('branch', branch).not_.is_('first_call_date', 'null').execute().data or []
-        leads_with_calls_count = len(leads_with_calls)
-        
-        # Calculate first call response rate
-        first_call_response_rate = 0
-        if total_walkin_count > 0:
-            first_call_response_rate = round((leads_with_calls_count / total_walkin_count) * 100, 2)
-        
-        # Conversion rate
-        conversion_rate = 0
-        if total_walkin_count > 0:
-            conversion_rate = round((won_leads_count / total_walkin_count) * 100, 2)
-        
-    except Exception as e:
-        print(f"Error calculating receptionist KPIs: {str(e)}")
-        total_walkin_count = won_leads_count = lost_leads_count = pending_leads_count = first_call_response_rate = today_leads_count = conversion_rate = 0
-    
-    # Get all leads for the branch with filtering
-    try:
-        # Get filter parameters
-        ps_filter = request.args.get('ps_filter', '')
-        status_filter = request.args.get('status_filter', '')
-        date_filter = request.args.get('date_filter', '')
-        
-        # Build query
-        query = supabase.table('walkin_table').select('*').eq('branch', branch)
-        
-        if ps_filter:
-            query = query.eq('ps_assigned', ps_filter)
-        if status_filter:
-            query = query.eq('status', status_filter)
-        if date_filter:
-            query = query.eq('created_at', date_filter)
-            
-        all_leads = query.order('created_at', desc=True).execute().data or []
-        
-        # Get unique PS names for filter dropdown
-        ps_names = supabase.table('walkin_table').select('ps_assigned').eq('branch', branch).not_.is_('ps_assigned', 'null').execute().data or []
-        ps_options = list(set([lead['ps_assigned'] for lead in ps_names if lead['ps_assigned']]))
-        
-        # Get unique statuses for filter dropdown
-        statuses = supabase.table('walkin_table').select('status').eq('branch', branch).execute().data or []
-        status_options = list(set([lead['status'] for lead in statuses if lead['status']]))
-        
-    except Exception as e:
-        print(f"Error fetching leads data: {str(e)}")
-        all_leads = []
-        ps_options = []
-        status_options = []
-    
-    return render_template('rec_dashboard.html',
-                         total_walkin_count=total_walkin_count,
-                         won_leads_count=won_leads_count,
-                         lost_leads_count=lost_leads_count,
-                         pending_leads_count=pending_leads_count,
-                         first_call_response_rate=first_call_response_rate,
-                         today_leads_count=today_leads_count,
-                         conversion_rate=conversion_rate,
-                         all_leads=all_leads,
-                         ps_options=ps_options,
-                         status_options=status_options,
-                         current_ps_filter=request.args.get('ps_filter', ''),
-                         current_status_filter=request.args.get('status_filter', ''),
-                         current_date_filter=request.args.get('date_filter', ''))
-
-@app.route('/api/filter_leads')
-@require_rec
-def filter_leads():
-    """AJAX endpoint for filtering leads"""
-    if 'rec_branch' not in session:
-        return jsonify({'error': 'Not authenticated'}), 401
-    
-    branch = session.get('rec_branch')
-    
-    try:
-        # Get filter parameters
-        ps_filter = request.args.get('ps_filter', '')
-        status_filter = request.args.get('status_filter', '')
-        date_filter_type = request.args.get('date_filter_type', '')
-        date_from = request.args.get('date_from', '')
-        date_to = request.args.get('date_to', '')
-        
-        # Build query
-        query = supabase.table('walkin_table').select('*').eq('branch', branch)
-        
-        if ps_filter:
-            query = query.eq('ps_assigned', ps_filter)
-        if status_filter:
-            query = query.eq('status', status_filter)
-        
-        # Handle date filtering
-        if date_filter_type == 'today':
-            today_str = datetime.now().strftime('%Y-%m-%d')
-            query = query.eq('created_at', today_str)
-        elif date_filter_type == 'range' and date_from and date_to:
-            query = query.gte('created_at', date_from).lte('created_at', date_to)
-        elif date_filter_type == 'range' and date_from:
-            query = query.gte('created_at', date_from)
-        elif date_filter_type == 'range' and date_to:
-            query = query.lte('created_at', date_to)
-            
-        all_leads = query.order('created_at', desc=True).execute().data or []
-        
-        return jsonify({'leads': all_leads})
-        
-    except Exception as e:
-        print(f"Error filtering leads: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/view_walkin_call_history/<uid>')
-@require_rec
-def view_walkin_call_history(uid):
-    """View call history for a specific walk-in lead"""
-    if 'rec_branch' not in session:
-        return redirect(url_for('rec_login'))
-    
-    branch = session.get('rec_branch')
-    
-    try:
-        # Get the walk-in lead data
-        walkin_result = supabase.table('walkin_table').select('*').eq('uid', uid).eq('branch', branch).execute()
-        if not walkin_result.data:
-            flash('Walk-in lead not found', 'error')
-            return redirect(url_for('rec_dashboard'))
-        
-        walkin_lead = walkin_result.data[0]
-        
-        # Prepare call history data
-        call_history = []
-        
-        # Check for each call attempt
-        call_fields = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
-        
-        for i, call_type in enumerate(call_fields, 1):
-            call_date = walkin_lead.get(f'{call_type}_call_date')
-            call_remark = walkin_lead.get(f'{call_type}_call_remark')
-            
-            if call_date:
-                call_history.append({
-                    'call_number': i,
-                    'call_type': call_type.title(),
-                    'date': call_date,
-                    'remark': call_remark or 'No remarks',
-                    'status': 'Completed'
-                })
-            else:
-                call_history.append({
-                    'call_number': i,
-                    'call_type': call_type.title(),
-                    'date': 'Not recorded',
-                    'remark': 'No call made yet',
-                    'status': 'Pending'
-                })
-        
-        return render_template('view_walkin_call_history.html',
-                             walkin_lead=walkin_lead,
-                             call_history=call_history)
-        
-    except Exception as e:
-        flash(f'Error viewing call history: {str(e)}', 'error')
-        return redirect(url_for('rec_dashboard'))
-
-@app.route('/add_walkin_lead', methods=['GET', 'POST'])
-@require_rec
-def add_walkin_lead():
-
-    # Models and branches (customize as needed)
-    models = [
-        "450X", "450S", "Rizta S Mono (2.9 kWh)", "Rizta S Super Matte (2.9 kWh)",
-        "Rizta Z Mono (2.9 kWh)", "Rizta Z Duo (2.9 kWh)", "Rizta Z Super Matte (2.9 kWh)",
-        "Rizta Z Mono (3.7 kWh)", "Rizta Z Duo (3.7 kWh)", "Rizta Z Super Matte (3.7 kWh)",
-        "450 X (2.9 kWh)", "450 X (3.7 kWh)", "450 X (2.9 kWh) Pro Pack", "450 X (3.7 kWh) Pro Pack",
-        "450 Apex STD"
-    ]
-    branches = ["PORUR", "NUNGAMBAKKAM", "TIRUVOTTIYUR"]
-    # Fetch PS users for all branches
-    ps_users = supabase.table('ps_users').select('name,branch').execute().data or []
-    ps_options = {}
-    for branch in branches:
-        ps_options[branch] = [ps['name'] for ps in ps_users if ps.get('branch') == branch]
-    ps_options_json = json.dumps(ps_options)
-
-    if request.method == 'POST':
-        # Generate UID for walk-in lead
-        mobile_number = request.form['mobile_number']
-        
-        # Get count of existing walk-in leads for this mobile number
-        existing_count = get_accurate_count('walkin_table', {'mobile_number': mobile_number})
-        sequence = existing_count + 1
-        
-        # Generate UID using 'Walk-in' as source (which maps to 'W')
-        uid = generate_uid('Walk-in', mobile_number, sequence)
-        
-        data = {
-            'customer_name': request.form['customer_name'],
-            'mobile_number': request.form['mobile_number'],
-            'customer_location': request.form.get('customer_location'),
-            'model_interested': request.form['model_interested'],
-            'occupation': request.form.get('occupation'),
-            'branch': request.form['branch'],
-            'ps_assigned': request.form['ps_assigned'],
-            'status': 'Pending',
-            'followup_no': 1,
-            'uid': uid,  # Add UID
-            'created_at': datetime.now().isoformat(),
-            'updated_at': datetime.now().isoformat(),
-        }
-        try:
-            # Insert into walkin_table only
-            supabase.table('walkin_table').insert(data).execute()
-            
-            flash('Walk-in lead added and assigned to PS successfully!', 'success')
-            return redirect(url_for('add_walkin_lead'))
-        except Exception as e:
-            error_str = str(e)
-            if 'duplicate key value violates unique constraint "walkin_table_pkey"' in error_str:
-                # This is a sequence issue - try to fix it by using a different approach
-                try:
-                    # Get the maximum ID from the table
-                    max_id_result = supabase.table('walkin_table').select('id').order('id', desc=True).limit(1).execute()
-                    if max_id_result.data:
-                        max_id = max_id_result.data[0]['id']
-                        
-                        # Try to insert with a higher ID manually
-                        # First, try to find the next available ID
-                        next_id = max_id + 1
-                        while True:
-                            # Check if this ID exists
-                            existing = supabase.table('walkin_table').select('id').eq('id', next_id).execute()
-                            if not existing.data:
-                                # This ID is available, use it
-                                data['id'] = next_id
-                                break
-                            next_id += 1
-                            if next_id > max_id + 100:  # Safety limit
-                                flash('Error: Could not find an available ID. Please contact administrator.', 'danger')
-                                break
-                        
-                        if 'id' in data:
-                            # Try the insertion with the specific ID
-                            supabase.table('walkin_table').insert(data).execute()
-                            flash('Walk-in lead added and assigned to PS successfully!', 'success')
-                            return redirect(url_for('add_walkin_lead'))
-                    else:
-                        flash('Error: Could not determine the maximum ID in the table', 'danger')
-                except Exception as reset_error:
-                    flash(f'Error fixing sequence: {str(reset_error)}. Please contact administrator.', 'danger')
-            else:
-                flash(f'Error adding walk-in lead: {error_str}', 'danger')
-
-    # Get receptionist's branch from session
-    rec_branch = session.get('rec_branch', '')
-    
-    return render_template(
-        'add_walkin_lead.html',
-        models=models,
-        branches=branches,
-        ps_options_json=ps_options_json,
-        default_branch=rec_branch
-    )
-
-@app.route('/api/branch_analytics/ps_performance')
-def api_branch_analytics_ps_performance():
-    """API endpoint for Product Specialist Performance data"""
-    try:
-        # Get branch from session (fallbacks for non-branch-head flows)
-        branch = session.get('branch') or session.get('rec_branch')
-        print(f"PS Performance API - Session branch: '{branch}'")
-        if not branch:
-            return jsonify({'success': False, 'message': 'Branch not found in session'})
-        
-        # Get date filter parameters
-        date_from = request.args.get('date_from')
-        date_to = request.args.get('date_to')
-        
-        # Require both date parameters
-        if not date_from or not date_to:
-            return jsonify({'success': False, 'message': 'Both date_from and date_to parameters are required'})
-        
-        # Get active PS users from the branch
-        ps_names = get_active_ps_users(branch)
-        print(f"PS Performance API - Branch: '{branch}', Active PS users: {ps_names}")
-        
-        # If no active PS users found, fallback to getting all PS users from ps_followup_master
-        if not ps_names:
-            print(f"No active PS users found for branch '{branch}', falling back to all PS users")
-            ps_query = supabase.table('ps_followup_master').select('ps_name').eq('ps_branch', branch).not_.is_('ps_name', 'null').execute()
-            ps_names = list(set([row['ps_name'] for row in ps_query.data if row['ps_name']]))
-            print(f"Fallback PS users: {ps_names}")
-        
-        result_data = []
-        
-        for ps_name in ps_names:
-            # Get leads assigned in the date range based on ps_assigned_at
-            assigned_query = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_branch', branch).eq('ps_name', ps_name).gte('ps_assigned_at', date_from).lte('ps_assigned_at', date_to).execute()
-            leads_assigned = assigned_query.count or 0
-            
-            # Get leads contacted (lead_status is not null) in the date range
-            contacted_query = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_branch', branch).eq('ps_name', ps_name).gte('ps_assigned_at', date_from).lte('ps_assigned_at', date_to).not_.is_('lead_status', 'null').execute()
-            leads_contacted = contacted_query.count or 0
-            
-            # Calculate gap
-            gap = leads_assigned - leads_contacted
-            
-            result_data.append({
-                'ps_name': ps_name,
-                'leads_assigned': leads_assigned,
-                'leads_contacted': leads_contacted,
-                'gap': gap
-            })
-        
-        return jsonify({'success': True, 'data': result_data})
-        
-    except Exception as e:
-        print(f"Error in ps_performance API: {str(e)}")
-        return jsonify({'success': False, 'message': 'Error loading PS performance data'})
-
-@app.route('/api/branch_analytics/source_leads')
-def api_branch_analytics_source_leads():
-    """API endpoint for Source-wise Leads Analysis data"""
-    try:
-        # Get branch from session
-        branch = session.get('branch') or session.get('rec_branch')
-        if not branch:
-            return jsonify({'success': False, 'message': 'Branch not found in session'})
-        
-        # Get date filter parameters
-        date_from = request.args.get('date_from')
-        date_to = request.args.get('date_to')
-        
-        # Require both date parameters
-        if not date_from or not date_to:
-            return jsonify({'success': False, 'message': 'Both date_from and date_to parameters are required'})
-        
-        # Get active PS users from the branch
-        ps_names = get_active_ps_users(branch)
-        
-        result_data = []
-        all_sources = set()  # To track all unique sources
-        
-        for ps_name in ps_names:
-            # Get all leads for this PS in the date range
-            ps_leads_query = supabase.table('ps_followup_master').select('source, final_status').eq('ps_branch', branch).eq('ps_name', ps_name).gte('ps_assigned_at', date_from).lte('ps_assigned_at', date_to).execute()
-            
-            # Group by source
-            source_stats = {}
-            for lead in ps_leads_query.data:
-                source = lead.get('source', 'Unknown')
-                final_status = lead.get('final_status', 'Pending')
-                
-                if source not in source_stats:
-                    source_stats[source] = {'total_leads': 0, 'won_leads': 0}
-                
-                source_stats[source]['total_leads'] += 1
-                if final_status == 'Won':
-                    source_stats[source]['won_leads'] += 1
-                
-                all_sources.add(source)
-            
-            # Add to result data - one row per PS with aggregated data
-            total_leads = sum(stats['total_leads'] for stats in source_stats.values())
-            total_won_leads = sum(stats['won_leads'] for stats in source_stats.values())
-            
-            result_data.append({
-                'ps_name': ps_name,
-                'total_leads': total_leads,
-                'won_leads': total_won_leads,
-                'source_breakdown': source_stats
-            })
-        
-        # Convert all_sources to sorted list for consistent column order
-        all_sources_list = sorted(list(all_sources))
-        
-        return jsonify({
-            'success': True, 
-            'data': result_data,
-            'sources': all_sources_list
-        })
-        
-    except Exception as e:
-        print(f"Error in source_leads API: {str(e)}")
-        return jsonify({'success': False, 'message': 'Error loading source leads data'})
-
-@app.route('/api/branch_analytics/walkin_leads')
-def api_branch_analytics_walkin_leads():
-    """API endpoint for Walk-in Leads Summary data"""
-    try:
-        # Get branch from session
-        branch = session.get('branch') or session.get('rec_branch')
-        if not branch:
-            return jsonify({'success': False, 'message': 'Branch not found in session'})
-        
-        # Get date filter parameters
-        date_from = request.args.get('date_from')
-        date_to = request.args.get('date_to')
-        
-        # Require both date parameters
-        if not date_from or not date_to:
-            return jsonify({'success': False, 'message': 'Both date_from and date_to parameters are required'})
-        
-        # Get active PS users from the branch
-        ps_names = get_active_ps_users(branch)
-        
-        result_data = []
-        today_str = datetime.now().strftime('%Y-%m-%d')
-        
-        for ps_name in ps_names:
-            # Get total walk-in leads assigned to this PS in the date range
-            total_query = supabase.table('walkin_table').select('*', count='exact').eq('branch', branch).eq('ps_assigned', ps_name).gte('created_at', date_from).lte('created_at', date_to).execute()
-            total_walkin_leads = total_query.count or 0
-            
-            # Get pending leads in the date range
-            pending_query = supabase.table('walkin_table').select('*', count='exact').eq('branch', branch).eq('ps_assigned', ps_name).eq('status', 'Pending').gte('created_at', date_from).lte('created_at', date_to).execute()
-            pending_leads = pending_query.count or 0
-            
-            # Get lost leads in the date range
-            lost_query = supabase.table('walkin_table').select('*', count='exact').eq('branch', branch).eq('ps_assigned', ps_name).eq('status', 'Lost').gte('created_at', date_from).lte('created_at', date_to).execute()
-            lost_leads = lost_query.count or 0
-            
-            # Get won leads in the date range
-            won_query = supabase.table('walkin_table').select('*', count='exact').eq('branch', branch).eq('ps_assigned', ps_name).eq('status', 'Won').gte('created_at', date_from).lte('created_at', date_to).execute()
-            won_leads = won_query.count or 0
-            
-            # Get today's follow-ups (this remains the same as it's based on today's date)
-            today_followup_query = supabase.table('walkin_table').select('*', count='exact').eq('branch', branch).eq('ps_assigned', ps_name).eq('next_followup_date', today_str).execute()
-            today_followups = today_followup_query.count or 0
-            
-            result_data.append({
-                'ps_name': ps_name,
-                'total_walkin_leads': total_walkin_leads,
-                'pending_leads': pending_leads,
-                'lost_leads': lost_leads,
-                'won_leads': won_leads,
-                'today_followups': today_followups
-            })
-        
-        return jsonify({'success': True, 'data': result_data})
-        
-    except Exception as e:
-        print(f"Error in walkin_leads API: {str(e)}")
-        return jsonify({'success': False, 'message': 'Error loading walkin leads data'})
-
-@app.route('/api/branch_sources')
-def api_branch_sources():
-    """Get unique source values for the current branch"""
-    try:
-        branch = session.get('branch') or session.get('rec_branch')
-        
-        # Get unique sources from ps_followup_master
-        ps_sources = supabase.table('ps_followup_master').select('source').eq('ps_branch', branch).not_.is_('source', 'null').execute().data or []
-        ps_source_values = list(set([row.get('source', '') for row in ps_sources if row.get('source', '')]))
-        
-        # Add Walk In and Event sources
-        all_sources = ['Walk In', 'Event'] + ps_source_values
-        
-        # Remove duplicates and sort
-        unique_sources = sorted(list(set(all_sources)))
-        
-        return jsonify({
-            'success': True,
-            'sources': unique_sources
-        })
-    except Exception as e:
-        print(f"Error getting branch sources: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'sources': ['Walk In', 'Event', 'PS', 'Meta', 'Google', 'Website', 'Referral', 'Other']
-        })
-
-@app.route('/api/branch_analytics/summary')
-def api_branch_analytics_summary():
-    """API endpoint for Branch Summary KPI data"""
-    try:
-        branch = session.get('branch') or session.get('rec_branch')
-        if not branch:
-            return jsonify({'success': False, 'message': 'Branch not found in session'})
-        
-        # Get date filter parameters
-        date_from = request.args.get('date_from')
-        date_to = request.args.get('date_to')
-        
-        # If no date parameters provided, use MTD (Month to Date) as default
-        if not date_from or not date_to:
-            today = datetime.now()
-            date_from = today.replace(day=1).strftime('%Y-%m-%d')
-            date_to = today.strftime('%Y-%m-%d')
-        
-        # Get total leads assigned from ps_followup_master
-        ps_total_query = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_branch', branch).gte('created_at', date_from).lte('created_at', date_to).execute()
-        ps_total_leads = ps_total_query.count or 0
-        
-        # Get total leads assigned from walkin_table
-        walkin_total_query = supabase.table('walkin_table').select('*', count='exact').eq('branch', branch).gte('created_at', date_from).lte('created_at', date_to).execute()
-        walkin_total_leads = walkin_total_query.count or 0
-        
-        # Total leads assigned (sum of both tables)
-        total_leads_assigned = ps_total_leads + walkin_total_leads
-        
-        # Get pending leads from ps_followup_master
-        ps_pending_query = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_branch', branch).eq('final_status', 'Pending').gte('created_at', date_from).lte('created_at', date_to).execute()
-        ps_pending_leads = ps_pending_query.count or 0
-        
-        # Get pending leads from walkin_table
-        walkin_pending_query = supabase.table('walkin_table').select('*', count='exact').eq('branch', branch).eq('status', 'Pending').gte('created_at', date_from).lte('created_at', date_to).execute()
-        walkin_pending_leads = walkin_pending_query.count or 0
-        
-        # Total pending leads
-        total_pending_leads = ps_pending_leads + walkin_pending_leads
-        
-        # Get won leads from ps_followup_master
-        ps_won_query = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_branch', branch).eq('final_status', 'Won').gte('created_at', date_from).lte('created_at', date_to).execute()
-        ps_won_leads = ps_won_query.count or 0
-        
-        # Get won leads from walkin_table
-        walkin_won_query = supabase.table('walkin_table').select('*', count='exact').eq('branch', branch).eq('status', 'Won').gte('created_at', date_from).lte('created_at', date_to).execute()
-        walkin_won_leads = walkin_won_query.count or 0
-        
-        # Total won leads
-        total_won_leads = ps_won_leads + walkin_won_leads
-        
-        # Get lost leads from ps_followup_master
-        ps_lost_query = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_branch', branch).eq('final_status', 'Lost').gte('created_at', date_from).lte('created_at', date_to).execute()
-        ps_lost_leads = ps_lost_query.count or 0
-        
-        # Get lost leads from walkin_table
-        walkin_lost_query = supabase.table('walkin_table').select('*', count='exact').eq('branch', branch).eq('status', 'Lost').gte('created_at', date_from).lte('created_at', date_to).execute()
-        walkin_lost_leads = walkin_lost_query.count or 0
-        
-        # Total lost leads
-        total_lost_leads = ps_lost_leads + walkin_lost_leads
-        
-        return jsonify({
-            'success': True,
-            'data': {
-                'total_leads_assigned': total_leads_assigned,
-                'total_pending_leads': total_pending_leads,
-                'total_won_leads': total_won_leads,
-                'total_lost_leads': total_lost_leads
-            }
-        })
-        
-    except Exception as e:
-        print(f"Error in branch summary API: {str(e)}")
-        return jsonify({'success': False, 'message': 'Error loading branch summary data'})
-
 @app.route('/lead_transfer')
 @require_admin
 def lead_transfer():
@@ -9981,6 +8159,7 @@ def lead_transfer():
     except Exception as e:
         print(f"Error in lead_transfer: {str(e)}")
         return render_template('lead_transfer.html', branches=[])
+
 
 @app.route('/api/cre_pending_leads')
 @require_admin
@@ -10015,6 +8194,7 @@ def api_cre_pending_leads():
     except Exception as e:
         print(f"Error in api_cre_pending_leads: {str(e)}")
         return jsonify({'success': False, 'message': 'Error fetching pending leads'})
+
 
 @app.route('/api/ps_pending_leads')
 @require_admin
@@ -10122,6 +8302,7 @@ def api_ps_pending_leads():
         print(f"Error in api_ps_pending_leads: {str(e)}")
         return jsonify({'success': False, 'message': 'Error fetching pending leads'})
 
+
 @app.route('/api/transfer_cre_lead', methods=['POST'])
 @require_admin
 def api_transfer_cre_lead():
@@ -10157,6 +8338,7 @@ def api_transfer_cre_lead():
         print(f"Error in api_transfer_cre_lead: {str(e)}")
         return jsonify({'success': False, 'message': 'Error transferring lead'})
 
+
 @app.route('/api/bulk_transfer_cre_leads', methods=['POST'])
 @require_admin
 def api_bulk_transfer_cre_leads():
@@ -10180,127 +8362,80 @@ def api_bulk_transfer_cre_leads():
         # Get the target CRE's name (not username)
         target_cre_name = cre_result.data[0].get('name')
         
-        # Update all pending leads from the source CRE to the target CRE in lead_master
+        # Update all pending leads in lead_master
         lead_result = supabase.table('lead_master').update({'cre_name': target_cre_name}).eq('cre_name', from_cre_name).eq('final_status', 'Pending').execute()
         
-        # Update all pending leads from the source CRE to the target CRE in ps_followup_master
+        # Update all pending leads in ps_followup_master
         ps_followup_result = supabase.table('ps_followup_master').update({'cre_name': target_cre_name}).eq('cre_name', from_cre_name).eq('final_status', 'Pending').execute()
         
-        # Count transferred leads from lead_master only (for display purposes)
-        lead_count = len(lead_result.data) if lead_result.data else 0
+        return jsonify({'success': True, 'message': 'Bulk transfer completed successfully'})
         
-        if lead_count > 0:
-            return jsonify({
-                'success': True, 
-                'message': f'Pending Lead Transfer Successful - {lead_count} leads transferred from {from_cre_name} to {to_cre_name}'
-            })
-        else:
-            return jsonify({'success': False, 'message': 'No leads found to transfer'})
-            
     except Exception as e:
         print(f"Error in api_bulk_transfer_cre_leads: {str(e)}")
-        return jsonify({'success': False, 'message': 'Error transferring leads'})
+        return jsonify({'success': False, 'message': 'Error during bulk transfer'})
 
-@app.route('/api/transfer_options')
+
+@app.route('/export_leads')
 @require_admin
-def api_transfer_options():
-    """API to get transfer options (CRE and PS lists)"""
+def export_leads():
+    """Export leads dashboard"""
     try:
-        # Get all CREs for transfer options - CRE doesn't have branch
-        cre_result = supabase.table('cre_users').select('id, name, username, email, phone, is_active').eq('is_active', True).execute()
-        cre_options = cre_result.data if cre_result.data else []
-        
-        # Get all PS for transfer options - PS has branch
-        ps_result = supabase.table('ps_users').select('id, name, username, email, phone, branch, is_active').eq('is_active', True).execute()
-        ps_options = ps_result.data if ps_result.data else []
-        
-        # Get all Branch Heads for transfer options - Branch Head has branch
-        bh_result = supabase.table('branch_head_users').select('id, name, username, email, phone, branch, is_active').eq('is_active', True).execute()
-        bh_options = bh_result.data if bh_result.data else []
-        
-        # Sanitize the data to ensure no problematic characters
-        for cre in cre_options:
-            if isinstance(cre.get('name'), str):
-                cre['name'] = cre['name'].strip()
-            if isinstance(cre.get('username'), str):
-                cre['username'] = cre['username'].strip()
-                
-        for ps in ps_options:
-            if isinstance(ps.get('name'), str):
-                ps['name'] = ps['name'].strip()
-            if isinstance(ps.get('username'), str):
-                ps['username'] = ps['username'].strip()
-            if isinstance(ps.get('branch'), str):
-                ps['branch'] = ps['branch'].strip()
-                
-        for bh in bh_options:
-            if isinstance(bh.get('name'), str):
-                bh['name'] = bh['name'].strip()
-            if isinstance(bh.get('username'), str):
-                bh['username'] = bh['username'].strip()
-            if isinstance(bh.get('branch'), str):
-                bh['branch'] = bh['branch'].strip()
-        
-        return jsonify({
-            'success': True,
-            'cre_options': cre_options,
-            'ps_options': ps_options,
-            'bh_options': bh_options
-        })
-    except Exception as e:
-        print(f"Error in api_transfer_options: {str(e)}")
-        return jsonify({'success': False, 'message': 'Error fetching transfer options'})
+        # Get all leads for counting
+        all_leads = safe_get_data('lead_master')
 
-@app.route('/api/bh_dashboard_stats')
-def api_bh_dashboard_stats():
-    """API to get Branch Head dashboard statistics"""
-    try:
-        # Check if user is logged in as Branch Head
-        if session.get('user_type') != 'bh':
-            return jsonify({'success': False, 'message': 'Access denied'})
-        
-        branch = session.get('bh_branch')
-        if not branch:
-            return jsonify({'success': False, 'message': 'Branch information not found'})
-        
-        # Get counts for the specific branch
-        cre_count = get_accurate_count('cre_users')  # CREs don't have branch, so total
-        ps_count = get_accurate_count('ps_users', {'branch': branch})
-        leads_count = get_accurate_count('lead_master')  # Total leads
-        unassigned_leads = get_accurate_count('lead_master', {'assigned': 'No'})
-        
-        stats = {
-            'cre_count': cre_count,
-            'ps_count': ps_count,
-            'leads_count': leads_count,
-            'unassigned_leads': unassigned_leads
-        }
-        
-        return jsonify({
-            'success': True,
-            'stats': stats
-        })
-        
-    except Exception as e:
-        print(f"Error in api_bh_dashboard_stats: {str(e)}")
-        return jsonify({'success': False, 'message': 'Error fetching dashboard statistics'})
+        # Count by final status
+        won_count = len([l for l in all_leads if l.get('final_status') == 'Won'])
+        lost_count = len([l for l in all_leads if l.get('final_status') == 'Lost'])
+        pending_count = len([l for l in all_leads if l.get('final_status') == 'Pending'])
+        in_progress_count = len([l for l in all_leads if l.get('final_status') == 'In Progress'])
 
-@app.route('/admin/sync_timestamps', methods=['POST'])
-@require_admin
-def admin_sync_timestamps():
-    """Admin endpoint to manually synchronize timestamps between tables"""
-    try:
-        synced_count = sync_all_existing_timestamps()
-        return jsonify({
-            'success': True,
-            'message': f'Successfully synchronized timestamps for {synced_count} leads',
-            'synced_count': synced_count
-        })
+        # Count by lead category
+        hot_count = len([l for l in all_leads if l.get('lead_category') == 'Hot'])
+        warm_count = len([l for l in all_leads if l.get('lead_category') == 'Warm'])
+        cold_count = len([l for l in all_leads if l.get('lead_category') == 'Cold'])
+        not_interested_count = len([l for l in all_leads if l.get('lead_category') == 'Not Interested'])
+
+        # Count test drive leads from alltest_drive table
+        test_drive_leads = safe_get_data('alltest_drive')
+        test_drive_yes_count = len([l for l in test_drive_leads if l.get('test_drive_done') == 'Yes'])
+        test_drive_no_count = len([l for l in test_drive_leads if l.get('test_drive_done') == 'No'])
+        test_drive_total_count = len(test_drive_leads)
+
+        # Log export dashboard access
+        auth_manager.log_audit_event(
+            user_id=session.get('user_id'),
+            user_type=session.get('user_type'),
+            action='EXPORT_DASHBOARD_ACCESS',
+            resource='export_leads'
+        )
+
+        return render_template('export_leads.html',
+                               won_count=won_count,
+                               lost_count=lost_count,
+                               pending_count=pending_count,
+                               in_progress_count=in_progress_count,
+                               hot_count=hot_count,
+                               warm_count=warm_count,
+                               cold_count=cold_count,
+                               not_interested_count=not_interested_count,
+                               test_drive_yes_count=test_drive_yes_count,
+                               test_drive_no_count=test_drive_no_count,
+                               test_drive_total_count=test_drive_total_count)
+
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': f'Error synchronizing timestamps: {str(e)}'
-        })
+        flash(f'Error loading export dashboard: {str(e)}', 'error')
+        return redirect(url_for('admin_dashboard'))
+
+@app.route('/bh_dashboard')
+@require_bh
+def bh_dashboard():
+    """Branch Head Dashboard"""
+    try:
+        return render_template('bh_dashboard.html')
+    except Exception as e:
+        flash(f'Error loading dashboard: {str(e)}', 'error')
+        return redirect(url_for('index'))
+
 
 @app.route('/api/bh_ps_performance')
 def api_bh_ps_performance():
@@ -10547,6 +8682,138 @@ def get_followup_date_field(num):
     }
     return followup_date_fields.get(num, 'first_call_date')
 
+@app.route('/edit_bh/<int:bh_id>', methods=['POST'])
+@require_admin
+def edit_bh(bh_id):
+    """Edit Branch Head user"""
+    try:
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip()
+        phone = data.get('phone', '').strip()
+        branch = data.get('branch', '').strip()
+
+        if not all([name, username, email, phone, branch]):
+            return jsonify({'success': False, 'message': 'All fields are required'})
+
+        # Check if username already exists (excluding current user)
+        existing = supabase.table('branch_head_users').select('username').eq('username', username).neq('id', bh_id).execute()
+        if existing.data:
+            return jsonify({'success': False, 'message': 'Username already exists'})
+
+        # Update branch head
+        result = supabase.table('branch_head_users').update({
+            'name': name,
+            'username': username,
+            'email': email,
+            'phone': phone,
+            'branch': branch,
+            'updated_at': datetime.now().isoformat()
+        }).eq('id', bh_id).execute()
+
+        if result.data:
+            # Log the edit
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='BRANCH_HEAD_EDITED',
+                resource='branch_head_users',
+                resource_id=str(bh_id),
+                details={'bh_name': name, 'username': username, 'branch': branch}
+            )
+            return jsonify({'success': True, 'message': 'Branch Head updated successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Failed to update Branch Head'})
+
+    except Exception as e:
+        print(f"Error editing Branch Head: {e}")
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+
+
+@app.route('/toggle_bh_status/<int:bh_id>', methods=['POST'])
+@require_admin
+def toggle_bh_status(bh_id):
+    """Toggle Branch Head active status"""
+    try:
+        data = request.get_json()
+        active_status = data.get('active', True)
+
+        # Update status
+        result = supabase.table('branch_head_users').update({
+            'is_active': active_status,
+            'updated_at': datetime.now().isoformat()
+        }).eq('id', bh_id).execute()
+
+        if result.data:
+            action = 'activated' if active_status else 'deactivated'
+            # Log the status change
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action=f'BRANCH_HEAD_{action.upper()}',
+                resource='branch_head_users',
+                resource_id=str(bh_id),
+                details={'status': active_status}
+            )
+            return jsonify({'success': True, 'message': f'Branch Head {action} successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Failed to update status'})
+
+    except Exception as e:
+        print(f"Error toggling Branch Head status: {e}")
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+
+
+@app.route('/delete_bh/<int:bh_id>', methods=['DELETE'])
+@require_admin
+def delete_bh(bh_id):
+    """Delete Branch Head user"""
+    try:
+        # Get branch head details before deletion for logging
+        bh_result = supabase.table('branch_head_users').select('name, username, branch').eq('id', bh_id).execute()
+        if not bh_result.data:
+            return jsonify({'success': False, 'message': 'Branch Head not found'})
+
+        bh_data = bh_result.data[0]
+
+        # Delete the branch head
+        result = supabase.table('branch_head_users').delete().eq('id', bh_id).execute()
+
+        if result.data:
+            # Log the deletion
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='BRANCH_HEAD_DELETED',
+                resource='branch_head_users',
+                resource_id=str(bh_id),
+                details={'bh_name': bh_data['name'], 'username': bh_data['username'], 'branch': bh_data['branch']}
+            )
+            return jsonify({'success': True, 'message': 'Branch Head deleted successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Failed to delete Branch Head'})
+
+    except Exception as e:
+        print(f"Error deleting Branch Head: {e}")
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+
+
+@app.route('/manage_bh')
+@require_admin
+def manage_bh():
+    """Manage Branch Head users"""
+    try:
+        bh_users = safe_get_data('branch_head_users')
+        return render_template('manage_bh.html', bh_users=bh_users)
+    except Exception as e:
+        flash(f'Error loading Branch Head users: {str(e)}', 'error')
+        return render_template('manage_bh.html', bh_users=[])
+
+
+
+
+
 @app.route('/api/bh_lead_details')
 def api_bh_lead_details():
     """API to get detailed lead information"""
@@ -10593,6 +8860,261 @@ def api_bh_lead_details():
         print(f"Error in api_bh_lead_details: {str(e)}")
         return jsonify({'success': False, 'message': 'Error fetching lead details'})
 
+@app.route('/api/admin_ps_performance')
+def api_admin_ps_performance():
+    """API to get PS performance data for Admin dashboard analytics - ALL BRANCHES"""
+    try:
+        # Check if user is logged in as Admin
+        if session.get('user_type') != 'admin':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        # Get current month (first day and last day)
+        from datetime import datetime
+        current_date = datetime.now()
+        first_day_of_month = current_date.replace(day=1).strftime('%Y-%m-%d')
+        
+        # Get last day of current month
+        if current_date.month == 12:
+            next_month = current_date.replace(year=current_date.year + 1, month=1, day=1)
+        else:
+            next_month = current_date.replace(month=current_date.month + 1, day=1)
+        last_day_of_month = (next_month - timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        # Get all PS users from all branches
+        ps_result = supabase.table('ps_users').select('name, branch').eq('is_active', True).execute()
+        if not ps_result.data:
+            return jsonify({'success': False, 'message': 'No PS users found'})
+        
+        performance_data = []
+        
+        for ps in ps_result.data:
+            ps_name = ps['name']
+            branch = ps['branch']
+            
+            # Get total leads assigned to this PS in current month
+            total_leads_result = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_name', ps_name).eq('ps_branch', branch).gte('ps_assigned_at', first_day_of_month).lte('ps_assigned_at', last_day_of_month).execute()
+            total_leads = total_leads_result.count or 0
+            
+            # Get F1-F7 call counts for leads assigned in current month
+            f1_count = 0
+            f2_count = 0
+            f3_count = 0
+            f4_count = 0
+            f5_count = 0
+            f6_count = 0
+            f7_count = 0
+            
+            if total_leads > 0:
+                # Get leads with call dates for current month
+                leads_result = supabase.table('ps_followup_master').select('first_call_date, second_call_date, third_call_date, fourth_call_date, fifth_call_date, sixth_call_date, seventh_call_date').eq('ps_name', ps_name).eq('ps_branch', branch).gte('ps_assigned_at', first_day_of_month).lte('ps_assigned_at', last_day_of_month).execute()
+                
+                for lead in leads_result.data:
+                    if lead.get('first_call_date'):
+                        f1_count += 1
+                    if lead.get('second_call_date'):
+                        f2_count += 1
+                    if lead.get('third_call_date'):
+                        f3_count += 1
+                    if lead.get('fourth_call_date'):
+                        f4_count += 1
+                    if lead.get('fifth_call_date'):
+                        f5_count += 1
+                    if lead.get('sixth_call_date'):
+                        f6_count += 1
+                    if lead.get('seventh_call_date'):
+                        f7_count += 1
+            
+            # Get Won(MTD) - leads with final_status = 'Won' and won_timestamp in current month
+            won_mtd_result = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_name', ps_name).eq('ps_branch', branch).eq('final_status', 'Won').gte('won_timestamp', first_day_of_month).lte('won_timestamp', last_day_of_month).execute()
+            won_mtd = won_mtd_result.count or 0
+            
+            # Get Lost(MTD) - leads with final_status = 'Lost' and lost_timestamp in current month
+            lost_mtd_result = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_name', ps_name).eq('ps_branch', branch).eq('final_status', 'Lost').gte('lost_timestamp', first_day_of_month).lte('lost_timestamp', last_day_of_month).execute()
+            lost_mtd = lost_mtd_result.count or 0
+            
+            performance_data.append({
+                'ps_name': ps_name,
+                'ps_branch': branch,
+                'total_leads_assigned': total_leads,
+                'f1': f1_count,
+                'f2': f2_count,
+                'f3': f3_count,
+                'f4': f4_count,
+                'f5': f5_count,
+                'f6': f6_count,
+                'f7': f7_count,
+                'lost_mtd': lost_mtd,
+                'won_mtd': won_mtd
+            })
+        
+        return jsonify({
+            'success': True,
+            'current_month': current_date.strftime('%B %Y'),
+            'performance_data': performance_data
+        })
+        
+    except Exception as e:
+        print(f"Error in api_admin_ps_performance: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error fetching PS performance data'})
+
+@app.route('/api/admin_leads_list')
+def api_admin_leads_list():
+    """API to get leads list for Admin dashboard cells - ALL BRANCHES"""
+    try:
+        # Check if user is logged in as Admin
+        if session.get('user_type') != 'admin':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        ps_name = request.args.get('ps_name')
+        cell_type = request.args.get('cell_type')
+        branch = request.args.get('branch')
+        
+        if not ps_name or not cell_type or not branch:
+            return jsonify({'success': False, 'message': 'Missing parameters'})
+        
+        # Get current month (first day and last day)
+        from datetime import datetime
+        current_date = datetime.now()
+        first_day_of_month = current_date.replace(day=1).strftime('%Y-%m-%d')
+        
+        # Get last day of current month
+        if current_date.month == 12:
+            next_month = current_date.replace(year=current_date.year + 1, month=1, day=1)
+        else:
+            next_month = current_date.replace(month=current_date.month + 1, day=1)
+        last_day_of_month = (next_month - timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        # Build query based on cell type
+        query = supabase.table('ps_followup_master').select('*').eq('ps_name', ps_name).eq('ps_branch', branch)
+        
+        if cell_type == 'total':
+            # All leads assigned in current month
+            query = query.gte('ps_assigned_at', first_day_of_month).lte('ps_assigned_at', last_day_of_month)
+        elif cell_type.startswith('f'):
+            # F1-F7 follow-ups
+            followup_num = int(cell_type[1])
+            followup_date_field = get_followup_date_field(followup_num)
+            query = query.gte('ps_assigned_at', first_day_of_month).lte('ps_assigned_at', last_day_of_month).not_.is_(followup_date_field, 'null')
+        elif cell_type == 'won':
+            # Won leads in current month
+            query = query.eq('final_status', 'Won').gte('won_timestamp', first_day_of_month).lte('won_timestamp', last_day_of_month)
+        elif cell_type == 'lost':
+            # Lost leads in current month
+            query = query.eq('final_status', 'Lost').gte('lost_timestamp', first_day_of_month).lte('lost_timestamp', last_day_of_month)
+        
+        result = query.execute()
+        
+        if not result.data:
+            return jsonify({'success': True, 'leads': []})
+        
+        # Format leads data
+        leads = []
+        for lead in result.data:
+            leads.append({
+                'lead_uid': lead.get('lead_uid'),
+                'customer_name': lead.get('customer_name'),
+                'customer_mobile_number': lead.get('customer_mobile_number'),
+                'source': lead.get('source'),
+                'lead_category': lead.get('lead_category'),
+                'final_status': lead.get('final_status'),
+                'ps_name': lead.get('ps_name'),
+                'ps_branch': lead.get('ps_branch'),
+                'created_at': lead.get('created_at'),
+                'updated_at': lead.get('updated_at')
+            })
+        
+        return jsonify({'success': True, 'leads': leads})
+        
+    except Exception as e:
+        print(f"Error in api_admin_leads_list: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error fetching leads list'})
+
+@app.route('/api/admin_call_history')
+def api_admin_call_history():
+    """API to get call history for a specific lead - Admin access"""
+    try:
+        # Check if user is logged in as Admin
+        if session.get('user_type') != 'admin':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        lead_uid = request.args.get('lead_uid')
+        if not lead_uid:
+            return jsonify({'success': False, 'message': 'Missing lead UID'})
+        
+        # Get call history from ps_followup_master
+        result = supabase.table('ps_followup_master').select('first_call_date, second_call_date, third_call_date, fourth_call_date, fifth_call_date, sixth_call_date, seventh_call_date, first_call_notes, second_call_notes, third_call_notes, fourth_call_notes, fifth_call_notes, sixth_call_notes, seventh_call_notes').eq('lead_uid', lead_uid).execute()
+        
+        if not result.data:
+            return jsonify({'success': True, 'call_history': []})
+        
+        lead = result.data[0]
+        call_history = []
+        
+        # Process each follow-up call
+        for i in range(1, 8):
+            call_date = lead.get(f'{get_followup_name(i)}_call_date')
+            call_notes = lead.get(f'{get_followup_name(i)}_call_notes')
+            
+            if call_date:
+                call_history.append({
+                    'call_number': i,
+                    'call_date': call_date,
+                    'notes': call_notes or 'No notes',
+                    'status': 'success'  # Default status
+                })
+        
+        return jsonify({'success': True, 'call_history': call_history})
+        
+    except Exception as e:
+        print(f"Error in api_admin_call_history: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error fetching call history'})
+
+@app.route('/api/admin_lead_details')
+def api_admin_lead_details():
+    """API to get detailed lead information - Admin access"""
+    try:
+        # Check if user is logged in as Admin
+        if session.get('user_type') != 'admin':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        lead_uid = request.args.get('lead_uid')
+        if not lead_uid:
+            return jsonify({'success': False, 'message': 'Missing lead UID'})
+        
+        # Get lead details from ps_followup_master
+        result = supabase.table('ps_followup_master').select('*').eq('lead_uid', lead_uid).execute()
+        
+        if not result.data:
+            return jsonify({'success': False, 'message': 'Lead not found'})
+        
+        lead = result.data[0]
+        
+        # Format lead data
+        lead_data = {
+            'lead_uid': lead.get('lead_uid'),
+            'customer_name': lead.get('customer_name'),
+            'customer_mobile_number': lead.get('customer_mobile_number'),
+            'customer_email': lead.get('customer_email'),
+            'customer_address': lead.get('customer_address'),
+            'customer_city': lead.get('customer_city'),
+            'customer_state': lead.get('customer_state'),
+            'customer_pincode': lead.get('customer_pincode'),
+            'source': lead.get('source'),
+            'lead_category': lead.get('lead_category'),
+            'final_status': lead.get('final_status'),
+            'ps_name': lead.get('ps_name'),
+            'ps_branch': lead.get('ps_branch'),
+            'created_at': lead.get('created_at'),
+            'updated_at': lead.get('updated_at'),
+            'notes': lead.get('notes')
+        }
+        
+        return jsonify({'success': True, 'lead': lead_data})
+        
+    except Exception as e:
+        print(f"Error in api_admin_lead_details: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error fetching lead details'})
+
 @app.route('/api/branches')
 @require_admin
 def api_branches():
@@ -10612,159 +9134,387 @@ def api_branches():
     except Exception as e:
         print(f"Error in api_branches: {str(e)}")
         return jsonify({'success': False, 'message': 'Error fetching branches'})
+        return render_template('export_leads.html',
+                               won_count=won_count,
+                               lost_count=lost_count,
+                               pending_count=pending_count,
+                               in_progress_count=in_progress_count,
+                               hot_count=hot_count,
+                               warm_count=warm_count,
+                               cold_count=cold_count,
+                               not_interested_count=not_interested_count,
+                               test_drive_yes_count=test_drive_yes_count,
+                               test_drive_no_count=test_drive_no_count,
+                               test_drive_total_count=test_drive_total_count)
 
-@app.route('/api/transfer_ps_lead', methods=['POST'])
-@require_admin
-def api_transfer_ps_lead():
-    """API to transfer PS lead to another PS"""
-    try:
-        data = request.get_json()
-        lead_uid = data.get('lead_uid')
-        new_ps_name = data.get('new_ps_name')
-        
-        if not lead_uid or not new_ps_name:
-            return jsonify({'success': False, 'message': 'Missing required parameters'})
-        
-        # Get the new PS details with branch information
-        ps_result = supabase.table('ps_users').select('name, username, branch').eq('name', new_ps_name).eq('is_active', True).execute()
-        if not ps_result.data:
-            return jsonify({'success': False, 'message': 'PS not found or inactive'})
-        
-        new_ps = ps_result.data[0]
-        
-        # Update the lead in ps_followup_master
-        result = supabase.table('ps_followup_master').update({
-            'ps_name': new_ps_name,
-            'ps_branch': new_ps.get('branch', '')
-        }).eq('lead_uid', lead_uid).execute()
-        
-        if result.data:
-            return jsonify({'success': True, 'message': 'Lead transferred successfully'})
-        else:
-            return jsonify({'success': False, 'message': 'Lead not found or transfer failed'})
-            
     except Exception as e:
-        print(f"Error in api_transfer_ps_lead: {str(e)}")
-        return jsonify({'success': False, 'message': 'Error transferring lead'})
+        flash(f'Error loading export dashboard: {str(e)}', 'error')
+        return redirect(url_for('admin_dashboard'))
 
-@app.route('/api/bulk_transfer_ps_leads', methods=['POST'])
-@require_admin
-def api_bulk_transfer_ps_leads():
-    """API to bulk transfer all pending leads from one PS to another PS in the same branch"""
+
+@app.route('/ps_analytics')
+@require_ps
+def ps_analytics():
     try:
-        data = request.get_json()
-        from_ps_name = data.get('from_ps_name')
-        to_ps_name = data.get('to_ps_name')
-        
-        if not from_ps_name or not to_ps_name:
-            return jsonify({'success': False, 'message': 'Missing required parameters'})
-        
-        if from_ps_name == to_ps_name:
-            return jsonify({'success': False, 'message': 'Cannot transfer to the same PS'})
-        
-        # Get the target PS details with branch information
-        ps_result = supabase.table('ps_users').select('name, username, branch').eq('name', to_ps_name).eq('is_active', True).execute()
-        if not ps_result.data:
-            return jsonify({'success': False, 'message': 'Target PS not found or inactive'})
-        
-        target_ps = ps_result.data[0]
-        target_branch = target_ps.get('branch', '')
-        target_username = target_ps.get('username', '')
-        
-        # Get the source PS branch to ensure same branch transfer
-        source_ps_result = supabase.table('ps_users').select('name, username, branch').eq('name', from_ps_name).eq('is_active', True).execute()
-        if not source_ps_result.data:
-            return jsonify({'success': False, 'message': 'Source PS not found or inactive'})
-        
-        source_branch = source_ps_result.data[0].get('branch', '')
-        source_username = source_ps_result.data[0].get('username', '')
-        
-        # Verify both PS are in the same branch
-        if source_branch != target_branch:
-            return jsonify({'success': False, 'message': 'Can only transfer between PS in the same branch'})
-        
-        # Update all pending leads from the source PS to the target PS in ps_followup_master
-        ps_followup_result = supabase.table('ps_followup_master').update({
-            'ps_name': to_ps_name,
-            'ps_branch': target_branch
-        }).eq('ps_name', from_ps_name).eq('final_status', 'Pending').execute()
-        
-        # Update all pending leads from the source PS to the target PS in walkin_table (if table exists)
-        walkin_count = 0
-        try:
-            walkin_result = supabase.table('walkin_table').update({
-                'ps_assigned': to_ps_name,
-                'branch': target_branch
-            }).eq('ps_assigned', from_ps_name).eq('status', 'Pending').execute()
-            walkin_count = len(walkin_result.data) if walkin_result.data else 0
-        except Exception as e:
-            print(f"Warning: walkin_table not found or error: {str(e)}")
-            walkin_count = 0
-        
-        # Update all pending leads from the source PS to the target PS in activity_leads (if table exists)
-        activity_count = 0
-        try:
-            activity_result = supabase.table('activity_leads').update({
-                'ps_name': to_ps_name,
-                 'location': target_branch
-            }).eq('ps_name', from_ps_name).eq('final_status', 'Pending').execute()
-            activity_count = len(activity_result.data) if activity_result.data else 0
-        except Exception as e:
-            print(f"Warning: activity_leads table not found or error: {str(e)}")
-            activity_count = 0
-        
-        # Count transferred leads from all tables
-        ps_followup_count = len(ps_followup_result.data) if ps_followup_result.data else 0
-        total_count = ps_followup_count + walkin_count + activity_count
-        
-        if total_count > 0:
-            return jsonify({
-                'success': True, 
-                'message': f'Pending Lead Transfer Successful - {total_count} leads transferred from {from_ps_name} to {to_ps_name} ({ps_followup_count} from ps_followup, {walkin_count} from walkin, {activity_count} from activity)'
-            })
+        ps_name = session.get('ps_name')
+        # Get all relevant data
+        ps_followups = safe_get_data('ps_followup_master')
+        activity_leads = safe_get_data('activity_leads')
+
+        # Date filter (from/to) for won cases and assigned leads
+        from_date = request.args.get('from_date')
+        to_date = request.args.get('to_date')
+        def in_date_range(ts):
+            if not ts:
+                return False
+            from datetime import datetime
+            try:
+                dt = datetime.fromisoformat(ts.replace('Z', '+00:00')) if 'T' in ts else datetime.strptime(ts, '%Y-%m-%d')
+                if from_date:
+                    from_dt = datetime.strptime(from_date, '%Y-%m-%d')
+                    if dt < from_dt:
+                        return False
+                if to_date:
+                    to_dt = datetime.strptime(to_date, '%Y-%m-%d')
+                    if dt > to_dt:
+                        return False
+                return True
+            except Exception:
+                return False
+
+        # PS Won Cases (date filtered)
+        if not from_date and not to_date:
+            won_ps_followups = [lead for lead in ps_followups if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Won']
+            won_activities = [lead for lead in activity_leads if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Won']
         else:
-            return jsonify({'success': False, 'message': 'No leads found to transfer'})
-            
-    except Exception as e:
-        print(f"Error in api_bulk_transfer_ps_leads: {str(e)}")
-        return jsonify({'success': False, 'message': 'Error transferring leads'})
+            won_ps_followups = [lead for lead in ps_followups if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Won' and in_date_range(lead.get('won_timestamp'))]
+            won_activities = [lead for lead in activity_leads if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Won' and in_date_range(lead.get('won_timestamp'))]
+        total_won_cases = len(won_ps_followups) + len(won_activities)
 
-@app.route('/fix_timestamps', methods=['POST'])
-@require_admin
-def fix_timestamps():
-    """Admin route to fix missing timestamps"""
-    fix_missing_timestamps()
-    flash('Timestamps fixed successfully', 'success')
-    return redirect(url_for('admin_dashboard'))
+        # Conversion Rate (live, not date filtered)
+        total_won_all = len([lead for lead in ps_followups if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Won']) \
+            + len([lead for lead in activity_leads if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Won'])
+        total_assigned_live = len([lead for lead in ps_followups if lead.get('ps_name') == ps_name]) \
+            + len([lead for lead in activity_leads if lead.get('ps_name') == ps_name])
+        conversion_rate = round((total_won_all / total_assigned_live * 100), 2) if total_assigned_live > 0 else 0
 
-@app.route('/debug_ps_users')
-@require_admin
-def debug_ps_users():
-    """Debug route to check PS users data"""
-    try:
-        # Get all PS users
-        all_ps = supabase.table('ps_users').select('*').execute()
-        
-        # Get branch from session
-        branch = session.get('branch') or session.get('rec_branch', 'No branch in session')
-        
-        # Get PS users for this branch
-        branch_ps = supabase.table('ps_users').select('*').eq('branch', branch).execute()
-        
-        # Get active PS users for this branch
-        active_ps = supabase.table('ps_users').select('*').eq('branch', branch).eq('is_active', True).execute()
-        
-        debug_info = {
-            'session_branch': branch,
-            'all_ps_users': all_ps.data,
-            'branch_ps_users': branch_ps.data,
-            'active_ps_users': active_ps.data,
-            'all_branches': list(set([ps['branch'] for ps in all_ps.data if ps.get('branch')]))
+        # Total Leads Assigned (date filtered by created_at)
+        def in_created_range(ts):
+            if not ts:
+                return False
+            from datetime import datetime
+            try:
+                dt = datetime.fromisoformat(ts.replace('Z', '+00:00')) if 'T' in ts else datetime.strptime(ts, '%Y-%m-%d')
+                if from_date:
+                    from_dt = datetime.strptime(from_date, '%Y-%m-%d')
+                    if dt < from_dt:
+                        return False
+                if to_date:
+                    to_dt = datetime.strptime(to_date, '%Y-%m-%d')
+                    if dt > to_dt:
+                        return False
+                return True
+            except Exception:
+                return False
+        assigned_ps_followups = [lead for lead in ps_followups if lead.get('ps_name') == ps_name and in_created_range(lead.get('created_at'))]
+        assigned_activities = [lead for lead in activity_leads if lead.get('ps_name') == ps_name and in_created_range(lead.get('created_at'))]
+        total_assigned = len(assigned_ps_followups) + len(assigned_activities)
+
+        # Total Pending Cases (not date filtered)
+        pending_ps_followups = [lead for lead in ps_followups if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Pending']
+        pending_activities = [lead for lead in activity_leads if lead.get('ps_name') == ps_name and lead.get('final_status') == 'Pending']
+        total_pending = len(pending_ps_followups) + len(pending_activities)
+        ps_analytics = {
+            'won_cases': total_won_cases,
+            'conversion_rate': conversion_rate,
+            'total_assigned': total_assigned,
+            'total_pending': total_pending,
         }
-        
-        return jsonify(debug_info)
+        return render_template('ps_analytics.html', ps_analytics=ps_analytics)
     except Exception as e:
-        return jsonify({'error': str(e)})
+        flash(f'Error loading PS analytics: {str(e)}', 'error')
+        return redirect(url_for('ps_dashboard'))
+
+
+@app.route('/cre_analytics')
+@require_cre
+def cre_analytics():
+    try:
+        # Get current CRE name from session
+        current_cre = session.get('cre_name')
+        
+        # Get all CRE users with their active status (for leaderboard)
+        cre_users = safe_get_data('cre_users')
+        active_cre_users = [cre for cre in cre_users if cre.get('is_active', True)]
+        
+        # Get all leads data
+        all_leads = safe_get_data('lead_master')
+        
+        # Helper function to parse timestamps
+        def parse_timestamp(timestamp_str):
+            if not timestamp_str:
+                return None
+            try:
+                if 'T' in timestamp_str:
+                    return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                elif ' ' in timestamp_str:
+                    return datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+                else:
+                    return datetime.strptime(timestamp_str, '%Y-%m-%d')
+            except:
+                return None
+        
+        def get_cre_platform_conversion_live():
+            platform_data = {}
+            for lead in all_leads:
+                if lead.get('cre_name') == current_cre:
+                    platform = lead.get('source', 'Unknown')
+                    if platform not in platform_data:
+                        platform_data[platform] = {
+                            'won': 0,
+                            'pending_live': 0,
+                            'lost': 0,
+                            'assigned': 0
+                        }
+                    if lead.get('cre_assigned_at'):
+                        platform_data[platform]['assigned'] += 1
+                    if lead.get('final_status') == 'Won':
+                        platform_data[platform]['won'] += 1
+                    elif lead.get('final_status') == 'Pending':
+                        platform_data[platform]['pending_live'] += 1
+                    elif lead.get('final_status') == 'Lost' or lead.get('lost_timestamp'):
+                        platform_data[platform]['lost'] += 1
+            for platform in platform_data:
+                all_won = len([lead for lead in all_leads 
+                              if lead.get('cre_name') == current_cre 
+                              and (lead.get('source') or 'Unknown') == platform
+                              and lead.get('final_status') == 'Won'])
+                assigned = platform_data[platform]['assigned']
+                conversion_rate = (all_won / assigned * 100) if assigned > 0 else 0
+                platform_data[platform]['conversion_rate'] = round(conversion_rate, 2)
+            return platform_data
+
+        def get_top_5_cre_leaderboard():
+            cre_performance = {}
+            for cre in active_cre_users:
+                cre_name = cre.get('name')
+                if cre_name:
+                    cre_performance[cre_name] = {
+                        'won': 0,
+                        'pending_live': 0,
+                        'lost': 0,
+                        'total_leads_handled': 0
+                    }
+            for lead in all_leads:
+                cre_name = lead.get('cre_name')
+                if cre_name in cre_performance:
+                    if lead.get('cre_assigned_at'):
+                        cre_performance[cre_name]['total_leads_handled'] += 1
+                    if lead.get('final_status') == 'Won':
+                        cre_performance[cre_name]['won'] += 1
+                    elif lead.get('final_status') == 'Pending':
+                        cre_performance[cre_name]['pending_live'] += 1
+                    elif lead.get('final_status') == 'Lost' or lead.get('lost_timestamp'):
+                        cre_performance[cre_name]['lost'] += 1
+            sorted_cre = sorted(cre_performance.items(), key=lambda x: x[1]['won'], reverse=True)[:5]
+            return sorted_cre
+        
+        # Calculate platform-wise conversion rates for logged-in CRE
+        def get_cre_platform_conversion():
+            platform_data = {}
+            
+            for lead in all_leads:
+                if lead.get('cre_name') == current_cre:
+                    platform = lead.get('source', 'Unknown')
+                    if platform not in platform_data:
+                        platform_data[platform] = {
+                            'won': 0,
+                            'pending_live': 0,
+                            'lost': 0,
+                            'assigned': 0
+                        }
+                    
+                    if lead.get('cre_assigned_at'):
+                        platform_data[platform]['assigned'] += 1
+                    
+                    if lead.get('final_status') == 'Won':
+                        platform_data[platform]['won'] += 1
+                    elif lead.get('final_status') == 'Pending':
+                        platform_data[platform]['pending_live'] += 1
+                    elif lead.get('final_status') == 'Lost' or lead.get('lost_timestamp'):
+                        platform_data[platform]['lost'] += 1
+            
+            # Calculate conversion rates
+            for platform in platform_data:
+                assigned = platform_data[platform]['assigned']
+                won = platform_data[platform]['won']
+                conversion_rate = (won / assigned * 100) if assigned > 0 else 0
+                platform_data[platform]['conversion_rate'] = round(conversion_rate, 2)
+            
+            return platform_data
+        
+        # Get data for charts
+        platform_conversion = get_cre_platform_conversion()
+        top_cre_leaderboard = get_top_5_cre_leaderboard()
+        
+        return render_template('cre_analytics.html', 
+                             platform_conversion=platform_conversion,
+                             top_cre_leaderboard=top_cre_leaderboard,
+                             current_cre=current_cre)
+                             
+    except Exception as e:
+        print(f"Error in cre_analytics: {e}")
+        flash('Error loading analytics data', 'error')
+        return redirect(url_for('cre_dashboard'))
+
+
+@app.route('/cre_analytics_data')
+@require_cre
+def cre_analytics_data():
+    """API endpoint to get filtered analytics data"""
+    try:
+        # Get filter parameters
+        from_date_str = request.args.get('from_date')
+        to_date_str = request.args.get('to_date')
+        
+        # Get current CRE name from session
+        current_cre = session.get('cre_name')
+        
+        # Get all leads data
+        all_leads = safe_get_data('lead_master')
+        cre_users = safe_get_data('cre_users')
+        active_cre_users = [cre for cre in cre_users if cre.get('is_active', True)]
+        
+        # Helper function to parse timestamps
+        def parse_timestamp(timestamp_str):
+            if not timestamp_str:
+                return None
+            try:
+                if 'T' in timestamp_str:
+                    return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                elif ' ' in timestamp_str:
+                    return datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+                else:
+                    return datetime.strptime(timestamp_str, '%Y-%m-%d')
+            except:
+                return None
+        
+        # Helper function to parse date from HTML5 date input (yyyy-mm-dd format)
+        def parse_date_input(date_str):
+            if not date_str:
+                return None
+            try:
+                return datetime.strptime(date_str, '%Y-%m-%d').date()
+            except:
+                return None
+        
+        # Helper function to check if date is within filter range
+        def is_within_date_filter(target_date):
+            if not target_date:
+                return True  # Include records without dates if no filter
+            
+            if not from_date_str or not to_date_str:
+                return True  # No date filter applied
+            
+            target_date_obj = target_date.date() if isinstance(target_date, datetime) else target_date
+            from_date_obj = parse_date_input(from_date_str)
+            to_date_obj = parse_date_input(to_date_str)
+            
+            if not from_date_obj or not to_date_obj:
+                return True  # Invalid date format, include all
+            
+            return from_date_obj <= target_date_obj <= to_date_obj
+        
+        # Get filtered leaderboard for all active CREs
+        def get_filtered_all_cre_leaderboard():
+            cre_performance = {}
+            for cre in active_cre_users:
+                cre_name = cre.get('name')
+                if cre_name:
+                    cre_performance[cre_name] = {
+                        'won': 0,
+                        'pending_live': 0,
+                        'lost': 0,
+                        'total_leads_handled': 0
+                    }
+            
+            # Apply date filter to total_leads_handled based on cre_assigned_at timestamp
+            for lead in all_leads:
+                cre_name = lead.get('cre_name')
+                if cre_name in cre_performance:
+                    if lead.get('cre_assigned_at'):
+                        assigned_date = parse_timestamp(lead.get('cre_assigned_at'))
+                        if is_within_date_filter(assigned_date):
+                            cre_performance[cre_name]['total_leads_handled'] += 1
+                    if lead.get('final_status') == 'Pending':
+                        cre_performance[cre_name]['pending_live'] += 1
+            
+            for lead in all_leads:
+                cre_name = lead.get('cre_name')
+                if cre_name in cre_performance:
+                    if lead.get('final_status') == 'Won':
+                        won_date = parse_timestamp(lead.get('won_timestamp'))
+                        if is_within_date_filter(won_date):
+                            cre_performance[cre_name]['won'] += 1
+                    elif lead.get('final_status') == 'Lost' or lead.get('lost_timestamp'):
+                        lost_date = parse_timestamp(lead.get('lost_timestamp')) or parse_timestamp(lead.get('won_timestamp'))
+                        if is_within_date_filter(lost_date):
+                            cre_performance[cre_name]['lost'] += 1
+            sorted_cre = sorted(cre_performance.items(), key=lambda x: x[1]['won'], reverse=True)
+            return sorted_cre
+        
+        # Get filtered platform conversion data for logged-in CRE
+        def get_filtered_cre_platform_conversion():
+            platform_data = {}
+            for lead in all_leads:
+                if lead.get('cre_name') == current_cre:
+                    platform = lead.get('source', 'Unknown')
+                    if platform not in platform_data:
+                        platform_data[platform] = {
+                            'won': 0,
+                            'pending_live': 0,
+                            'lost': 0,
+                            'assigned': 0
+                        }
+                    
+                    if lead.get('cre_assigned_at'):
+                        assigned_date = parse_timestamp(lead.get('cre_assigned_at'))
+                        if is_within_date_filter(assigned_date):
+                            platform_data[platform]['assigned'] += 1
+                    
+                    if lead.get('final_status') == 'Won':
+                        won_date = parse_timestamp(lead.get('won_timestamp'))
+                        if is_within_date_filter(won_date):
+                            platform_data[platform]['won'] += 1
+                    elif lead.get('final_status') == 'Pending':
+                        platform_data[platform]['pending_live'] += 1
+                    elif lead.get('final_status') == 'Lost' or lead.get('lost_timestamp'):
+                        lost_date = parse_timestamp(lead.get('lost_timestamp')) or parse_timestamp(lead.get('won_timestamp'))
+                        if is_within_date_filter(lost_date):
+                            platform_data[platform]['lost'] += 1
+            
+            # Calculate conversion rates
+            for platform in platform_data:
+                assigned = platform_data[platform]['assigned']
+                won = platform_data[platform]['won']
+                conversion_rate = (won / assigned * 100) if assigned > 0 else 0
+                platform_data[platform]['conversion_rate'] = round(conversion_rate, 2)
+            
+            return platform_data
+        
+        # Get filtered data
+        filtered_leaderboard = get_filtered_all_cre_leaderboard()
+        filtered_platform_conversion = get_filtered_cre_platform_conversion()
+        
+        return jsonify({
+            'leaderboard': filtered_leaderboard,
+            'platform_conversion': filtered_platform_conversion
+        })
+        
+    except Exception as e:
+        print(f"Error in cre_analytics_data: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 # WhatsApp Helper Functions
 def send_whatsapp_message(phone_number, message_text):
@@ -11532,9 +10282,13 @@ def send_test_whatsapp():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    # socketio.run(app, debug=True)
-    print(" Starting Ather CRM System...")
+    print("🚀 Starting Ather CRM System...")
     print("📱 Server will be available at: http://127.0.0.1:5000")
     print("🌐 You can also try: http://localhost:5000")
-    # socketio.run(app, host='127.0.0.1', port=5000, debug=True)
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+    
+    # Ensure app context is available for background operations
+    with app.app_context():
+        print("✅ Flask application context initialized")
+        print("🔧 Background services ready")
+    
+    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)

@@ -301,10 +301,6 @@
         .stat-card.warning {
             border-left: 4px solid var(--airbnb-yellow);
         }
-        
-        .stat-card.secondary {
-            border-left: 4px solid var(--airbnb-gray-500);
-        }
 
         .stat-number {
             font-size: 2.5rem;
@@ -484,6 +480,7 @@
                         <span>Manage Branch Heads</span>
                     </a>
                 </li>
+                
                 <li class="sidebar-nav-item">
                     <a href="{{ url_for('manage_rec') }}" class="sidebar-nav-link">
                         <i class="fas fa-user-cog sidebar-nav-icon"></i>
@@ -569,18 +566,12 @@
                     </div>
                 </div>
                 <div class="stat-card info">
-                    <div class="stat-number">{{ bh_count }}</div>
-                    <div class="stat-label">
-                        <i class="fas fa-user-tie"></i> Branch Heads
-                    </div>
-                </div>
-                <div class="stat-card warning">
                     <div class="stat-number">{{ leads_count }}</div>
                     <div class="stat-label">
                         <i class="fas fa-chart-line"></i> Total Leads
                     </div>
                 </div>
-                <div class="stat-card secondary">
+                <div class="stat-card warning">
                     <div class="stat-number">{{ unassigned_leads }}</div>
                     <div class="stat-label">
                         <i class="fas fa-exclamation-triangle"></i> Unassigned

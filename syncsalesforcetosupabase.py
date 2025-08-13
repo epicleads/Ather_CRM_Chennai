@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Chennai Salesforce to Supabase Synchronization Script WITH ENHANCED DUPLICATE HANDLING
-INTEGRATED: Meta API duplicate table logic for handling multiple sources
+Chennai Salesforce to Supabase Synchronization Script WITH ENHANCED DUPLICATE HANDLING & MANUAL PARSING
+Combines: Enhanced duplicate table logic + Manual parsing for robust remarks extraction
 Handles: 1. rnr  2.  3. VOC : cx enquired about on road price...
 """
 
@@ -46,8 +46,8 @@ if missing_vars:
     logger.error(f"Missing required environment variables: {', '.join(missing_vars)}")
     sys.exit(1)
 
-print("🚀 Chennai Salesforce to Supabase Sync Script (ENHANCED DUPLICATES) Starting...")
-print("=" * 70)
+print("🚀 Chennai Salesforce to Supabase Sync Script (ENHANCED DUPLICATES + MANUAL PARSING) Starting...")
+print("=" * 80)
 
 # Initialize connections
 try:
@@ -289,7 +289,7 @@ def should_update_lead(existing_record: Dict, new_lead_data: Dict) -> bool:
 
 class DuplicateLeadsHandler:
     """
-    Chennai-specific duplicate leads handler with ENHANCED duplicate table logic from Meta script
+    Chennai-specific duplicate leads handler with ENHANCED duplicate table logic + UPDATE capability
     """
     
     def __init__(self, supabase_client):
@@ -322,7 +322,7 @@ class DuplicateLeadsHandler:
     
     def process_leads_for_duplicates_and_updates(self, new_leads_df: pd.DataFrame) -> Dict[str, Any]:
         """
-        ENHANCED: Process leads with enhanced duplicate table logic from Meta script
+        ENHANCED: Process leads with enhanced duplicate table logic + UPDATE capability
         """
         if new_leads_df.empty:
             return {
@@ -363,14 +363,14 @@ class DuplicateLeadsHandler:
                 debug_stats['skipped_queue_assignments'] += 1
                 continue
             
-            # Check if phone exists in lead_master
+            # Handle existing leads
             if phone in master_records:
                 master_record = master_records[phone]
+                lead_data_dict = row.to_dict()
                 
                 # Check if this is a duplicate source/sub_source combination
                 if is_duplicate_source(master_record, current_source, current_sub_source):
                     # Same source - check if lead needs updating (new remarks/dates)
-                    lead_data_dict = row.to_dict()
                     
                     if should_update_lead(master_record, lead_data_dict):
                         # Preserve the original UID and other key fields
@@ -444,7 +444,7 @@ class DuplicateLeadsHandler:
 duplicate_handler = DuplicateLeadsHandler(supabase)
 
 # ===============================================
-# HELPER FUNCTIONS
+# FIXED HELPER FUNCTIONS - MANUAL PARSING VERSION
 # ===============================================
 
 def extract_follow_up_remarks(follow_up_remarks: str) -> Dict[str, Optional[str]]:
@@ -805,7 +805,7 @@ def update_ps_followup_record(supabase, lead_data, ps_name):
 # ===============================================
 
 def main():
-    """Main execution function for Chennai sync with enhanced duplicate handling"""
+    """Main execution function for Chennai sync with enhanced duplicate handling + manual parsing"""
     start_time_main = time.time()
     
     try:
@@ -1027,13 +1027,14 @@ def main():
             print("ℹ️ No valid leads to process from past 24 hours")
             return True
         
-        print(f"\n🔄 ENHANCED DUPLICATE HANDLING")
-        print("=" * 35)
+        print(f"\n🔄 ENHANCED DUPLICATE HANDLING + MANUAL PARSING")
+        print("=" * 55)
         print(f"🎯 Features:")
         print(f"   - Same phone + same source/sub-source → UPDATE or SKIP")
         print(f"   - Same phone + different source → DUPLICATE TABLE")
         print(f"   - New phone → INSERT as new lead")
         print(f"   - Duplicate table supports up to 10 sources per phone")
+        print(f"   - Manual parsing: '1. rnr  2.  3. VOC : cx enquired...'")
         
         # Process duplicates with enhanced duplicate table handling
         df_processed = pd.DataFrame(processed_leads)
@@ -1113,7 +1114,6 @@ def main():
                         # Update PS follow-up record if this is a PS lead
                         if lead_dict.get('ps_name'):
                             update_ps_followup_record(supabase, lead_dict, lead_dict['ps_name'])
-                        
                     else:
                         print(f"❌ Failed to update: {uid}")
                         
@@ -1142,8 +1142,8 @@ def main():
         # Final execution summary
         execution_time = time.time() - start_time_main
         
-        print(f"\n🎉 CHENNAI SYNC COMPLETED (ENHANCED DUPLICATES)")
-        print("=" * 50)
+        print(f"\n🎉 CHENNAI SYNC COMPLETED (ENHANCED DUPLICATES + MANUAL PARSING)")
+        print("=" * 65)
         print(f"⏱️ Execution time: {execution_time:.2f} seconds")
         print(f"📦 Total leads fetched: {debug_stats['total_fetched']} (past 24 hours only)")
         print(f"🆕 NEW leads inserted: {debug_stats['new_leads_inserted']}")
@@ -1180,7 +1180,7 @@ def main():
             for source in sorted(debug_stats['unmapped_sources']):
                 print(f"   - {source}")
         
-        print(f"\n🎯 MANUAL PARSING EXAMPLE:")
+        print(f"\n🎯 MANUAL PARSING EXAMPLE FOR YOUR CASE:")
         print(f"   Input: '1. rnr  2.  3. VOC : cx enquired about on road price...'")
         print(f"   ✅ first_remark: 'rnr'")
         print(f"   ✅ second_remark: NULL (empty section)")
@@ -1208,7 +1208,7 @@ def main():
         print(f"   📝 Successful remark extractions: {debug_stats['remark_extraction_success']}")
         print(f"   📅 Successful date mappings: {debug_stats['date_mapping_success']}")
         
-        logger.info("Chennai sync completed successfully (enhanced duplicates)")
+        logger.info("Chennai sync completed successfully (enhanced duplicates + manual parsing)")
         return True
         
     except Exception as e:
@@ -1218,31 +1218,70 @@ def main():
 
 if __name__ == "__main__":
     try:
-        print("🏢 CHENNAI SALESFORCE TO SUPABASE SYNC (ENHANCED DUPLICATES)")
-        print("=" * 70)
-        print("🎯 ENHANCED DUPLICATE HANDLING Features:")
-        print("   - Manual parsing: '1. rnr  2.  3. VOC : cx enquired...'")
-        print("   - Same phone + same source → UPDATE or SKIP")
-        print("   - Same phone + different source → DUPLICATE TABLE")
-        print("   - Duplicate table supports up to 10 sources per phone")
+        print("🏢 CHENNAI SALESFORCE TO SUPABASE SYNC (ENHANCED DUPLICATES + MANUAL PARSING)")
+        print("=" * 80)
+        print("🎯 COMBINED FEATURES:")
+        print("   - Manual parsing for robust remarks extraction")
+        print("   - Enhanced duplicate table logic (like Meta script)")
         print("   - Only processes leads CREATED in past 24 hours")
-        print("   - All original Chennai features retained")
-        print("=" * 70)
+        print("   - Handles empty remark sections: '1. rnr  2.  3. VOC...'")
+        print("   - Same phone + different sources → duplicate_leads table")
+        print("   - Same phone + same source → UPDATE or SKIP")
+        print("   - Supports up to 10 sources per phone number")
+        print("   - Branch and lead_status set to NULL")
+        print("   - PS records with ps_branch and lead_status NULL")
         
         success = main()
+        
         if success:
-            print("\n✅ Script completed successfully")
-            logger.info("Script completed successfully")
+            print("\n🎉 SCRIPT EXECUTION COMPLETED SUCCESSFULLY!")
+            print("=" * 50)
+            print("🔧 Key Features Implemented:")
+            print("   ✅ Enhanced duplicate handling with duplicate_leads table")
+            print("   ✅ Manual parsing for complex remark formats")
+            print("   ✅ Proper UPDATE logic for existing leads")
+            print("   ✅ Only processes leads created in past 24 hours")
+            print("   ✅ Chennai CRE and PS mappings")
+            print("   ✅ Robust error handling and logging")
+            print("   ✅ NULL values for branch and lead_status")
+            print("   ✅ Handles 'NONE' values properly")
+            print("   ✅ Supports up to 10 duplicate sources per phone")
+            
+            print("\n💡 MANUAL PARSING EXAMPLE:")
+            print("   Input: '1. rnr  2.  3. VOC : cx enquired about on road price'")
+            print("   Result:")
+            print("     ✅ first_remark: 'rnr'")
+            print("     ✅ second_remark: NULL (empty section)")
+            print("     ✅ third_remark: 'VOC : cx enquired about on road price'")
+            print("     ✅ fourth_remark through seventh_remark: NULL")
+            
+            print("\n🔄 DUPLICATE HANDLING LOGIC:")
+            print("   📞 Same phone + same source/sub_source:")
+            print("     → If new remarks/dates: UPDATE existing lead")
+            print("     → If no changes: SKIP (exact duplicate)")
+            print("   📞 Same phone + different source:")
+            print("     → First duplicate: CREATE record in duplicate_leads table")
+            print("     → Additional duplicates: ADD to existing duplicate_leads record")
+            print("     → Supports up to 10 sources per phone number")
+            
+            print("\n🎯 SCRIPT OPTIMIZATIONS:")
+            print("   ⚡ Only fetches leads CREATED in past 24 hours (not modified)")
+            print("   ⚡ Batch processing for better performance")
+            print("   ⚡ Enhanced logging with UTF-8 encoding")
+            print("   ⚡ Retry logic for Salesforce connections")
+            print("   ⚡ Efficient duplicate checking")
+            
             sys.exit(0)
         else:
-            print("\n❌ Script completed with errors")
-            logger.error("Script completed with errors")
+            print("\n❌ SCRIPT EXECUTION FAILED!")
+            print("Check the logs for detailed error information.")
             sys.exit(1)
+            
     except KeyboardInterrupt:
-        print("\n⏹️ Script interrupted by user")
+        print("\n⚠️ Script interrupted by user")
         logger.info("Script interrupted by user")
-        sys.exit(130)
+        sys.exit(1)
     except Exception as e:
-        print(f"\n💥 Unexpected error: {e}")
+        print(f"\n❌ Unexpected error: {e}")
         logger.error(f"Unexpected error: {e}")
         sys.exit(1)

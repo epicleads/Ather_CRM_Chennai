@@ -230,8 +230,11 @@ class AuthManager:
                 print(f"Warning: Could not check rate limit or log attempt: {e}")
                 # Continue with authentication even if logging fails
 
-            # Get user data
-            table_name = f"{user_type}_users"
+            # Get user data - handle branch head users separately
+            if user_type == 'bh':
+                table_name = 'branch_head_users'
+            else:
+                table_name = f"{user_type}_users"
             print(f"[DEBUG] Querying table: {table_name} for username: {username}")
             result = self.supabase.table(table_name).select('*').eq('username', username).execute()
             print(f"[DEBUG] Query result - Found {len(result.data) if result.data else 0} users")
@@ -730,6 +733,19 @@ def require_rec(f):
     def decorated_function(*args, **kwargs):
         if session.get('user_type') != 'rec':
             flash('Receptionist access required', 'error')
+            return redirect(url_for('index'))
+        return f(*args, **kwargs)
+
+    return decorated_function
+
+
+def require_bh(f):
+    """Decorator to require Branch Head access"""
+
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if session.get('user_type') != 'bh':
+            flash('Branch Head access required', 'error')
             return redirect(url_for('index'))
         return f(*args, **kwargs)
 
