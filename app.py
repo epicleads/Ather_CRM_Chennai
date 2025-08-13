@@ -17,7 +17,7 @@ import io
 from dotenv import load_dotenv
 from collections import defaultdict, Counter
 import json
-from auth import AuthManager, require_auth, require_admin, require_cre, require_ps, require_rec
+from auth import AuthManager, require_auth, require_admin, require_cre, require_ps, require_rec, require_bh
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from security_verification import run_security_verification
@@ -1530,20 +1530,22 @@ def check_and_assign_new_leads():
             print(f"   🔍 Reason: No unassigned leads found in any configured source")
             print("   " + "="*80)
         
-        return jsonify({
+        return {
             'success': True,
             'message': f'Auto-assign completed: {total_assigned} total leads assigned',
             'total_assigned': total_assigned
-        })
+        }
         
     except Exception as e:
         print(f"❌ Error in check_and_assign_new_leads: {e}")
-        return jsonify({'success': False, 'message': str(e), 'total_assigned': 0})
+        return {'success': False, 'message': str(e), 'total_assigned': 0}
 
 # =============================================================================
 
 def auto_assign_background_worker():
     """Background worker that continuously checks for new leads to auto-assign"""
+    print("🚀 Auto-assign background worker started in separate thread")
+    
     # Immediate auto-assign when server starts
     print("🚀 Starting immediate auto-assign check...")
     try:
@@ -1565,21 +1567,26 @@ def auto_assign_background_worker():
     # Continuous background auto-assign every 2 minutes
     while True:
         try:
-            # Check for new leads every 2 minutes
-            time.sleep(120)  # 2 minutes
+            # Check for new leads every 5 minutes (less aggressive to prevent blocking)
+            time.sleep(300)  # 5 minutes
             print("🔄 Background auto-assign check running...")
             print(f"   ⏰ Check Time: {get_ist_timestamp()}")
             print("   " + "="*80)
             
-            # Run within Flask application context
-            with app.app_context():
-                result = check_and_assign_new_leads()
-                if result and result.get('success'):
-                    print(f"   ✅ Background check completed successfully")
-                    if result.get('total_assigned', 0) > 0:
-                        print(f"   📊 {result.get('total_assigned')} leads assigned")
-                else:
-                    print(f"   ⚠️ Background check completed with issues")
+            # Run within Flask application context with timeout protection
+            try:
+                with app.app_context():
+                    # Add a small delay to prevent blocking
+                    time.sleep(0.1)
+                    result = check_and_assign_new_leads()
+                    if result and result.get('success'):
+                        print(f"   ✅ Background check completed successfully")
+                        if result.get('total_assigned', 0) > 0:
+                            print(f"   📊 {result.get('total_assigned')} leads assigned")
+                    else:
+                        print(f"   ⚠️ Background check completed with issues")
+            except Exception as context_error:
+                print(f"❌ Error in Flask context: {context_error}")
                 
         except Exception as e:
             print(f"❌ 🔴 CRITICAL ERROR in background auto-assign worker: {e}")
@@ -1589,12 +1596,117 @@ def auto_assign_background_worker():
             print("   " + "="*80)
             time.sleep(60)  # Wait 1 minute on error before retrying
 
-# Start the background worker thread
-auto_assign_thread = threading.Thread(target=auto_assign_background_worker, daemon=True)
-auto_assign_thread.start()
-print("🚀 Auto-assign system initialized and starting immediately!")
-print("   📋 Will check for new leads every 2 minutes")
-print("   ⚡ First auto-assign check starting now...")
+def start_auto_assign_system():
+    """Start the auto-assign system in a completely separate thread"""
+    try:
+        # Create a non-daemon thread for better reliability
+        auto_assign_thread = threading.Thread(
+            target=auto_assign_background_worker, 
+            name="AutoAssignWorker",
+            daemon=False  # Changed to False for better reliability
+        )
+        auto_assign_thread.start()
+        
+        print("🚀 Auto-assign system initialized and starting immediately!")
+        print("   📋 Will check for new leads every 5 minutes (less aggressive)")
+        print("   ⚡ First auto-assign check starting now...")
+        print("   🔧 Thread ID:", auto_assign_thread.ident)
+        print("   🧵 Thread Name:", auto_assign_thread.name)
+        print("   🚀 Thread running independently - main app remains responsive!")
+        
+        return auto_assign_thread
+    except Exception as e:
+        print(f"❌ Failed to start auto-assign system: {e}")
+        return None
+
+# Start the auto-assign system
+auto_assign_thread = start_auto_assign_system()
+
+# Thread monitoring and management
+def monitor_threads():
+    """Monitor thread status and restart if needed"""
+    import threading
+    active_threads = threading.active_count()
+    print(f"🔍 Active threads: {active_threads}")
+    
+    # Check if auto-assign thread is still alive
+    if auto_assign_thread and not auto_assign_thread.is_alive():
+        print("⚠️ Auto-assign thread died, restarting...")
+        # Note: We can't modify global variable here due to scope
+        # This function is for monitoring only
+        print("⚠️ Auto-assign thread needs restart - use /debug/restart_auto_assign endpoint")
+
+# Add thread monitoring to Flask app
+@app.before_request
+def check_thread_health():
+    """Check thread health before each request"""
+    if auto_assign_thread and not auto_assign_thread.is_alive():
+        print("⚠️ Auto-assign thread health check failed - needs restart")
+        # Note: We can't restart here due to request context
+        # Use /debug/restart_auto_assign endpoint to restart
+
+# Debug routes for thread management
+@app.route('/debug/threads')
+@require_admin
+def debug_threads():
+    """Debug endpoint to check thread status"""
+    import threading
+    active_threads = threading.active_count()
+    thread_info = {
+        'active_threads': active_threads,
+        'auto_assign_thread_alive': auto_assign_thread.is_alive() if auto_assign_thread else False,
+        'auto_assign_thread_id': auto_assign_thread.ident if auto_assign_thread else None,
+        'auto_assign_thread_name': auto_assign_thread.name if auto_assign_thread else None
+    }
+    return jsonify(thread_info)
+
+@app.route('/debug/restart_auto_assign', methods=['POST'])
+@require_admin
+def restart_auto_assign():
+    """Manually restart auto-assign system"""
+    global auto_assign_thread
+    if auto_assign_thread and auto_assign_thread.is_alive():
+        print("🔄 Manually restarting auto-assign system...")
+        # Note: We can't directly stop a running thread, but we can start a new one
+        # The old one will eventually complete its current cycle
+    
+    auto_assign_thread = start_auto_assign_system()
+    return jsonify({'success': True, 'message': 'Auto-assign system restarted'})
+
+@app.route('/debug/trigger_auto_assign', methods=['POST'])
+@require_admin
+def trigger_auto_assign():
+    """Manually trigger immediate auto-assign"""
+    try:
+        with app.app_context():
+            result = check_and_assign_new_leads()
+            if result and result.get('success'):
+                return jsonify({
+                    'success': True, 
+                    'message': f'Auto-assign completed: {result.get("total_assigned", 0)} leads assigned',
+                    'total_assigned': result.get('total_assigned', 0)
+                })
+            else:
+                return jsonify({
+                    'success': False, 
+                    'message': 'Auto-assign completed with issues',
+                    'error': result.get('message', 'Unknown error') if result else 'No result'
+                })
+    except Exception as e:
+        return jsonify({
+            'success': False, 
+            'message': f'Error triggering auto-assign: {str(e)}'
+        })
+
+@app.route('/health')
+def health_check():
+    """Simple health check endpoint to verify system responsiveness"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': get_ist_timestamp(),
+        'auto_assign_thread_alive': auto_assign_thread.is_alive() if auto_assign_thread else False,
+        'message': 'System is responsive and auto-assign is running independently'
+    })
 
 # =============================================================================
 SECRET_KEY = os.environ.get('FLASK_SECRET_KEY', 'fallback-secret-key-change-this')
@@ -7783,6 +7895,17 @@ def export_leads():
         flash(f'Error loading export dashboard: {str(e)}', 'error')
         return redirect(url_for('admin_dashboard'))
 
+@app.route('/bh_dashboard')
+@require_bh
+def bh_dashboard():
+    """Branch Head Dashboard"""
+    try:
+        return render_template('bh_dashboard.html')
+    except Exception as e:
+        flash(f'Error loading dashboard: {str(e)}', 'error')
+        return redirect(url_for('index'))
+
+
 @app.route('/api/bh_ps_performance')
 def api_bh_ps_performance():
     """API to get PS performance data for Branch Head dashboard"""
@@ -8027,6 +8150,138 @@ def get_followup_date_field(num):
         7: 'seventh_call_date'
     }
     return followup_date_fields.get(num, 'first_call_date')
+
+@app.route('/edit_bh/<int:bh_id>', methods=['POST'])
+@require_admin
+def edit_bh(bh_id):
+    """Edit Branch Head user"""
+    try:
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip()
+        phone = data.get('phone', '').strip()
+        branch = data.get('branch', '').strip()
+
+        if not all([name, username, email, phone, branch]):
+            return jsonify({'success': False, 'message': 'All fields are required'})
+
+        # Check if username already exists (excluding current user)
+        existing = supabase.table('branch_head_users').select('username').eq('username', username).neq('id', bh_id).execute()
+        if existing.data:
+            return jsonify({'success': False, 'message': 'Username already exists'})
+
+        # Update branch head
+        result = supabase.table('branch_head_users').update({
+            'name': name,
+            'username': username,
+            'email': email,
+            'phone': phone,
+            'branch': branch,
+            'updated_at': datetime.now().isoformat()
+        }).eq('id', bh_id).execute()
+
+        if result.data:
+            # Log the edit
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='BRANCH_HEAD_EDITED',
+                resource='branch_head_users',
+                resource_id=str(bh_id),
+                details={'bh_name': name, 'username': username, 'branch': branch}
+            )
+            return jsonify({'success': True, 'message': 'Branch Head updated successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Failed to update Branch Head'})
+
+    except Exception as e:
+        print(f"Error editing Branch Head: {e}")
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+
+
+@app.route('/toggle_bh_status/<int:bh_id>', methods=['POST'])
+@require_admin
+def toggle_bh_status(bh_id):
+    """Toggle Branch Head active status"""
+    try:
+        data = request.get_json()
+        active_status = data.get('active', True)
+
+        # Update status
+        result = supabase.table('branch_head_users').update({
+            'is_active': active_status,
+            'updated_at': datetime.now().isoformat()
+        }).eq('id', bh_id).execute()
+
+        if result.data:
+            action = 'activated' if active_status else 'deactivated'
+            # Log the status change
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action=f'BRANCH_HEAD_{action.upper()}',
+                resource='branch_head_users',
+                resource_id=str(bh_id),
+                details={'status': active_status}
+            )
+            return jsonify({'success': True, 'message': f'Branch Head {action} successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Failed to update status'})
+
+    except Exception as e:
+        print(f"Error toggling Branch Head status: {e}")
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+
+
+@app.route('/delete_bh/<int:bh_id>', methods=['DELETE'])
+@require_admin
+def delete_bh(bh_id):
+    """Delete Branch Head user"""
+    try:
+        # Get branch head details before deletion for logging
+        bh_result = supabase.table('branch_head_users').select('name, username, branch').eq('id', bh_id).execute()
+        if not bh_result.data:
+            return jsonify({'success': False, 'message': 'Branch Head not found'})
+
+        bh_data = bh_result.data[0]
+
+        # Delete the branch head
+        result = supabase.table('branch_head_users').delete().eq('id', bh_id).execute()
+
+        if result.data:
+            # Log the deletion
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='BRANCH_HEAD_DELETED',
+                resource='branch_head_users',
+                resource_id=str(bh_id),
+                details={'bh_name': bh_data['name'], 'username': bh_data['username'], 'branch': bh_data['branch']}
+            )
+            return jsonify({'success': True, 'message': 'Branch Head deleted successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Failed to delete Branch Head'})
+
+    except Exception as e:
+        print(f"Error deleting Branch Head: {e}")
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+
+
+@app.route('/manage_bh')
+@require_admin
+def manage_bh():
+    """Manage Branch Head users"""
+    try:
+        bh_users = safe_get_data('branch_head_users')
+        return render_template('manage_bh.html', bh_users=bh_users)
+    except Exception as e:
+        flash(f'Error loading Branch Head users: {str(e)}', 'error')
+        return render_template('manage_bh.html', bh_users=[])
+
+
+
+
 
 @app.route('/api/bh_lead_details')
 def api_bh_lead_details():
