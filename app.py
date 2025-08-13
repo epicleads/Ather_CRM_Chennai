@@ -10351,6 +10351,14 @@ def api_bh_ps_performance():
                     if lead.get('seventh_call_date'):
                         f7_count += 1
             
+            # Get Won(MTD) - leads with final_status = 'Won' and won_timestamp in current month
+            won_mtd_result = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_name', ps_name).eq('final_status', 'Won').gte('won_timestamp', first_day_of_month).lte('won_timestamp', last_day_of_month).execute()
+            won_mtd = won_mtd_result.count or 0
+            
+            # Get Lost(MTD) - leads with final_status = 'Lost' and lost_timestamp in current month
+            lost_mtd_result = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_name', ps_name).eq('final_status', 'Lost').gte('lost_timestamp', first_day_of_month).lte('lost_timestamp', last_day_of_month).execute()
+            lost_mtd = lost_mtd_result.count or 0
+            
             performance_data.append({
                 'ps_name': ps_name,
                 'total_leads_assigned': total_leads,
@@ -10361,8 +10369,8 @@ def api_bh_ps_performance():
                 'f5': f5_count,
                 'f6': f6_count,
                 'f7': f7_count,
-                'lost_mtd': 0,  # Placeholder for now
-                'won_mtd': 0    # Placeholder for now
+                'lost_mtd': lost_mtd,
+                'won_mtd': won_mtd
             })
         
         return jsonify({

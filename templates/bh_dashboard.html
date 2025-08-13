@@ -74,7 +74,7 @@
                     <div class="card-footer bg-light">
                         <small class="text-muted">
                             <i class="fas fa-info-circle me-1"></i>
-                            <strong>Note:</strong> All data shown above (Total Leads Assigned, F1-F7) is filtered for the current month based on the <code>ps_assigned_at</code> column. Lost(MTD) and Won(MTD) columns will be implemented in future updates.
+                            <strong>Note:</strong> All data shown above (Total Leads Assigned, F1-F7) is filtered for the current month based on the <code>ps_assigned_at</code> column. Won(MTD) shows leads won in current month, Lost(MTD) shows leads lost in current month.
                         </small>
                     </div>
                 </div>
@@ -240,6 +240,8 @@ function displayPSPerformance(performanceData, branch) {
     let totalF5 = 0;
     let totalF6 = 0;
     let totalF7 = 0;
+    let totalWonMTD = 0;
+    let totalLostMTD = 0;
     
     performanceData.forEach((ps, index) => {
         if (!processedPS.has(ps.ps_name)) {
@@ -257,6 +259,8 @@ function displayPSPerformance(performanceData, branch) {
             totalF5 += ps.f5;
             totalF6 += ps.f6;
             totalF7 += ps.f7;
+            totalWonMTD += ps.won_mtd;
+            totalLostMTD += ps.lost_mtd;
             
             html += `<tr>
                 <td rowspan="${psRows}" class="align-middle branch-cell">${branch}</td>
@@ -286,8 +290,8 @@ function displayPSPerformance(performanceData, branch) {
         <td class="text-center"><span class="f-count positive">${totalF5}</span></td>
         <td class="text-center"><span class="f-count positive">${totalF6}</span></td>
         <td class="text-center"><span class="f-count positive">${totalF7}</span></td>
-        <td class="text-center text-danger fw-bold">-</td>
-        <td class="text-center text-success fw-bold">-</td>
+        <td class="text-center text-danger fw-bold">${totalLostMTD}</td>
+        <td class="text-center text-success fw-bold">${totalWonMTD}</td>
     </tr>`;
     
     tbody.innerHTML = html;
