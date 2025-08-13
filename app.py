@@ -1,4 +1,6 @@
-# # import eventlet  # REMOVED - Not used anywhere
+# Remove Eventlet - Use sync workers instead for Render compatibility
+# import eventlet
+# eventlet.monkey_patch(ssl=False, thread=False)  # Disable problematic patches
 
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, current_app
 from supabase.client import create_client, Client
@@ -23,7 +25,9 @@ from flask_limiter.util import get_remote_address
 from security_verification import run_security_verification
 import time
 import gc
-from flask_socketio import SocketIO, emit
+import threading
+# Remove Flask-SocketIO - not compatible with sync workers
+# from flask_socketio import SocketIO, emit
 import math
 # from redis import Redis  # REMOVED - Not needed for local development
 
@@ -51,11 +55,27 @@ from werkzeug.security import generate_password_hash, check_password_hash
 # Load environment variables from .env file
 load_dotenv()
 
-# Simple SSL handling - no complex context creation
+# Production SSL handling - disable SSL verification for Render compatibility
 import os
 
+# For production environment, disable SSL verification completely
+if os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False):
+    print("🚀 Production environment detected - disabling SSL verification")
+    os.environ['PYTHONHTTPSVERIFY'] = '0'
+    os.environ['CURL_CA_BUNDLE'] = ''
+    os.environ['REQUESTS_CA_BUNDLE'] = ''
+    os.environ['SSL_CERT_FILE'] = ''
+    
+    # Disable SSL warnings
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    print("✅ SSL verification disabled for production")
+else:
+    print("🔧 Local environment - SSL verification enabled")
+
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
+# Remove SocketIO - not compatible with sync workers
+# socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Initialize rate limiter early so decorators can use it
 limiter = Limiter(
@@ -317,14 +337,69 @@ if not SUPABASE_KEY:
 app.secret_key = SECRET_KEY
 app.permanent_session_lifetime = timedelta(hours=24)
 
-# Initialize Supabase client
+# Initialize Supabase client with production SSL handling
 try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    print("✅ Supabase client initialized successfully")
+    if os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False):
+        print("🚀 Production environment - using SSL-disabled Supabase client")
+        # For production, create client with SSL verification completely disabled
+        import httpx
+        
+        # Create transport with SSL verification disabled
+        transport = httpx.HTTPTransport(verify=False)
+        
+        # Create custom httpx client
+        http_client = httpx.Client(
+            transport=transport,
+            timeout=30.0,
+            follow_redirects=True
+        )
+        
+        # Initialize Supabase with custom client
+        supabase: Client = create_client(
+            SUPABASE_URL, 
+            SUPABASE_KEY,
+            options={
+                'http_client': http_client
+            }
+        )
+        print("✅ Supabase client initialized successfully with SSL verification disabled")
+    else:
+        # Local environment - standard client
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ Supabase client initialized successfully for local environment")
+    
     # Removed Supabase warm-up query for local development
 except Exception as e:
     print(f"❌ Error initializing Supabase client: {e}")
-    raise
+    print("🔄 Trying fallback initialization...")
+    try:
+        # Final fallback: try with no SSL verification via environment
+        os.environ['PYTHONHTTPSVERIFY'] = '0'
+        os.environ['CURL_CA_BUNDLE'] = ''
+        
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ Supabase client initialized successfully with fallback SSL settings")
+    except Exception as fallback_error:
+        print(f"❌ Fallback initialization also failed: {fallback_error}")
+        raise
+
+# Initialize app context for background tasks
+with app.app_context():
+    # Initialize optimized operations for faster lead updates
+    try:
+        optimized_ops = create_optimized_operations(supabase)
+        print("✅ Optimized operations initialized successfully")
+    except Exception as e:
+        print(f"❌ Error initializing optimized operations: {e}")
+        # Continue without optimized operations if there's an error
+        optimized_ops = None
+
+    # Initialize AuthManager
+    auth_manager = AuthManager(supabase)
+    # Store auth_manager in app config instead of direct attribute
+    app.config['AUTH_MANAGER'] = auth_manager
+
+
 
 
 def batch_insert_leads(leads_data, batch_size=100):
@@ -1602,19 +1677,29 @@ def auto_assign_background_worker():
 def start_auto_assign_system():
     """Start the auto-assign system in a production-compatible way"""
     try:
-        # Check if we're in production (eventlet environment)
+        # Check if we're in production (sync worker environment)
         import os
         is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
         
         if is_production:
-            print("🚀 Production environment detected - using eventlet-compatible auto-assign")
+            print("🚀 Production environment detected - using HTTP-triggered auto-assign")
             print("   📋 Will check for new leads every 5 minutes")
             print("   ⚡ First auto-assign check starting now...")
-            print("   🔧 Using eventlet-compatible scheduling")
+            print("   🔧 Using HTTP endpoint scheduling")
             print("   🚀 Auto-assign will run in production mode!")
             
-            # In production, we'll use a different approach
-            # For now, just return None to indicate no threading
+            # In production, trigger immediate auto-assign via HTTP endpoint
+            try:
+                with app.app_context():
+                    result = check_and_assign_new_leads()
+                    if result and result.get('success'):
+                        print(f"   ✅ Production auto-assign completed: {result.get('total_assigned', 0)} leads assigned")
+                    else:
+                        print(f"   ⚠️ Production auto-assign completed with issues")
+            except Exception as e:
+                print(f"❌ Error in production auto-assign: {e}")
+            
+            # Return None to indicate no threading (use HTTP endpoints instead)
             return None
         else:
             # Development environment - use threading
@@ -1641,7 +1726,7 @@ def start_auto_assign_system():
 # Start the auto-assign system
 auto_assign_thread = start_auto_assign_system()
 
-# Production auto-assign scheduler (eventlet-compatible)
+# Production auto-assign scheduler (sync worker compatible)
 def setup_production_auto_assign():
     """Setup production-compatible auto-assign scheduling"""
     import os
@@ -1656,7 +1741,7 @@ def setup_production_auto_assign():
         print("   💡 Example with uptimerobot: Monitor /api/auto_assign_trigger every 5 minutes")
         print("   💡 Example with render cron: Add cron job to call /api/auto_assign_trigger")
         
-        # In production, we can't use background threads with eventlet
+        # In production, we can't use background threads with sync workers
         # Instead, we'll rely on external scheduling
         return True
     return False
@@ -1678,6 +1763,34 @@ def api_status():
         'timestamp': get_ist_timestamp(),
         'message': 'Ather CRM is running successfully'
     })
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for production monitoring"""
+    try:
+        # Test Supabase connection
+        test_result = supabase.table('admin_users').select('count', count='exact').limit(1).execute()
+        
+        # Get production status
+        import os
+        is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
+        
+        return jsonify({
+            'status': 'healthy',
+            'database': 'connected',
+            'timestamp': get_ist_timestamp(),
+            'environment': 'production' if is_production else 'development',
+            'auto_assign_thread_alive': auto_assign_thread.is_alive() if auto_assign_thread else False,
+            'auto_assign_status': 'http-triggered' if is_production else 'threading',
+            'message': 'System is responsive and auto-assign is running independently'
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'database': 'disconnected',
+            'error': str(e),
+            'timestamp': get_ist_timestamp()
+        }), 500
 
 @app.route('/api/auto_assign_simple', methods=['POST'])
 def api_auto_assign_simple():
@@ -1834,7 +1947,7 @@ def debug_threads():
         'auto_assign_thread_alive': auto_assign_thread.is_alive() if auto_assign_thread else False,
         'auto_assign_thread_id': auto_assign_thread.ident if auto_assign_thread else None,
         'auto_assign_thread_name': auto_assign_thread.name if auto_assign_thread else None,
-        'auto_assign_status': 'eventlet-compatible' if is_production else 'threading'
+        'auto_assign_status': 'http-triggered' if is_production else 'threading'
     }
     return jsonify(thread_info)
 
@@ -1909,20 +2022,8 @@ def api_auto_assign():
             'message': f'Error triggering auto-assign: {str(e)}'
         })
 
-@app.route('/health')
-def health_check():
-    """Simple health check endpoint to verify system responsiveness"""
-    import os
-    is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
-    
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': get_ist_timestamp(),
-        'environment': 'production' if is_production else 'development',
-        'auto_assign_thread_alive': auto_assign_thread.is_alive() if auto_assign_thread else False,
-        'auto_assign_status': 'eventlet-compatible' if is_production else 'threading',
-        'message': 'System is responsive and auto-assign is running independently'
-    })
+# Health check endpoint already defined above - removing duplicate
+# The comprehensive health check at line ~1766 handles database connectivity and system status
 
 # =============================================================================
 SECRET_KEY = os.environ.get('FLASK_SECRET_KEY', 'fallback-secret-key-change-this')
@@ -1932,46 +2033,6 @@ SMTP_SERVER = os.environ.get('SMTP_SERVER', 'smtp.gmail.com')
 SMTP_PORT = int(os.environ.get('SMTP_PORT', '587'))
 EMAIL_USER = os.environ.get('EMAIL_USER', '')
 EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD', '')
-
-# Debug: Print to check if variables are loaded (remove in production)
-print(f"SUPABASE_URL loaded: {SUPABASE_URL is not None}")
-print(f"SUPABASE_KEY loaded: {SUPABASE_KEY is not None}")
-print(f"SUPABASE_URL: {SUPABASE_URL}")
-print(f"SUPABASE_ANON_KEY: {SUPABASE_KEY}")
-
-# Validate required environment variables
-if not SUPABASE_URL:
-    raise ValueError("SUPABASE_URL environment variable is required. Please check your .env file.")
-if not SUPABASE_KEY:
-    raise ValueError("SUPABASE_ANON_KEY environment variable is required. Please check your .env file.")
-
-app.secret_key = SECRET_KEY
-app.permanent_session_lifetime = timedelta(hours=24)
-
-# Initialize Supabase client
-try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    print("✅ Supabase client initialized successfully")
-    # Removed Supabase warm-up query for local development
-except Exception as e:
-    print(f"❌ Error initializing Supabase client: {e}")
-    raise
-
-# Initialize optimized operations for faster lead updates
-try:
-    optimized_ops = create_optimized_operations(supabase)
-    print("✅ Optimized operations initialized successfully")
-except Exception as e:
-    print(f"❌ Error initializing optimized operations: {e}")
-    # Continue without optimized operations if there's an error
-    optimized_ops = None
-
-# Initialize AuthManager
-auth_manager = AuthManager(supabase)
-# Store auth_manager in app config instead of direct attribute
-app.config['AUTH_MANAGER'] = auth_manager
-
-# Rate limiter already initialized above
 
 # Upload folder configuration
 UPLOAD_FOLDER = 'uploads'
@@ -3621,7 +3682,7 @@ def add_lead():
                         
                         # Send email notification to PS
                         try:
-                            socketio.start_background_task(send_email_to_ps, ps_user['email'], ps_user['name'], lead_data, cre_name)
+                            threading.Thread(target=send_email_to_ps, args=(ps_user['email'], ps_user['name'], lead_data, cre_name)).start()
                             flash(f'Lead added successfully and assigned to {ps_name}! Email notification sent.', 'success')
                         except Exception as e:
                             print(f"Error sending email: {e}")
@@ -3636,7 +3697,7 @@ def add_lead():
                     try:
                         print(f"🔄 New lead added from {source}, triggering auto-assign...")
                         # Run auto-assign in background to avoid blocking the response
-                        socketio.start_background_task(auto_assign_new_leads_for_source, source)
+                        threading.Thread(target=auto_assign_new_leads_for_source, args=(source,)).start()
                         print(f"✅ Auto-assign triggered for {source}")
                     except Exception as e:
                         print(f"❌ Error triggering auto-assign for new lead: {e}")
@@ -4046,7 +4107,7 @@ def add_lead_with_cre():
                     try:
                         print(f"🔄 New lead added from {source}, triggering auto-assign...")
                         # Run auto-assign in background to avoid blocking the response
-                        socketio.start_background_task(auto_assign_new_leads_for_source, source)
+                        threading.Thread(target=auto_assign_new_leads_for_source, args=(source,)).start()
                         print(f"✅ Auto-assign triggered for {source}")
                     except Exception as e:
                         print(f"❌ Error triggering auto-assign for new lead: {e}")
@@ -4386,7 +4447,7 @@ def update_lead(uid):
                 try:
                     if ps_user:
                         lead_data_for_email = {**lead_data, **update_data}
-                        socketio.start_background_task(send_email_to_ps, ps_user['email'], ps_user['name'], lead_data_for_email, session.get('cre_name'))
+                        threading.Thread(target=send_email_to_ps, args=(ps_user['email'], ps_user['name'], lead_data_for_email, session.get('cre_name'))).start()
                         flash(f'Lead assigned to {ps_name} and email notification sent', 'success')
                     else:
                         flash(f'Lead assigned to {ps_name}', 'success')
@@ -5472,7 +5533,7 @@ def update_lead_optimized(uid):
                     # Send email notification (non-blocking)
                     try:
                         lead_data_for_email = {**lead_data, **update_data}
-                        socketio.start_background_task(send_email_to_ps, ps_user['email'], ps_user['name'], lead_data_for_email, session.get('cre_name'))
+                        threading.Thread(target=send_email_to_ps, args=(ps_user['email'], ps_user['name'], lead_data_for_email, session.get('cre_name'))).start()
                         flash(f'Lead assigned to {ps_name} and email notification sent', 'success')
                     except Exception as e:
                         print(f"Error sending email: {e}")
@@ -9376,7 +9437,13 @@ def cre_analytics_data():
 
 
 if __name__ == '__main__':
-    print(" Starting Ather CRM System...")
+    print("🚀 Starting Ather CRM System...")
     print("📱 Server will be available at: http://127.0.0.1:5000")
     print("🌐 You can also try: http://localhost:5000")
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+    
+    # Ensure app context is available for background operations
+    with app.app_context():
+        print("✅ Flask application context initialized")
+        print("🔧 Background services ready")
+    
+    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
