@@ -233,36 +233,7 @@ def auto_assign_new_leads_for_source(source):
 import threading
 import time
 
-def auto_assign_background_worker():
-    """Background worker that continuously checks for new leads to auto-assign"""
-    while True:
-        try:
-            # Check for new leads every 2 minutes
-            time.sleep(120)  # 2 minutes
-            print("🔄 Background auto-assign check running...")
-            print(f"   ⏰ Check Time: {get_ist_timestamp()}")
-            print("   " + "="*80)
-            
-            # Run within Flask application context
-            with app.app_context():
-                result = check_and_assign_new_leads()
-                if result and result.get('success'):
-                    print(f"   ✅ Background check completed successfully")
-                else:
-                    print(f"   ⚠️ Background check completed with issues")
-                
-        except Exception as e:
-            print(f"❌ 🔴 CRITICAL ERROR in background auto-assign worker: {e}")
-            print(f"   ⏰ Error Time: {get_ist_timestamp()}")
-            print(f"   🚨 Error Type: {type(e).__name__}")
-            print(f"   🔍 Error Details: {str(e)}")
-            print("   " + "="*80)
-            time.sleep(60)  # Wait 1 minute on error before retrying
 
-# Start the background worker thread
-auto_assign_thread = threading.Thread(target=auto_assign_background_worker, daemon=True)
-auto_assign_thread.start()
-print("🚀 Background auto-assign worker started (checking every 2 minutes)")
 
 # Reduce Flask log noise
 import logging
@@ -1571,12 +1542,27 @@ def check_and_assign_new_leads():
 
 # =============================================================================
 
-# Start background auto-assign thread
-import threading
-import time
-
 def auto_assign_background_worker():
     """Background worker that continuously checks for new leads to auto-assign"""
+    # Immediate auto-assign when server starts
+    print("🚀 Starting immediate auto-assign check...")
+    try:
+        with app.app_context():
+            result = check_and_assign_new_leads()
+            if result and result.get('success'):
+                print(f"   ✅ Immediate auto-assign completed successfully")
+                if result.get('total_assigned', 0) > 0:
+                    print(f"   📊 {result.get('total_assigned')} leads assigned immediately")
+                else:
+                    print(f"   ℹ️ No new leads found for immediate assignment")
+            else:
+                print(f"   ⚠️ Immediate auto-assign completed with issues")
+    except Exception as e:
+        print(f"❌ Error in immediate auto-assign: {e}")
+    
+    print("   " + "="*80)
+    
+    # Continuous background auto-assign every 2 minutes
     while True:
         try:
             # Check for new leads every 2 minutes
@@ -1590,6 +1576,8 @@ def auto_assign_background_worker():
                 result = check_and_assign_new_leads()
                 if result and result.get('success'):
                     print(f"   ✅ Background check completed successfully")
+                    if result.get('total_assigned', 0) > 0:
+                        print(f"   📊 {result.get('total_assigned')} leads assigned")
                 else:
                     print(f"   ⚠️ Background check completed with issues")
                 
@@ -1604,64 +1592,11 @@ def auto_assign_background_worker():
 # Start the background worker thread
 auto_assign_thread = threading.Thread(target=auto_assign_background_worker, daemon=True)
 auto_assign_thread.start()
-print("🚀 Background auto-assign worker started (checking every 2 minutes)")
+print("🚀 Auto-assign system initialized and starting immediately!")
+print("   📋 Will check for new leads every 2 minutes")
+print("   ⚡ First auto-assign check starting now...")
 
-# Reduce Flask log noise
-import logging
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.WARNING)
-
-# Add custom Jinja2 filters
-# Note: Using Flask's built-in tojson filter instead of custom one
-
-# Utility functions
-def get_ist_timestamp():
-    """Get current timestamp in Indian Standard Time with explicit timezone"""
-    ist_time = datetime.now(pytz.timezone('Asia/Kolkata'))
-    # Format with explicit timezone offset
-    return ist_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] + '+05:30'
-
-def normalize_call_dates(update_data: dict) -> dict:
-    """Ensure all *_call_date fields are stored as full IST timestamps.
-    If any call date fields are present with any value, overwrite with current IST timestamp.
-    """
-    try:
-        call_keys = [
-            'first_call_date', 'second_call_date', 'third_call_date',
-            'fourth_call_date', 'fifth_call_date', 'sixth_call_date', 'seventh_call_date'
-        ]
-        for key in call_keys:
-            if key in update_data and update_data[key] is not None:
-                # Always overwrite with current timestamp, regardless of what was there
-                print(f"DEBUG: Normalizing {key} from '{update_data[key]}' to '{get_ist_timestamp()}'")
-                update_data[key] = get_ist_timestamp()
-    except Exception as e:
-        # Be resilient; on any issue, leave data as-is
-        print(f"DEBUG: Error in normalize_call_dates: {e}")
-        pass
-    return update_data
-
-def is_valid_date(date_string):
-    """Validate date string format (YYYY-MM-DD)"""
-    try:
-        datetime.strptime(date_string, '%Y-%m-%d')
-        return True
-    except ValueError:
-        return False
-
-def is_valid_uid(uid):
-    """Validate UID format"""
-    if not uid:
-        return False
-    # Add your UID validation logic here
-    return True
-
-
-# Using Flask's built-in tojson filter
-
-# Get environment variables with fallback values for testing
-SUPABASE_URL = os.environ.get('SUPABASE_URL')
-SUPABASE_KEY = os.environ.get('SUPABASE_ANON_KEY')
+# =============================================================================
 SECRET_KEY = os.environ.get('FLASK_SECRET_KEY', 'fallback-secret-key-change-this')
 
 # Email configuration (add these to your .env file)
