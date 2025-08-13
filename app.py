@@ -10384,6 +10384,198 @@ def api_bh_ps_performance():
         print(f"Error in api_bh_ps_performance: {str(e)}")
         return jsonify({'success': False, 'message': 'Error fetching PS performance data'})
 
+@app.route('/api/bh_leads_list')
+def api_bh_leads_list():
+    """API to get leads list for Branch Head dashboard cells"""
+    try:
+        # Check if user is logged in as Branch Head
+        if session.get('user_type') != 'bh':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        ps_name = request.args.get('ps_name')
+        cell_type = request.args.get('cell_type')
+        branch = session.get('bh_branch')
+        
+        if not ps_name or not cell_type:
+            return jsonify({'success': False, 'message': 'Missing parameters'})
+        
+        # Get current month (first day and last day)
+        from datetime import datetime
+        current_date = datetime.now()
+        first_day_of_month = current_date.replace(day=1).strftime('%Y-%m-%d')
+        
+        # Get last day of current month
+        if current_date.month == 12:
+            next_month = current_date.replace(year=current_date.year + 1, month=1, day=1)
+        else:
+            next_month = current_date.replace(month=current_date.month + 1, day=1)
+        last_day_of_month = (next_month - timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        # Build query based on cell type
+        query = supabase.table('ps_followup_master').select('*').eq('ps_name', ps_name).eq('ps_branch', branch)
+        
+        if cell_type == 'total':
+            # All leads assigned in current month
+            query = query.gte('ps_assigned_at', first_day_of_month).lte('ps_assigned_at', last_day_of_month)
+        elif cell_type.startswith('f'):
+            # F1-F7 follow-ups
+            followup_num = int(cell_type[1])
+            followup_date_field = get_followup_date_field(followup_num)
+            query = query.gte('ps_assigned_at', first_day_of_month).lte('ps_assigned_at', last_day_of_month).not_.is_(followup_date_field, 'null')
+        elif cell_type == 'won':
+            # Won leads in current month
+            query = query.eq('final_status', 'Won').gte('won_timestamp', first_day_of_month).lte('won_timestamp', last_day_of_month)
+        elif cell_type == 'lost':
+            # Lost leads in current month
+            query = query.eq('final_status', 'Lost').gte('lost_timestamp', first_day_of_month).lte('lost_timestamp', last_day_of_month)
+        
+        result = query.execute()
+        
+        print(f"Query result: {len(result.data) if result.data else 0} leads found")
+        print(f"Query parameters: ps_name={ps_name}, cell_type={cell_type}, branch={branch}")
+        print(f"Date range: {first_day_of_month} to {last_day_of_month}")
+        
+        if not result.data:
+            return jsonify({'success': True, 'leads': []})
+        
+        # Format leads data
+        leads = []
+        for lead in result.data:
+            leads.append({
+                'lead_uid': lead.get('lead_uid'),
+                'customer_name': lead.get('customer_name'),
+                'customer_mobile_number': lead.get('customer_mobile_number'),
+                'source': lead.get('source'),
+                'lead_category': lead.get('lead_category'),
+                'final_status': lead.get('final_status'),
+                'ps_name': lead.get('ps_name'),
+                'ps_branch': lead.get('ps_branch'),
+                'created_at': lead.get('created_at'),
+                'updated_at': lead.get('updated_at')
+            })
+        
+        print(f"Formatted {len(leads)} leads successfully")
+        return jsonify({'success': True, 'leads': leads})
+        
+    except Exception as e:
+        print(f"Error in api_bh_leads_list: {str(e)}")
+        print(f"Full error details: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'Error fetching leads list: {str(e)}'})
+
+@app.route('/api/bh_call_history')
+def api_bh_call_history():
+    """API to get call history for a specific lead"""
+    try:
+        # Check if user is logged in as Branch Head
+        if session.get('user_type') != 'bh':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        lead_uid = request.args.get('lead_uid')
+        if not lead_uid:
+            return jsonify({'success': False, 'message': 'Missing lead UID'})
+        
+        # Get call history from ps_followup_master
+        result = supabase.table('ps_followup_master').select('first_call_date, second_call_date, third_call_date, fourth_call_date, fifth_call_date, sixth_call_date, seventh_call_date, first_call_notes, second_call_notes, third_call_notes, fourth_call_notes, fifth_call_notes, sixth_call_notes, seventh_call_notes').eq('lead_uid', lead_uid).execute()
+        
+        if not result.data:
+            return jsonify({'success': True, 'call_history': []})
+        
+        lead = result.data[0]
+        call_history = []
+        
+        # Process each follow-up call
+        for i in range(1, 8):
+            call_date = lead.get(f'{get_followup_name(i)}_call_date')
+            call_notes = lead.get(f'{get_followup_name(i)}_call_notes')
+            
+            if call_date:
+                call_history.append({
+                    'call_number': i,
+                    'call_date': call_date,
+                    'notes': call_notes or 'No notes',
+                    'status': 'success'  # Default status
+                })
+        
+        return jsonify({'success': True, 'call_history': call_history})
+        
+    except Exception as e:
+        print(f"Error in api_bh_call_history: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error fetching call history'})
+
+def get_followup_name(num):
+    """Helper function to get followup field names"""
+    followup_names = {
+        1: 'first',
+        2: 'second', 
+        3: 'third',
+        4: 'fourth',
+        5: 'fifth',
+        6: 'sixth',
+        7: 'seventh'
+    }
+    return followup_names.get(num, 'first')
+
+def get_followup_date_field(num):
+    """Helper function to get followup date field names"""
+    followup_date_fields = {
+        1: 'first_call_date',
+        2: 'second_call_date', 
+        3: 'third_call_date',
+        4: 'fourth_call_date',
+        5: 'fifth_call_date',
+        6: 'sixth_call_date',
+        7: 'seventh_call_date'
+    }
+    return followup_date_fields.get(num, 'first_call_date')
+
+@app.route('/api/bh_lead_details')
+def api_bh_lead_details():
+    """API to get detailed lead information"""
+    try:
+        # Check if user is logged in as Branch Head
+        if session.get('user_type') != 'bh':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        lead_uid = request.args.get('lead_uid')
+        if not lead_uid:
+            return jsonify({'success': False, 'message': 'Missing lead UID'})
+        
+        # Get lead details from ps_followup_master
+        result = supabase.table('ps_followup_master').select('*').eq('lead_uid', lead_uid).execute()
+        
+        if not result.data:
+            return jsonify({'success': False, 'message': 'Lead not found'})
+        
+        lead = result.data[0]
+        
+        # Format lead data
+        lead_data = {
+            'lead_uid': lead.get('lead_uid'),
+            'customer_name': lead.get('customer_name'),
+            'customer_mobile_number': lead.get('customer_mobile_number'),
+            'customer_email': lead.get('customer_email'),
+            'customer_address': lead.get('customer_address'),
+            'customer_city': lead.get('customer_city'),
+            'customer_state': lead.get('customer_state'),
+            'customer_pincode': lead.get('customer_pincode'),
+            'source': lead.get('source'),
+            'lead_category': lead.get('lead_category'),
+            'final_status': lead.get('final_status'),
+            'ps_name': lead.get('ps_name'),
+            'ps_branch': lead.get('ps_branch'),
+            'created_at': lead.get('created_at'),
+            'updated_at': lead.get('updated_at'),
+            'notes': lead.get('notes')
+        }
+        
+        return jsonify({'success': True, 'lead': lead_data})
+        
+    except Exception as e:
+        print(f"Error in api_bh_lead_details: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error fetching lead details'})
+
 @app.route('/api/branches')
 @require_admin
 def api_branches():
