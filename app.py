@@ -1696,8 +1696,8 @@ def add_cre():
                 flash('Username already exists', 'error')
                 return render_template('add_cre.html')
 
-            # Hash password using werkzeug (compatible with check_password_hash)
-            password_hash = generate_password_hash(password)
+            # Hash password using auth_manager (provides hash and salt)
+            password_hash, salt = auth_manager.hash_password(password)
 
             # Replace the existing cre_data creation with this:
             cre_data = {
@@ -1705,6 +1705,7 @@ def add_cre():
                 'username': username,
                 'password': password,  # Keep for backward compatibility
                 'password_hash': password_hash,
+                'salt': salt,  # Add the salt value
                 'phone': phone,
                 'email': email,
                 'is_active': True,
@@ -1762,8 +1763,8 @@ def add_ps():
                 flash('Username already exists', 'error')
                 return render_template('add_ps.html', branches=branches)
 
-            # Hash password using werkzeug (compatible with check_password_hash)
-            password_hash = generate_password_hash(password)
+            # Hash password using auth_manager (provides hash and salt)
+            password_hash, salt = auth_manager.hash_password(password)
 
             # Replace the existing ps_data creation with this:
             ps_data = {
@@ -1771,6 +1772,7 @@ def add_ps():
                 'username': username,
                 'password': password,  # Keep for backward compatibility
                 'password_hash': password_hash,
+                'salt': salt,  # Add the salt value
                 'phone': phone,
                 'email': email,
                 'branch': branch,
@@ -1829,8 +1831,8 @@ def add_bh():
                 flash('Username already exists', 'error')
                 return render_template('add_bh.html', branches=branches)
 
-            # Hash password using werkzeug (compatible with check_password_hash)
-            password_hash = generate_password_hash(password)
+            # Hash password using auth_manager (provides hash and salt)
+            password_hash, salt = auth_manager.hash_password(password)
 
             # Create branch head data
             bh_data = {
@@ -1838,6 +1840,7 @@ def add_bh():
                 'username': username,
                 'password': password,  # Keep for backward compatibility
                 'password_hash': password_hash,
+                'salt': salt,  # Add the salt value
                 'phone': phone,
                 'email': email,
                 'branch': branch,
@@ -2476,10 +2479,11 @@ def manage_rec():
             if existing.data:
                 flash('Username already exists', 'error')
             else:
-                password_hash = generate_password_hash(password)
+                password_hash, salt = auth_manager.hash_password(password)
                 rec_data = {
                     'username': username,
                     'password_hash': password_hash,
+                    'salt': salt,  # Add the salt value
                     'password': password,  # Store plain password as well
                     'name': name,
                     'branch': branch,
