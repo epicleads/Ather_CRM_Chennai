@@ -1,5 +1,5 @@
 import eventlet
-eventlet.monkey_patch()
+
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, current_app
 from supabase.client import create_client, Client
 import csv
@@ -345,84 +345,6 @@ def normalize_call_dates(update_data: dict) -> dict:
         print(f"DEBUG: Error in normalize_call_dates: {e}")
         pass
     return update_data
-
-def sync_timestamps_between_tables(uid: str, final_status: str, won_timestamp: str = None, lost_timestamp: str = None):
-    """
-    Synchronize won_timestamp and lost_timestamp between lead_master and ps_followup_master tables.
-    
-    Args:
-        uid: Lead UID
-        final_status: The final status ('Won' or 'Lost')
-        won_timestamp: Timestamp for won status (if applicable)
-        lost_timestamp: Timestamp for lost status (if applicable)
-    """
-    try:
-        if final_status == 'Won' and won_timestamp:
-            # Update both tables with won_timestamp
-            supabase.table('lead_master').update({'won_timestamp': won_timestamp}).eq('uid', uid).execute()
-            supabase.table('ps_followup_master').update({'won_timestamp': won_timestamp}).eq('lead_uid', uid).execute()
-            print(f"DEBUG: Synced won_timestamp '{won_timestamp}' for lead {uid} in both tables")
-            
-        elif final_status == 'Lost' and lost_timestamp:
-            # Update both tables with lost_timestamp
-            supabase.table('lead_master').update({'lost_timestamp': lost_timestamp}).eq('uid', uid).execute()
-            supabase.table('ps_followup_master').update({'lost_timestamp': lost_timestamp}).eq('lead_uid', uid).execute()
-            print(f"DEBUG: Synced lost_timestamp '{lost_timestamp}' for lead {uid} in both tables")
-            
-        elif final_status not in ['Won', 'Lost']:
-            # Clear timestamps if status is neither Won nor Lost
-            supabase.table('lead_master').update({
-                'won_timestamp': None,
-                'lost_timestamp': None
-            }).eq('uid', uid).execute()
-            supabase.table('ps_followup_master').update({
-                'won_timestamp': None,
-                'lost_timestamp': None
-            }).eq('lead_uid', uid).execute()
-            print(f"DEBUG: Cleared timestamps for lead {uid} as status is '{final_status}'")
-            
-    except Exception as e:
-        print(f"ERROR: Failed to sync timestamps for lead {uid}: {str(e)}")
-        # Don't raise the exception - we want the main operation to continue
-
-def sync_all_existing_timestamps():
-    """
-    Synchronize timestamps for all existing leads that might have mismatched timestamps.
-    This function can be run manually or as a maintenance task.
-    """
-    try:
-        print("Starting timestamp synchronization for all existing leads...")
-        
-        # Get all leads with final_status Won or Lost
-        won_leads = supabase.table('lead_master').select('uid, won_timestamp').eq('final_status', 'Won').not_.is_('won_timestamp', 'null').execute()
-        lost_leads = supabase.table('lead_master').select('uid, lost_timestamp').eq('final_status', 'Lost').not_.is_('lost_timestamp', 'null').execute()
-        
-        synced_count = 0
-        
-        # Sync Won leads
-        for lead in won_leads.data:
-            try:
-                supabase.table('ps_followup_master').update({'won_timestamp': lead['won_timestamp']}).eq('lead_uid', lead['uid']).execute()
-                synced_count += 1
-                print(f"Synced won_timestamp for lead {lead['uid']}")
-            except Exception as e:
-                print(f"Failed to sync won_timestamp for lead {lead['uid']}: {str(e)}")
-        
-        # Sync Lost leads
-        for lead in lost_leads.data:
-            try:
-                supabase.table('ps_followup_master').update({'lost_timestamp': lead['lost_timestamp']}).eq('lead_uid', lead['uid']).execute()
-                synced_count += 1
-                print(f"Synced lost_timestamp for lead {lead['uid']}")
-            except Exception as e:
-                print(f"Failed to sync lost_timestamp for lead {lead['uid']}: {str(e)}")
-        
-        print(f"Timestamp synchronization completed. Synced {synced_count} leads.")
-        return synced_count
-        
-    except Exception as e:
-        print(f"ERROR in sync_all_existing_timestamps: {str(e)}")
-        return 0
 
 def is_valid_date(date_string):
     """Validate date string format (YYYY-MM-DD)"""
@@ -1143,61 +1065,13 @@ def unified_login() -> Response:
     password = request.form.get('password', '').strip()
     user_type = request.form.get('user_type', '').strip().lower()
 
-    valid_user_types = ['admin', 'cre', 'ps', 'bh', 'rec']
+    valid_user_types = ['admin', 'cre', 'ps', 'rec']
     if user_type not in valid_user_types:
-        flash('Please select a valid role (Admin, CRE, PS, Branch Head, or Receptionist)', 'error')
+        flash('Please select a valid role (Admin, CRE, PS, or Receptionist)', 'error')
         return redirect(url_for('index'))
 
     # Branch Head login removed
 
-    elif user_type == 'bh':
-        # Branch Head authentication
-        bh_user = supabase.table('branch_head_users').select('*').eq('username', username).execute().data
-        if not bh_user:
-            flash('Invalid username or password', 'error')
-            return redirect(url_for('index'))
-        bh_user = bh_user[0]
-        if not bh_user.get('is_active', True):
-            flash('User is inactive', 'error')
-            return redirect(url_for('index'))
-        # Check password using werkzeug
-        try:
-            print(f"DEBUG: Attempting to verify password for Branch Head {username}")
-            print(f"DEBUG: Password hash format: {bh_user['password_hash'][:20]}...")
-            print(f"DEBUG: Using check_password_hash with hash and password")
-            if not check_password_hash(bh_user['password_hash'], password):
-                print(f"DEBUG: Password verification failed for Branch Head {username}")
-                flash('Incorrect password', 'error')
-                return redirect(url_for('index'))
-            print(f"DEBUG: Password verification successful for Branch Head {username}")
-        except Exception as e:
-            print(f"DEBUG: Error checking password hash for Branch Head {username}: {str(e)}")
-            print(f"DEBUG: Error type: {type(e).__name__}")
-            print(f"DEBUG: Full error details: {e}")
-            # Fallback: check if plain password matches (for backward compatibility)
-            if bh_user.get('password') != password:
-                print(f"DEBUG: Plain password fallback also failed for Branch Head {username}")
-                flash('Incorrect password', 'error')
-                return redirect(url_for('index'))
-            print(f"DEBUG: Plain password fallback successful for Branch Head {username}")
-            # If plain password matches, update to new hash format
-            try:
-                new_password_hash = generate_password_hash(password)
-                print(f"DEBUG: Generated new password hash for Branch Head {username}")
-                supabase.table('branch_head_users').update({
-                    'password_hash': new_password_hash
-                }).eq('id', bh_user['id']).execute()
-                print(f"DEBUG: Updated password hash for Branch Head {username}")
-            except Exception as update_error:
-                print(f"DEBUG: Failed to update password hash for Branch Head {username}: {str(update_error)}")
-        session.clear()
-        session['bh_user_id'] = bh_user['id']
-        session['bh_branch'] = bh_user['branch']
-        session['bh_name'] = bh_user.get('name', username)
-        session['user_type'] = 'bh'
-        session['username'] = username
-        flash('Welcome! Logged in as Branch Head', 'success')
-        return redirect(url_for('bh_dashboard'))
     elif user_type == 'rec':
         # Receptionist authentication
         rec_user = supabase.table('rec_users').select('*').eq('username', username).execute().data
@@ -1209,35 +1083,9 @@ def unified_login() -> Response:
             flash('User is inactive', 'error')
             return redirect(url_for('index'))
         # Check password using werkzeug
-        try:
-            print(f"DEBUG: Attempting to verify password for Receptionist {username}")
-            print(f"DEBUG: Password hash format: {rec_user['password_hash'][:20]}...")
-            print(f"DEBUG: Using check_password_hash with hash and password")
-            if not check_password_hash(rec_user['password_hash'], password):
-                print(f"DEBUG: Password verification failed for Receptionist {username}")
-                flash('Incorrect password', 'error')
-                return redirect(url_for('index'))
-            print(f"DEBUG: Password verification successful for Receptionist {username}")
-        except Exception as e:
-            print(f"DEBUG: Error checking password hash for Receptionist {username}: {str(e)}")
-            print(f"DEBUG: Error type: {type(e).__name__}")
-            print(f"DEBUG: Full error details: {e}")
-            # Fallback: check if plain password matches (for backward compatibility)
-            if rec_user.get('password') != password:
-                print(f"DEBUG: Plain password fallback also failed for Receptionist {username}")
-                flash('Incorrect password', 'error')
-                return redirect(url_for('index'))
-            print(f"DEBUG: Plain password fallback successful for Receptionist {username}")
-            # If plain password matches, update to new hash format
-            try:
-                new_password_hash = generate_password_hash(password)
-                print(f"DEBUG: Generated new password hash for Receptionist {username}")
-                supabase.table('rec_users').update({
-                    'password_hash': new_password_hash
-                }).eq('id', rec_user['id']).execute()
-                print(f"DEBUG: Updated password hash for Receptionist {username}")
-            except Exception as update_error:
-                print(f"DEBUG: Failed to update password hash for Receptionist {username}: {str(update_error)}")
+        if not check_password_hash(rec_user['password_hash'], password):
+            flash('Incorrect password', 'error')
+            return redirect(url_for('index'))
         session.clear()
         session['rec_user_id'] = rec_user['id']
         session['rec_branch'] = rec_user['branch']
@@ -1622,16 +1470,15 @@ def admin_dashboard():
         # Get actual counts from database with proper queries
         cre_count = get_accurate_count('cre_users')
         ps_count = get_accurate_count('ps_users')
-        bh_count = get_accurate_count('branch_head_users')
         leads_count = get_accurate_count('lead_master')
         unassigned_leads = get_accurate_count('lead_master', {'assigned': 'No'})
 
         print(
-            f"Dashboard counts - CRE: {cre_count}, PS: {ps_count}, Branch Heads: {bh_count}, Total Leads: {leads_count}, Unassigned: {unassigned_leads}")
+            f"Dashboard counts - CRE: {cre_count}, PS: {ps_count}, Total Leads: {leads_count}, Unassigned: {unassigned_leads}")
 
     except Exception as e:
         print(f"Error getting dashboard counts: {e}")
-        cre_count = ps_count = bh_count = leads_count = unassigned_leads = 0
+        cre_count = ps_count = leads_count = unassigned_leads = 0
 
     # Log dashboard access
     user_id = session.get('user_id')
@@ -1647,31 +1494,8 @@ def admin_dashboard():
     return render_template('admin_dashboard.html',
                            cre_count=cre_count,
                            ps_count=ps_count,
-                           bh_count=bh_count,
                            leads_count=leads_count,
                            unassigned_leads=unassigned_leads)
-
-
-@app.route('/bh_dashboard')
-def bh_dashboard():
-    """Branch Head dashboard"""
-    # Check if user is logged in as Branch Head
-    if session.get('user_type') != 'bh':
-        flash('Access denied. Branch Head access only.', 'error')
-        return redirect(url_for('index'))
-    
-    # Log dashboard access
-    user_id = session.get('bh_user_id')
-    user_type = session.get('user_type')
-    if user_id and user_type:
-        auth_manager.log_audit_event(
-            user_id=user_id,
-            user_type=user_type,
-            action='DASHBOARD_ACCESS',
-            resource='bh_dashboard'
-        )
-    
-    return render_template('bh_dashboard.html')
 
 
 @app.route('/upload_data', methods=['GET', 'POST'])
@@ -1968,8 +1792,8 @@ def add_cre():
                 flash('Username already exists', 'error')
                 return render_template('add_cre.html')
 
-            # Hash password using werkzeug (compatible with check_password_hash)
-            password_hash = generate_password_hash(password)
+            # Hash password
+            password_hash, salt = auth_manager.hash_password(password)
 
             # Replace the existing cre_data creation with this:
             cre_data = {
@@ -1977,6 +1801,7 @@ def add_cre():
                 'username': username,
                 'password': password,  # Keep for backward compatibility
                 'password_hash': password_hash,
+                'salt': salt,
                 'phone': phone,
                 'email': email,
                 'is_active': True,
@@ -2034,8 +1859,8 @@ def add_ps():
                 flash('Username already exists', 'error')
                 return render_template('add_ps.html', branches=branches)
 
-            # Hash password using werkzeug (compatible with check_password_hash)
-            password_hash = generate_password_hash(password)
+            # Hash password
+            password_hash, salt = auth_manager.hash_password(password)
 
             # Replace the existing ps_data creation with this:
             ps_data = {
@@ -2043,6 +1868,7 @@ def add_ps():
                 'username': username,
                 'password': password,  # Keep for backward compatibility
                 'password_hash': password_hash,
+                'salt': salt,
                 'phone': phone,
                 'email': email,
                 'branch': branch,
@@ -2071,73 +1897,6 @@ def add_ps():
     return render_template('add_ps.html', branches=branches)
 
 
-@app.route('/add_bh', methods=['GET', 'POST'])
-@require_admin
-def add_bh():
-    branches = ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
-
-    if request.method == 'POST':
-        name = request.form.get('name', '').strip()
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '').strip()
-        phone = request.form.get('phone', '').strip()
-        email = request.form.get('email', '').strip()
-        branch = request.form.get('branch', '').strip()
-
-        if not all([name, username, password, phone, email, branch]):
-            flash('All fields are required', 'error')
-            return render_template('add_bh.html', branches=branches)
-
-        if not auth_manager.validate_password_strength(password):
-            flash(
-                'Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character',
-                'error')
-            return render_template('add_bh.html', branches=branches)
-
-        try:
-            # Check if username already exists
-            existing = supabase.table('branch_head_users').select('username').eq('username', username).execute()
-            if existing.data:
-                flash('Username already exists', 'error')
-                return render_template('add_bh.html', branches=branches)
-
-            # Hash password using werkzeug (compatible with check_password_hash)
-            password_hash = generate_password_hash(password)
-
-            # Create branch head data
-            bh_data = {
-                'name': name,
-                'username': username,
-                'password': password,  # Keep for backward compatibility
-                'password_hash': password_hash,
-                'phone': phone,
-                'email': email,
-                'branch': branch,
-                'is_active': True,
-                'role': 'bh',
-                'failed_login_attempts': 0
-            }
-
-            result = supabase.table('branch_head_users').insert(bh_data).execute()
-
-            # Log Branch Head creation
-            auth_manager.log_audit_event(
-                user_id=session.get('user_id'),
-                user_type=session.get('user_type'),
-                action='BRANCH_HEAD_CREATED',
-                resource='branch_head_users',
-                resource_id=str(result.data[0]['id']) if result.data else None,
-                details={'bh_name': name, 'username': username, 'branch': branch}
-            )
-
-            flash('Branch Head added successfully', 'success')
-            return redirect(url_for('manage_bh'))
-        except Exception as e:
-            flash(f'Error adding Branch Head: {str(e)}', 'error')
-
-    return render_template('add_bh.html', branches=branches)
-
-
 @app.route('/manage_cre')
 @require_admin
 def manage_cre():
@@ -2147,91 +1906,6 @@ def manage_cre():
     except Exception as e:
         flash(f'Error loading CRE users: {str(e)}', 'error')
         return render_template('manage_cre.html', cre_users=[])
-
-
-@app.route('/manage_bh')
-@require_admin
-def manage_bh():
-    try:
-        bh_users = safe_get_data('branch_head_users')
-        return render_template('manage_bh.html', bh_users=bh_users)
-    except Exception as e:
-        flash(f'Error loading Branch Head users: {str(e)}', 'error')
-        return render_template('manage_bh.html', bh_users=[])
-
-
-@app.route('/delete_bh/<int:bh_id>', methods=['DELETE'])
-@require_admin
-def delete_bh(bh_id):
-    print(f"DEBUG: delete_bh route called with bh_id: {bh_id}")
-    try:
-        # Get the Branch Head details first
-        bh_result = supabase.table('branch_head_users').select('*').eq('id', bh_id).execute()
-        print(f"DEBUG: bh_result data: {bh_result.data}")
-        if not bh_result.data:
-            print(f"DEBUG: Branch Head not found for id: {bh_id}")
-            flash('Branch Head not found', 'error')
-            return redirect(url_for('manage_bh'))
-        
-        bh = bh_result.data[0]
-        bh_name = bh.get('name')
-        print(f"DEBUG: Found Branch Head: {bh_name}")
-        
-        # Check if Branch Head has any associated data that would prevent deletion
-        # For now, we'll allow deletion but you can add checks here if needed
-        
-        # Delete the Branch Head user
-        delete_result = supabase.table('branch_head_users').delete().eq('id', bh_id).execute()
-        print(f"DEBUG: Delete result: {delete_result}")
-        
-        # Log the deletion
-        auth_manager.log_audit_event(
-            user_id=session.get('user_id'),
-            user_type=session.get('user_type'),
-            action='BRANCH_HEAD_DELETED',
-            resource='branch_head_users',
-            resource_id=str(bh_id),
-            details={'bh_name': bh_name}
-        )
-        
-        print(f"DEBUG: Branch Head {bh_name} deleted successfully")
-        return jsonify({'success': True, 'message': f'Branch Head {bh_name} deleted successfully'})
-        
-    except Exception as e:
-        print(f"DEBUG: Error in delete_bh: {str(e)}")
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/toggle_bh_status/<int:bh_id>', methods=['POST'])
-@require_admin
-def toggle_bh_status(bh_id):
-    try:
-        data = request.get_json()
-        active_status = data.get('active', True)
-
-        # Update Branch Head status
-        result = supabase.table('branch_head_users').update({
-            'is_active': active_status
-        }).eq('id', bh_id).execute()
-
-        if result.data:
-            # Log status change
-            auth_manager.log_audit_event(
-                user_id=session.get('user_id'),
-                user_type=session.get('user_type'),
-                action='BRANCH_HEAD_STATUS_CHANGED',
-                resource='branch_head_users',
-                resource_id=str(bh_id),
-                details={'new_status': 'active' if active_status else 'inactive'}
-            )
-
-            return jsonify({'success': True, 'message': 'Branch Head status updated successfully'})
-        else:
-            return jsonify({'success': False, 'message': 'Branch Head not found'})
-
-    except Exception as e:
-        print(f"Error toggling Branch Head status: {e}")
-        return jsonify({'success': False, 'message': str(e)})
 
 
 @app.route('/manage_ps')
@@ -2274,54 +1948,6 @@ def toggle_ps_status(ps_id):
 
     except Exception as e:
         print(f"Error toggling PS status: {e}")
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/edit_bh/<int:bh_id>', methods=['POST'])
-@require_admin
-def edit_bh(bh_id):
-    try:
-        data = request.get_json()
-        name = data.get('name', '').strip()
-        username = data.get('username', '').strip()
-        email = data.get('email', '').strip()
-        phone = data.get('phone', '').strip()
-        branch = data.get('branch', '').strip()
-
-        if not all([name, username, email, phone, branch]):
-            return jsonify({'success': False, 'message': 'All fields are required'})
-
-        # Check if username already exists for other users
-        existing = supabase.table('branch_head_users').select('username').eq('username', username).neq('id', bh_id).execute()
-        if existing.data:
-            return jsonify({'success': False, 'message': 'Username already exists'})
-
-        # Update the Branch Head
-        result = supabase.table('branch_head_users').update({
-            'name': name,
-            'username': username,
-            'email': email,
-            'phone': phone,
-            'branch': branch
-        }).eq('id', bh_id).execute()
-
-        if result.data:
-            # Log the update
-            auth_manager.log_audit_event(
-                user_id=session.get('user_id'),
-                user_type=session.get('user_type'),
-                action='BRANCH_HEAD_UPDATED',
-                resource='branch_head_users',
-                resource_id=str(bh_id),
-                details={'bh_name': name, 'username': username, 'branch': branch}
-            )
-
-            return jsonify({'success': True, 'message': 'Branch Head updated successfully'})
-        else:
-            return jsonify({'success': False, 'message': 'Branch Head not found'})
-
-    except Exception as e:
-        print(f"Error updating Branch Head: {e}")
         return jsonify({'success': False, 'message': str(e)})
 
 
@@ -5321,161 +4947,7 @@ def ensure_static_directories():
 
 
 
-@app.route('/analytics')
-# import eventlet
-eventlet.monkey_patch()
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, current_app
-from supabase.client import create_client, Client
-import csv
-import openpyxl
-import os
-from datetime import datetime, timedelta, date
 
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from werkzeug.utils import secure_filename
-import random
-import string
-import io
-from dotenv import load_dotenv
-from collections import defaultdict, Counter
-import json
-from auth import AuthManager, require_auth, require_admin, require_cre, require_ps, require_rec
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-from security_verification import run_security_verification
-import time
-import gc
-from flask_socketio import SocketIO, emit
-import math
-# from redis import Redis  # REMOVE this line for local development
-
-# Import optimized operations for faster lead updates
-from optimized_lead_operations import create_optimized_operations
-
-# Add this instead:
-from reportlab.lib.pagesizes import letter, A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-from flask import send_file
-import tempfile
-import matplotlib
-matplotlib.use('Agg')  # For headless environments
-import matplotlib.pyplot as plt
-import seaborn as sns
-from matplotlib.backends.backend_pdf import PdfPages
-import pytz
-import pandas as pd
-from werkzeug.security import generate_password_hash, check_password_hash
-
-# Load environment variables from .env file
-load_dotenv()
-
-app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
-
-# REMOVED DUPLICATE AUTO-ASSIGN SECTION - KEPT ONLY THE FIRST ONE
-
-# Reduce Flask log noise
-import logging
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.WARNING)
-
-# Add custom Jinja2 filters
-# Note: Using Flask's built-in tojson filter instead of custom one
-
-# Utility functions
-def get_ist_timestamp():
-    """Get current timestamp in Indian Standard Time with explicit timezone"""
-    ist_time = datetime.now(pytz.timezone('Asia/Kolkata'))
-    # Format with explicit timezone offset
-    return ist_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] + '+05:30'
-
-def normalize_call_dates(update_data: dict) -> dict:
-    """Ensure all *_call_date fields are stored as full IST timestamps.
-    If any call date fields are present with any value, overwrite with current IST timestamp.
-    """
-    try:
-        call_keys = [
-            'first_call_date', 'second_call_date', 'third_call_date',
-            'fourth_call_date', 'fifth_call_date', 'sixth_call_date', 'seventh_call_date'
-        ]
-        for key in call_keys:
-            if key in update_data and update_data[key] is not None:
-                # Always overwrite with current timestamp, regardless of what was there
-                print(f"DEBUG: Normalizing {key} from '{update_data[key]}' to '{get_ist_timestamp()}'")
-                update_data[key] = get_ist_timestamp()
-    except Exception as e:
-        # Be resilient; on any issue, leave data as-is
-        print(f"DEBUG: Error in normalize_call_dates: {e}")
-        pass
-    return update_data
-
-def is_valid_date(date_string):
-    """Validate date string format (YYYY-MM-DD)"""
-    try:
-        datetime.strptime(date_string, '%Y-%m-%d')
-        return True
-    except ValueError:
-        return False
-
-def is_valid_uid(uid):
-    """Validate UID format"""
-    if not uid:
-        return False
-    # Add your UID validation logic here
-    return True
-
-
-# Using Flask's built-in tojson filter
-
-# Get environment variables with fallback values for testing
-SUPABASE_URL = os.environ.get('SUPABASE_URL')
-SUPABASE_KEY = os.environ.get('SUPABASE_ANON_KEY')
-SECRET_KEY = os.environ.get('FLASK_SECRET_KEY', 'fallback-secret-key-change-this')
-
-# Email configuration (add these to your .env file)
-SMTP_SERVER = os.environ.get('SMTP_SERVER', 'smtp.gmail.com')
-SMTP_PORT = int(os.environ.get('SMTP_PORT', '587'))
-EMAIL_USER = os.environ.get('EMAIL_USER', '')
-EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD', '')
-
-# Debug: Print to check if variables are loaded (remove in production)
-print(f"SUPABASE_URL loaded: {SUPABASE_URL is not None}")
-print(f"SUPABASE_KEY loaded: {SUPABASE_KEY is not None}")
-print(f"SUPABASE_URL: {SUPABASE_URL}")
-print(f"SUPABASE_ANON_KEY: {SUPABASE_KEY}")
-
-# Validate required environment variables
-if not SUPABASE_URL:
-    raise ValueError("SUPABASE_URL environment variable is required. Please check your .env file.")
-if not SUPABASE_KEY:
-    raise ValueError("SUPABASE_ANON_KEY environment variable is required. Please check your .env file.")
-
-app.secret_key = SECRET_KEY
-app.permanent_session_lifetime = timedelta(hours=24)
-
-# Initialize Supabase client
-try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    print("✅ Supabase client initialized successfully")
-    # Removed Supabase warm-up query for local development
-except Exception as e:
-    print(f"❌ Error initializing Supabase client: {e}")
-    raise
-
-# Initialize optimized operations for faster lead updates
-try:
-    optimized_ops = create_optimized_operations(supabase)
-    print("✅ Optimized operations initialized successfully")
-except Exception as e:
-    print(f"❌ Error initializing optimized operations: {e}")
-    # Continue without optimized operations if there's an error
-    optimized_ops = None
 
 # Initialize AuthManager
 auth_manager = AuthManager(supabase)
@@ -10432,61 +9904,7 @@ def analytics():
 
 
 # Branch Head dashboard route removed
-import eventlet
-eventlet.monkey_patch()
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, current_app
-from supabase.client import create_client, Client
-import csv
-import openpyxl
-import os
-from datetime import datetime, timedelta, date
 
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from werkzeug.utils import secure_filename
-import random
-import string
-import io
-from dotenv import load_dotenv
-from collections import defaultdict, Counter
-import json
-from auth import AuthManager, require_auth, require_admin, require_cre, require_ps, require_rec
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-from security_verification import run_security_verification
-import time
-import gc
-from flask_socketio import SocketIO, emit
-import math
-# from redis import Redis  # REMOVE this line for local development
-
-# Import optimized operations for faster lead updates
-from optimized_lead_operations import create_optimized_operations
-
-# Add this instead:
-from reportlab.lib.pagesizes import letter, A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-from flask import send_file
-import tempfile
-import matplotlib
-matplotlib.use('Agg')  # For headless environments
-import matplotlib.pyplot as plt
-import seaborn as sns
-from matplotlib.backends.backend_pdf import PdfPages
-import pytz
-import pandas as pd
-from werkzeug.security import generate_password_hash, check_password_hash
-
-# Load environment variables from .env file
-load_dotenv()
-
-app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
 
 # =============================================================================
 # AUTO-ASSIGN SYSTEM INTEGRATION
@@ -15382,61 +14800,6 @@ def ensure_static_directories():
 
 
 @app.route('/analytics')
-import eventlet
-eventlet.monkey_patch()
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, current_app
-from supabase.client import create_client, Client
-import csv
-import openpyxl
-import os
-from datetime import datetime, timedelta, date
-
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from werkzeug.utils import secure_filename
-import random
-import string
-import io
-from dotenv import load_dotenv
-from collections import defaultdict, Counter
-import json
-from auth import AuthManager, require_auth, require_admin, require_cre, require_ps, require_rec
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-from security_verification import run_security_verification
-import time
-import gc
-from flask_socketio import SocketIO, emit
-import math
-# from redis import Redis  # REMOVE this line for local development
-
-# Import optimized operations for faster lead updates
-from optimized_lead_operations import create_optimized_operations
-
-# Add this instead:
-from reportlab.lib.pagesizes import letter, A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-from flask import send_file
-import tempfile
-import matplotlib
-matplotlib.use('Agg')  # For headless environments
-import matplotlib.pyplot as plt
-import seaborn as sns
-from matplotlib.backends.backend_pdf import PdfPages
-import pytz
-import pandas as pd
-from werkzeug.security import generate_password_hash, check_password_hash
-
-# Load environment variables from .env file
-load_dotenv()
-
-app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
 
 # =============================================================================
 # AUTO-ASSIGN SYSTEM INTEGRATION
@@ -18879,11 +18242,9 @@ def update_lead(uid):
                 final_status = request.form['final_status']
                 update_data['final_status'] = final_status
                 if final_status == 'Won':
-                    won_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    update_data['won_timestamp'] = won_timestamp
+                    update_data['won_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 elif final_status == 'Lost':
-                    lost_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    update_data['lost_timestamp'] = lost_timestamp
+                    update_data['lost_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
             # Handle call dates and remarks - record for all statuses including RNR
             if request.form.get('call_date') and call_remark:
@@ -18927,15 +18288,6 @@ def update_lead(uid):
                         ps_result = supabase.table('ps_followup_master').select('lead_uid').eq('lead_uid', uid).execute()
                         if ps_result.data:
                             supabase.table('ps_followup_master').update({'final_status': update_data['final_status']}).eq('lead_uid', uid).execute()
-                    
-                    # Synchronize timestamps between tables
-                    if 'final_status' in update_data:
-                        sync_timestamps_between_tables(
-                            uid=uid,
-                            final_status=update_data['final_status'],
-                            won_timestamp=update_data.get('won_timestamp'),
-                            lost_timestamp=update_data.get('lost_timestamp')
-                        )
 
                     # Log lead update
                     auth_manager.log_audit_event(
@@ -19720,8 +19072,7 @@ def update_ps_lead(uid):
                     # Auto-set final_status to Won for Booked with another number
                     if lead_status == 'Booked with another number':
                         update_data['final_status'] = 'Won'
-                        won_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        update_data['won_timestamp'] = won_timestamp
+                        update_data['won_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         
                 if lead_category:
                     update_data['lead_category'] = lead_category
@@ -19738,11 +19089,9 @@ def update_ps_lead(uid):
                     final_status = request.form['final_status']
                     update_data['final_status'] = final_status
                     if final_status == 'Won':
-                        won_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        update_data['won_timestamp'] = won_timestamp
+                        update_data['won_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     elif final_status == 'Lost':
-                        lost_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        update_data['lost_timestamp'] = lost_timestamp
+                        update_data['lost_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 # Handle call dates and remarks for the next available call
                 skip_first_call_statuses = [
                     'Call not Connected',
@@ -19789,15 +19138,6 @@ def update_ps_lead(uid):
                             elif final_status == 'Lost':
                                 main_update_data['lost_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             supabase.table('lead_master').update(main_update_data).eq('uid', uid).execute()
-                        
-                        # Synchronize timestamps between tables
-                        if 'final_status' in update_data:
-                            sync_timestamps_between_tables(
-                                uid=uid,
-                                final_status=update_data['final_status'],
-                                won_timestamp=update_data.get('won_timestamp'),
-                                lost_timestamp=update_data.get('lost_timestamp')
-                            )
                         # Log PS lead update
                         auth_manager.log_audit_event(
                             user_id=session.get('user_id'),
@@ -24321,18 +23661,10 @@ def convert_duplicate_to_fresh(uid):
 def check_username():
     username = request.args.get('username', '').strip()
     user_type = request.args.get('type', '').strip().lower()
-    if not username or user_type not in ['cre', 'ps', 'bh']:
+    if not username or user_type not in ['cre', 'ps']:
         return jsonify({'error': 'Invalid parameters'}), 400
     try:
-        if user_type == 'cre':
-            table = 'cre_users'
-        elif user_type == 'ps':
-            table = 'ps_users'
-        elif user_type == 'bh':
-            table = 'branch_head_users'
-        else:
-            return jsonify({'error': 'Invalid user type'}), 400
-            
+        table = 'cre_users' if user_type == 'cre' else 'ps_users'
         result = supabase.table(table).select('username').eq('username', username).execute()
         exists = bool(result.data)
         return jsonify({'exists': exists})
@@ -25500,10 +24832,6 @@ def api_transfer_options():
         ps_result = supabase.table('ps_users').select('id, name, username, email, phone, branch, is_active').eq('is_active', True).execute()
         ps_options = ps_result.data if ps_result.data else []
         
-        # Get all Branch Heads for transfer options - Branch Head has branch
-        bh_result = supabase.table('branch_head_users').select('id, name, username, email, phone, branch, is_active').eq('is_active', True).execute()
-        bh_options = bh_result.data if bh_result.data else []
-        
         # Sanitize the data to ensure no problematic characters
         for cre in cre_options:
             if isinstance(cre.get('name'), str):
@@ -25518,166 +24846,15 @@ def api_transfer_options():
                 ps['username'] = ps['username'].strip()
             if isinstance(ps.get('branch'), str):
                 ps['branch'] = ps['branch'].strip()
-                
-        for bh in bh_options:
-            if isinstance(bh.get('name'), str):
-                bh['name'] = bh['name'].strip()
-            if isinstance(bh.get('username'), str):
-                bh['username'] = bh['username'].strip()
-            if isinstance(bh.get('branch'), str):
-                bh['branch'] = bh['branch'].strip()
         
         return jsonify({
             'success': True,
             'cre_options': cre_options,
-            'ps_options': ps_options,
-            'bh_options': bh_options
+            'ps_options': ps_options
         })
     except Exception as e:
         print(f"Error in api_transfer_options: {str(e)}")
         return jsonify({'success': False, 'message': 'Error fetching transfer options'})
-
-@app.route('/api/bh_dashboard_stats')
-def api_bh_dashboard_stats():
-    """API to get Branch Head dashboard statistics"""
-    try:
-        # Check if user is logged in as Branch Head
-        if session.get('user_type') != 'bh':
-            return jsonify({'success': False, 'message': 'Access denied'})
-        
-        branch = session.get('bh_branch')
-        if not branch:
-            return jsonify({'success': False, 'message': 'Branch information not found'})
-        
-        # Get counts for the specific branch
-        cre_count = get_accurate_count('cre_users')  # CREs don't have branch, so total
-        ps_count = get_accurate_count('ps_users', {'branch': branch})
-        leads_count = get_accurate_count('lead_master')  # Total leads
-        unassigned_leads = get_accurate_count('lead_master', {'assigned': 'No'})
-        
-        stats = {
-            'cre_count': cre_count,
-            'ps_count': ps_count,
-            'leads_count': leads_count,
-            'unassigned_leads': unassigned_leads
-        }
-        
-        return jsonify({
-            'success': True,
-            'stats': stats
-        })
-        
-    except Exception as e:
-        print(f"Error in api_bh_dashboard_stats: {str(e)}")
-        return jsonify({'success': False, 'message': 'Error fetching dashboard statistics'})
-
-@app.route('/admin/sync_timestamps', methods=['POST'])
-@require_admin
-def admin_sync_timestamps():
-    """Admin endpoint to manually synchronize timestamps between tables"""
-    try:
-        synced_count = sync_all_existing_timestamps()
-        return jsonify({
-            'success': True,
-            'message': f'Successfully synchronized timestamps for {synced_count} leads',
-            'synced_count': synced_count
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': f'Error synchronizing timestamps: {str(e)}'
-        })
-
-@app.route('/api/bh_ps_performance')
-def api_bh_ps_performance():
-    """API to get PS performance data for Branch Head dashboard"""
-    try:
-        # Check if user is logged in as Branch Head
-        if session.get('user_type') != 'bh':
-            return jsonify({'success': False, 'message': 'Access denied'})
-        
-        branch = session.get('bh_branch')
-        if not branch:
-            return jsonify({'success': False, 'message': 'Branch information not found'})
-        
-        # Get current month (first day and last day)
-        from datetime import datetime
-        current_date = datetime.now()
-        first_day_of_month = current_date.replace(day=1).strftime('%Y-%m-%d')
-        
-        # Get last day of current month
-        if current_date.month == 12:
-            next_month = current_date.replace(year=current_date.year + 1, month=1, day=1)
-        else:
-            next_month = current_date.replace(month=current_date.month + 1, day=1)
-        last_day_of_month = (next_month - timedelta(days=1)).strftime('%Y-%m-%d')
-        
-        # Get all PS users from the branch
-        ps_result = supabase.table('ps_users').select('name').eq('branch', branch).eq('is_active', True).execute()
-        if not ps_result.data:
-            return jsonify({'success': False, 'message': 'No PS users found in this branch'})
-        
-        ps_names = [ps['name'] for ps in ps_result.data]
-        performance_data = []
-        
-        for ps_name in ps_names:
-            # Get total leads assigned to this PS in current month
-            total_leads_result = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_name', ps_name).gte('ps_assigned_at', first_day_of_month).lte('ps_assigned_at', last_day_of_month).execute()
-            total_leads = total_leads_result.count or 0
-            
-            # Get F1-F7 call counts for leads assigned in current month
-            f1_count = 0
-            f2_count = 0
-            f3_count = 0
-            f4_count = 0
-            f5_count = 0
-            f6_count = 0
-            f7_count = 0
-            
-            if total_leads > 0:
-                # Get leads with call dates for current month
-                leads_result = supabase.table('ps_followup_master').select('first_call_date, second_call_date, third_call_date, fourth_call_date, fifth_call_date, sixth_call_date, seventh_call_date').eq('ps_name', ps_name).gte('ps_assigned_at', first_day_of_month).lte('ps_assigned_at', last_day_of_month).execute()
-                
-                for lead in leads_result.data:
-                    if lead.get('first_call_date'):
-                        f1_count += 1
-                    if lead.get('second_call_date'):
-                        f2_count += 1
-                    if lead.get('third_call_date'):
-                        f3_count += 1
-                    if lead.get('fourth_call_date'):
-                        f4_count += 1
-                    if lead.get('fifth_call_date'):
-                        f5_count += 1
-                    if lead.get('sixth_call_date'):
-                        f6_count += 1
-                    if lead.get('seventh_call_date'):
-                        f7_count += 1
-            
-            performance_data.append({
-                'ps_name': ps_name,
-                'total_leads_assigned': total_leads,
-                'f1': f1_count,
-                'f2': f2_count,
-                'f3': f3_count,
-                'f4': f4_count,
-                'f5': f5_count,
-                'f6': f6_count,
-                'f7': f7_count,
-                'lost_mtd': 0,  # Placeholder for now
-                'won_mtd': 0    # Placeholder for now
-            })
-        
-        return jsonify({
-            'success': True,
-            'branch': branch,
-            'current_month': current_date.strftime('%B %Y'),
-            'performance_data': performance_data
-        })
-        
-    except Exception as e:
-        print(f"Error in api_bh_ps_performance: {str(e)}")
-        return jsonify({'success': False, 'message': 'Error fetching PS performance data'})
 
 @app.route('/api/branches')
 @require_admin
