@@ -1,4 +1,4 @@
-import eventlet
+# # import eventlet  # REMOVED - Not used anywhere
 
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, current_app
 from supabase.client import create_client, Client
@@ -25,7 +25,7 @@ import time
 import gc
 from flask_socketio import SocketIO, emit
 import math
-# from redis import Redis  # REMOVE this line for local development
+# from redis import Redis  # REMOVED - Not needed for local development
 
 # Import optimized operations for faster lead updates
 from optimized_lead_operations import create_optimized_operations
@@ -5592,104 +5592,7 @@ def fix_missing_timestamps():
         print(f"Error fixing timestamps: {str(e)}")
 
 
-@app.route('/')
-def index():
-    session.clear()  # Ensure no session data is present
-    return render_template('index.html')
-
-
-@app.route('/unified_login', methods=['POST'])
-@limiter.limit("100000 per minute")
-def unified_login() -> Response:
-    start_time = time.time()
-    username = request.form.get('username', '').strip()
-    password = request.form.get('password', '').strip()
-    user_type = request.form.get('user_type', '').strip().lower()
-
-    valid_user_types = ['admin', 'cre', 'ps', 'rec']
-    if user_type not in valid_user_types:
-        flash('Please select a valid role (Admin, CRE, PS, or Receptionist)', 'error')
-        return redirect(url_for('index'))
-
-    # Branch Head login removed
-
-    elif user_type == 'rec':
-        # Receptionist authentication
-        rec_user = supabase.table('rec_users').select('*').eq('username', username).execute().data
-        if not rec_user:
-            flash('Invalid username or password', 'error')
-            return redirect(url_for('index'))
-        rec_user = rec_user[0]
-        if not rec_user.get('is_active', True):
-            flash('User is inactive', 'error')
-            return redirect(url_for('index'))
-        # Check password using werkzeug
-        if not check_password_hash(rec_user['password_hash'], password):
-            flash('Incorrect password', 'error')
-            return redirect(url_for('index'))
-        session.clear()
-        session['rec_user_id'] = rec_user['id']
-        session['rec_branch'] = rec_user['branch']
-        session['rec_name'] = rec_user.get('name', username)
-        session['user_type'] = 'rec'
-        session['username'] = username
-        flash('Welcome! Logged in as Receptionist', 'success')
-        return redirect(url_for('add_walkin_lead'))
-
-    # Existing logic for admin, cre, ps
-    t_user = time.time()
-    success, message, user_data = auth_manager.authenticate_user(username, password, user_type)
-    print(f"[PERF] unified_login: authenticate_user({user_type}) took {time.time() - t_user:.3f} seconds")
-    if success:
-        t2 = time.time()
-        session_id = auth_manager.create_session(user_data['id'], user_type, user_data)
-        print(f"DEBUG: Logged in as user_type={user_type}, session.user_type={session.get('user_type')}")
-        print(f"[PERF] unified_login: create_session took {time.time() - t2:.3f} seconds")
-        if session_id:
-            flash(f'Welcome! Logged in as {user_type.upper()}', 'success')
-            t3 = time.time()
-            # Redirect to appropriate dashboard
-            if user_type == 'admin':
-                print(f"[PERF] unified_login: redirect to admin_dashboard after {time.time() - t3:.3f} seconds")
-                print(f"[PERF] unified_login TOTAL took {time.time() - start_time:.3f} seconds")
-                return redirect(url_for('admin_dashboard'))
-            elif user_type == 'cre':
-                print(f"[PERF] unified_login: redirect to cre_dashboard after {time.time() - t3:.3f} seconds")
-                print(f"[PERF] unified_login TOTAL took {time.time() - start_time:.3f} seconds")
-                return redirect(url_for('cre_dashboard'))
-            elif user_type == 'ps':
-                print(f"[PERF] unified_login: redirect to ps_dashboard after {time.time() - t3:.3f} seconds")
-                print(f"[PERF] unified_login TOTAL took {time.time() - start_time:.3f} seconds")
-                return redirect(url_for('ps_dashboard'))
-        else:
-            flash('Error creating session', 'error')
-            print(f"[PERF] unified_login: session creation failed after {time.time() - t2:.3f} seconds")
-            print(f"[PERF] unified_login TOTAL took {time.time() - start_time:.3f} seconds")
-            return redirect(url_for('index'))
-    else:
-        flash('Invalid username or password', 'error')
-        print(f"[PERF] unified_login TOTAL (invalid login) took {time.time() - start_time:.3f} seconds")
-        return redirect(url_for('index'))
-# Keep the old login routes for backward compatibility (redirect to unified login)
-@app.route('/admin_login', methods=['GET', 'POST'])
-def admin_login():
-    if request.method == 'POST':
-        return unified_login()
-    return redirect(url_for('index'))
-
-
-@app.route('/cre_login', methods=['GET', 'POST'])
-def cre_login():
-    if request.method == 'POST':
-        return unified_login()
-    return redirect(url_for('index'))
-
-
-@app.route('/ps_login', methods=['GET', 'POST'])
-def ps_login():
-    if request.method == 'POST':
-        return unified_login()
-    return redirect(url_for('index'))
+# DUPLICATE SECTION REMOVED - This was causing route conflicts
 
 
 @app.route('/password_reset_request', methods=['GET', 'POST'])
