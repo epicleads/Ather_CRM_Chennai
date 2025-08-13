@@ -1,0 +1,456 @@
+2025-08-13 12:39:03,514 - ERROR - Failed to connect to Salesforce: INVALID_LOGIN: Invalid username, password, security token; or user locked out.
+2025-08-13 12:44:09,486 - INFO - Connected to Salesforce
+2025-08-13 12:44:10,125 - INFO - Connected to Supabase
+2025-08-13 12:44:14,237 - INFO - Fetching leads from 2025-08-12 12:44:14.237801+05:30 IST to 2025-08-13 12:44:14.237801+05:30 IST
+2025-08-13 12:44:14,848 - INFO - Total leads fetched: 337
+2025-08-13 12:44:14,848 - WARNING - Unknown lead owner: Mohd Kaif CG
+2025-08-13 12:44:14,849 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,849 - WARNING - Unknown lead owner: ShashikalaUM CG
+2025-08-13 12:44:14,849 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,858 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,858 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,858 - WARNING - Unknown lead owner: Dinnakar SM CG
+2025-08-13 12:44:14,858 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,859 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,859 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,859 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,859 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,861 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,861 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,861 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,862 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,862 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,862 - WARNING - Unknown lead owner: Himanshu Pathak CG
+2025-08-13 12:44:14,862 - WARNING - Unknown lead owner: Durganand Singh CG
+2025-08-13 12:44:14,863 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,863 - WARNING - Unknown lead owner: Lucky Upadhyay CG
+2025-08-13 12:44:14,863 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,863 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,864 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,864 - WARNING - Unknown lead owner: Simran Singh CG
+2025-08-13 12:44:14,864 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,864 - WARNING - Unmapped source found: Walkin
+2025-08-13 12:44:14,864 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,864 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,864 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,865 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,865 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,865 - WARNING - Unknown lead owner: Umer Mansuri CG
+2025-08-13 12:44:14,865 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,865 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,865 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,865 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,866 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,866 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,866 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,866 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,866 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,866 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,866 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,866 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,867 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,867 - WARNING - Unknown lead owner: Ajay CG
+2025-08-13 12:44:14,867 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,867 - WARNING - Unknown lead owner: Ishan Chaudhary CG
+2025-08-13 12:44:14,867 - WARNING - Unknown lead owner: Nidhi CG
+2025-08-13 12:44:14,867 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,867 - WARNING - Unknown lead owner: Shaik Thasleem Bhanu CG
+2025-08-13 12:44:14,867 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,867 - WARNING - Unknown lead owner: Shaik Thasleem Bhanu CG
+2025-08-13 12:44:14,867 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,867 - WARNING - Unknown lead owner: Ajay CG
+2025-08-13 12:44:14,868 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,868 - WARNING - Unknown lead owner: Ajay CG
+2025-08-13 12:44:14,868 - WARNING - Unknown lead owner: Mohd Kaif CG
+2025-08-13 12:44:14,868 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,868 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,869 - WARNING - Unknown lead owner: Mohd Kaif CG
+2025-08-13 12:44:14,869 - WARNING - Unknown lead owner: Jeevika Sachdeva CG
+2025-08-13 12:44:14,869 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,869 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,869 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,869 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,870 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,870 - WARNING - Unknown lead owner: Anjali Tiwari CG
+2025-08-13 12:44:14,870 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,870 - WARNING - Unknown lead owner: Nidhi CG
+2025-08-13 12:44:14,870 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,870 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,871 - WARNING - Unknown lead owner: Sumithra Kumari H R
+2025-08-13 12:44:14,871 - WARNING - Unknown lead owner: Himanshu Pathak CG
+2025-08-13 12:44:14,871 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,871 - WARNING - Unknown lead owner: Ajay CG
+2025-08-13 12:44:14,871 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,871 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,872 - WARNING - Unknown lead owner: Kapil Dev CG
+2025-08-13 12:44:14,872 - WARNING - Unknown lead owner: Simran Singh CG
+2025-08-13 12:44:14,872 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,873 - WARNING - Unknown lead owner: Shaik Thasleem Bhanu CG
+2025-08-13 12:44:14,873 - WARNING - Unknown lead owner: CRE-Q-1454-BRA-Shymala Devi EV Private L
+2025-08-13 12:44:14,873 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,874 - WARNING - Unknown lead owner: Shadab
+2025-08-13 12:44:14,874 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,874 - WARNING - Unknown lead owner: Anjali Tiwari CG
+2025-08-13 12:44:14,874 - WARNING - Unknown lead owner: Akshat Mathur CG
+2025-08-13 12:44:14,875 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,875 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,875 - WARNING - Unknown lead owner: Mohd Kaif CG
+2025-08-13 12:44:14,875 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,875 - WARNING - Unknown lead owner: Vaibhav Singh CG
+2025-08-13 12:44:14,875 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,876 - WARNING - Unknown lead owner: Saniya CG
+2025-08-13 12:44:14,876 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,877 - WARNING - Unmapped source found: Walkin
+2025-08-13 12:44:14,877 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,877 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,877 - WARNING - Unknown lead owner: CRE-Q-1154-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,878 - WARNING - Unknown lead owner: Durganand Singh CG
+2025-08-13 12:44:14,878 - WARNING - Unknown lead owner: Astha Ahuja CG
+2025-08-13 12:44:14,878 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,878 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,878 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,878 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,879 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,879 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,879 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,879 - WARNING - Unmapped source found: Walkin
+2025-08-13 12:44:14,879 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,880 - WARNING - Unmapped source found: Walkin
+2025-08-13 12:44:14,880 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,880 - WARNING - Unmapped source found: Walkin
+2025-08-13 12:44:14,880 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,880 - WARNING - Unknown lead owner: Ajay CG
+2025-08-13 12:44:14,881 - WARNING - Unknown lead owner: SanathS CG
+2025-08-13 12:44:14,881 - WARNING - Unknown lead owner: ShashikalaUM CG
+2025-08-13 12:44:14,881 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,881 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,881 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,881 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,882 - WARNING - Unknown lead owner: Umer Mansuri CG
+2025-08-13 12:44:14,882 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,882 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,882 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,882 - WARNING - Unknown lead owner: Shaik Thasleem Bhanu CG
+2025-08-13 12:44:14,882 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,882 - WARNING - Unknown lead owner: Pankaj Kumar CG
+2025-08-13 12:44:14,883 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,883 - WARNING - Unknown lead owner: CRE-Q-1136-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,883 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,883 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,883 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,883 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,883 - WARNING - Unknown lead owner: Dinnakar SM CG
+2025-08-13 12:44:14,884 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,884 - WARNING - Unknown lead owner: Nisha Mehra CG
+2025-08-13 12:44:14,884 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,884 - WARNING - Unknown lead owner: Abdulrajak Mulla CG
+2025-08-13 12:44:14,884 - WARNING - Unmapped source found: Walkin
+2025-08-13 12:44:14,884 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,884 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,884 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,885 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,885 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,885 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,885 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,885 - WARNING - Unknown lead owner: Mohd Kaif CG
+2025-08-13 12:44:14,885 - WARNING - Unknown lead owner: Durganand Singh CG
+2025-08-13 12:44:14,885 - WARNING - Unknown lead owner: Simran Singh CG
+2025-08-13 12:44:14,885 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,886 - WARNING - Unknown lead owner: Simran Singh CG
+2025-08-13 12:44:14,886 - WARNING - Unknown lead owner: CRE-Q-1136-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,886 - WARNING - Unknown lead owner: Shaik Thasleem Bhanu CG
+2025-08-13 12:44:14,886 - WARNING - Unknown lead owner: Arjun Sachdeva CG
+2025-08-13 12:44:14,887 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,887 - WARNING - Unknown lead owner: Vinaya CG
+2025-08-13 12:44:14,887 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,887 - WARNING - Unknown lead owner: CRE-Q-1154-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,887 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,887 - WARNING - Unknown lead owner: Durganand Singh CG
+2025-08-13 12:44:14,887 - WARNING - Unknown lead owner: Bhanu Partap CG
+2025-08-13 12:44:14,888 - WARNING - Unknown lead owner: Astha Ahuja CG
+2025-08-13 12:44:14,888 - WARNING - Unknown lead owner: Astha Ahuja CG
+2025-08-13 12:44:14,888 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,888 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,889 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,889 - WARNING - Unknown lead owner: Umer Mansuri CG
+2025-08-13 12:44:14,889 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,889 - WARNING - Unknown lead owner: Abdulrajak Mulla CG
+2025-08-13 12:44:14,889 - WARNING - Unmapped source found: Walkin
+2025-08-13 12:44:14,889 - WARNING - Unmapped source found: Walkin
+2025-08-13 12:44:14,890 - WARNING - Unknown lead owner: CRE-Q-1154-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,890 - WARNING - Unknown lead owner: Dinnakar SM CG
+2025-08-13 12:44:14,890 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,890 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,891 - WARNING - Unknown lead owner: CRE-Q-1154-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,891 - WARNING - Unknown lead owner: Shadab
+2025-08-13 12:44:14,891 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,891 - WARNING - Unknown lead owner: Abdulrajak Mulla CG
+2025-08-13 12:44:14,891 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,891 - WARNING - Unknown lead owner: Arjun Sachdeva CG
+2025-08-13 12:44:14,891 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,892 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,892 - WARNING - Unknown lead owner: CRE-Q-1154-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,892 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,892 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,892 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,892 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,893 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,893 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,893 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,893 - WARNING - Unknown lead owner: CRE-Q-1154-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,893 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,893 - WARNING - Unknown lead owner: Arjun Sachdeva CG
+2025-08-13 12:44:14,893 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,894 - WARNING - Unknown lead owner: MayankBhatnagar CG
+2025-08-13 12:44:14,894 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,894 - WARNING - Unknown lead owner: CRE-Q-1136-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,895 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,895 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,895 - WARNING - Unknown lead owner: CRE-Q-1136-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,895 - WARNING - Unknown lead owner: MayankBhatnagar CG
+2025-08-13 12:44:14,895 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,896 - WARNING - Unknown lead owner: Shweta Bhatnagar CG
+2025-08-13 12:44:14,896 - WARNING - Unknown lead owner: CRE-Q-1154-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,896 - WARNING - Unknown lead owner: Himanshi Wadhwa CG
+2025-08-13 12:44:14,896 - WARNING - Unknown lead owner: Jeevika Sachdeva CG
+2025-08-13 12:44:14,896 - WARNING - Unknown lead owner: Neha Kumari CG
+2025-08-13 12:44:14,896 - WARNING - Unknown lead owner: Ashiq Ansari CG
+2025-08-13 12:44:14,896 - WARNING - Unknown lead owner: Ajay CG
+2025-08-13 12:44:14,897 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,897 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,897 - WARNING - Unknown lead owner: Nidhi CG
+2025-08-13 12:44:14,897 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,897 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,897 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,897 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,897 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,898 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,898 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,898 - WARNING - Unknown lead owner: Sumithra Kumari H R
+2025-08-13 12:44:14,898 - WARNING - Unmapped source found: Walkin
+2025-08-13 12:44:14,898 - WARNING - Unknown lead owner: Astha Ahuja CG
+2025-08-13 12:44:14,898 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,899 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,899 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,899 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,899 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,899 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,899 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,900 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,900 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,900 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,900 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,901 - WARNING - Unknown lead owner: Kapil Dev CG
+2025-08-13 12:44:14,901 - WARNING - Unknown lead owner: BhavyaE CG
+2025-08-13 12:44:14,901 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,901 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,902 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,902 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,902 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,902 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,902 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,903 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,903 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,903 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,903 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,903 - WARNING - Unknown lead owner: CRE-Q-1136-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,903 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,904 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,904 - WARNING - Unknown lead owner: Durganand Singh CG
+2025-08-13 12:44:14,904 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,904 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,904 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,904 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,905 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,905 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,905 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,905 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,905 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,905 - WARNING - Unknown lead owner: Ajay CG
+2025-08-13 12:44:14,905 - WARNING - Unknown lead owner: Ashiq Ansari CG
+2025-08-13 12:44:14,905 - WARNING - Unknown lead owner: Ajay CG
+2025-08-13 12:44:14,906 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,906 - WARNING - Unknown lead owner: Josiah Edwin CG
+2025-08-13 12:44:14,906 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,906 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,906 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,907 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,907 - WARNING - Unknown lead owner: Mohd Kaif CG
+2025-08-13 12:44:14,907 - WARNING - Unmapped source found: Walkin
+2025-08-13 12:44:14,907 - WARNING - Unknown lead owner: CRE-Q-1154-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,907 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,907 - WARNING - Unknown lead owner: CRE-Q-1136-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,907 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,908 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,908 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,908 - WARNING - Unknown lead owner: Josiah Edwin CG
+2025-08-13 12:44:14,908 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,908 - WARNING - Unknown lead owner: BhavyaE CG
+2025-08-13 12:44:14,908 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,908 - WARNING - Unknown lead owner: Sumithra Kumari H R
+2025-08-13 12:44:14,909 - WARNING - Unknown lead owner: Himanshu Pathak CG
+2025-08-13 12:44:14,909 - WARNING - Unknown lead owner: Mohd Kaif CG
+2025-08-13 12:44:14,909 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,909 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,909 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,909 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,909 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,909 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,909 - WARNING - Unknown lead owner: SanathS CG
+2025-08-13 12:44:14,909 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,910 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,910 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,910 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,910 - WARNING - Unknown lead owner: SunilHegde CG
+2025-08-13 12:44:14,910 - WARNING - Unknown lead owner: CRE-Q-1136-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,910 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,910 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,911 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,911 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,911 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,911 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,913 - WARNING - Unknown lead owner: Pankaj Kumar CG
+2025-08-13 12:44:14,915 - WARNING - Unknown lead owner: CRE-Q-1136-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,916 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,916 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,917 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,917 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,918 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,919 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,919 - WARNING - Unknown lead owner: Abdulrajak Mulla CG
+2025-08-13 12:44:14,919 - WARNING - Unmapped source found: Others
+2025-08-13 12:44:14,919 - WARNING - Unknown lead owner: BharathKumarReddy CG
+2025-08-13 12:44:14,920 - WARNING - Unknown lead owner: Dinnakar SM CG
+2025-08-13 12:44:14,920 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,920 - WARNING - Unknown lead owner: CRE-Q-1136-CHE-RAAM ELECTRIC TWO WHEELER
+2025-08-13 12:44:14,921 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,922 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,922 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,923 - WARNING - Unknown lead owner: Josiah Edwin CG
+2025-08-13 12:44:14,923 - WARNING - Unknown lead owner: Ather IL User 2
+2025-08-13 12:44:14,923 - INFO - Processed 12 valid leads
+2025-08-13 12:44:14,924 - INFO - CRE assignments: 12
+2025-08-13 12:44:14,924 - INFO - PS assignments: 0
+2025-08-13 12:44:15,504 - INFO - HTTP Request: GET https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master?select=id&order=id.desc&limit=1 "HTTP/1.1 200 OK"
+2025-08-13 12:44:15,653 - INFO - HTTP Request: POST https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master "HTTP/1.1 201 Created"
+2025-08-13 12:44:15,654 - INFO - Successfully inserted 12 leads into lead_master
+2025-08-13 12:44:15,896 - INFO - HTTP Request: GET https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master?select=%2A&uid=eq.TY-0465-1039 "HTTP/1.1 200 OK"
+2025-08-13 12:44:15,897 - ERROR - Error updating lead with remarks: Object of type datetime is not JSON serializable
+2025-08-13 12:44:16,007 - INFO - HTTP Request: GET https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master?select=%2A&uid=eq.WZ-7223-1040 "HTTP/1.1 200 OK"
+2025-08-13 12:44:16,008 - ERROR - Error updating lead with remarks: Object of type datetime is not JSON serializable
+2025-08-13 12:44:16,114 - INFO - HTTP Request: GET https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master?select=%2A&uid=eq.WA-8130-1041 "HTTP/1.1 200 OK"
+2025-08-13 12:44:16,115 - ERROR - Error updating lead with remarks: Object of type datetime is not JSON serializable
+2025-08-13 12:44:16,267 - INFO - HTTP Request: GET https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master?select=%2A&uid=eq.BB-1164-1042 "HTTP/1.1 200 OK"
+2025-08-13 12:44:16,268 - ERROR - Error updating lead with remarks: Object of type datetime is not JSON serializable
+2025-08-13 12:44:16,506 - INFO - HTTP Request: GET https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master?select=%2A&uid=eq.WC-8258-1043 "HTTP/1.1 200 OK"
+2025-08-13 12:44:16,507 - ERROR - Error updating lead with remarks: Object of type datetime is not JSON serializable
+2025-08-13 12:44:16,655 - INFO - HTTP Request: GET https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master?select=%2A&uid=eq.TD-2553-1044 "HTTP/1.1 200 OK"
+2025-08-13 12:44:16,656 - ERROR - Error updating lead with remarks: Object of type datetime is not JSON serializable
+2025-08-13 12:44:16,962 - INFO - HTTP Request: GET https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master?select=%2A&uid=eq.NE-5804-1045 "HTTP/1.1 200 OK"
+2025-08-13 12:44:16,963 - ERROR - Error updating lead with remarks: Object of type datetime is not JSON serializable
+2025-08-13 12:44:17,091 - INFO - HTTP Request: GET https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master?select=%2A&uid=eq.WF-2824-1046 "HTTP/1.1 200 OK"
+2025-08-13 12:44:17,092 - ERROR - Error updating lead with remarks: Object of type datetime is not JSON serializable
+2025-08-13 12:44:17,203 - INFO - HTTP Request: GET https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master?select=%2A&uid=eq.DG-7513-1047 "HTTP/1.1 200 OK"
+2025-08-13 12:44:17,205 - ERROR - Error updating lead with remarks: Object of type datetime is not JSON serializable
+2025-08-13 12:44:17,382 - INFO - HTTP Request: GET https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master?select=%2A&uid=eq.BH-1519-1048 "HTTP/1.1 200 OK"
+2025-08-13 12:44:17,382 - ERROR - Error updating lead with remarks: Object of type datetime is not JSON serializable
+2025-08-13 12:44:17,480 - INFO - HTTP Request: GET https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master?select=%2A&uid=eq.TI-9152-1049 "HTTP/1.1 200 OK"
+2025-08-13 12:44:17,480 - ERROR - Error updating lead with remarks: Object of type datetime is not JSON serializable
+2025-08-13 12:44:17,587 - INFO - HTTP Request: GET https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master?select=%2A&uid=eq.NJ-9736-1050 "HTTP/1.1 200 OK"
+2025-08-13 12:44:17,588 - ERROR - Error updating lead with remarks: Object of type datetime is not JSON serializable
+2025-08-13 12:44:17,589 - INFO - 
+SUMMARY:
+2025-08-13 12:44:17,589 - INFO - Total leads processed: 12
+2025-08-13 12:44:17,590 - INFO - CRE assignments: 12
+2025-08-13 12:44:17,590 - INFO - PS assignments: 0
+2025-08-13 12:44:17,591 - INFO - Execution time: 3.35 seconds
+2025-08-13 12:44:17,592 - INFO - Script completed successfully
+2025-08-13 12:55:34,907 - INFO - Connected to Salesforce
+2025-08-13 12:55:35,552 - INFO - Connected to Supabase
+2025-08-13 12:55:35,605 - INFO - Fetching leads from 2025-08-12 12:55:35.605348+05:30 IST to 2025-08-13 12:55:35.605348+05:30 IST
+2025-08-13 12:55:36,359 - INFO - Total leads fetched: 338
+2025-08-13 12:55:36,360 - INFO - Processed 12 valid leads
+2025-08-13 12:55:36,360 - INFO - CRE assignments: 12
+2025-08-13 12:55:36,361 - INFO - PS assignments: 0
+2025-08-13 12:55:36,361 - INFO - Skipped 39 leads with invalid owners
+2025-08-13 12:55:36,361 - INFO - Skipped 2 leads in CRE queues
+2025-08-13 12:55:36,361 - INFO - Skipped 2 leads with unmapped sources
+2025-08-13 12:55:36,823 - INFO - HTTP Request: GET https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master?select=id&order=id.desc&limit=1 "HTTP/1.1 200 OK"
+2025-08-13 12:55:36,964 - INFO - HTTP Request: POST https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master "HTTP/1.1 201 Created"
+2025-08-13 12:55:36,965 - INFO - Successfully inserted 12 leads into lead_master
+2025-08-13 12:55:36,965 - INFO - 
+SUMMARY:
+2025-08-13 12:55:36,965 - INFO - Total leads processed: 12
+2025-08-13 12:55:36,965 - INFO - CRE assignments: 12
+2025-08-13 12:55:36,965 - INFO - PS assignments: 0
+2025-08-13 12:55:36,966 - INFO - Execution time: 1.36 seconds
+2025-08-13 12:55:36,966 - INFO - Script completed successfully
+2025-08-13 13:04:33,477 - INFO - Connected to Salesforce
+2025-08-13 13:04:34,097 - INFO - Connected to Supabase
+2025-08-13 13:04:34,129 - INFO - Fetching leads from 2025-08-12 13:04:34.129278+05:30 IST to 2025-08-13 13:04:34.129278+05:30 IST
+2025-08-13 13:04:34,462 - WARNING - Salesforce query attempt 1 failed: Malformed request https://atherenergy.my.salesforce.com/services/data/v59.0/query/?q=%0A++++++++++++SELECT+Id%2C+FirstName%2C+LastName%2C+Owner.Name%2C+Phone%2C+LeadSource%2C+%0A+++++++++++++++++++Status%2C+CreatedDate%2C+Branch__c%2C+Rating__c%2C%0A+++++++++++++++++++PS_Assigned__c%2C+Last_Follow_Up_Date__c%2C+Last_3_Follow_Up_Remarks__c%0A++++++++++++FROM+Lead%0A++++++++++++WHERE+CreatedDate+%3E%3D+2025-08-12T07%3A34%3A34Z+AND+CreatedDate+%3C%3D+2025-08-13T07%3A34%3A34Z%0A++++++++. Response content: [{'message': "\n                   PS_Assigned__c, Last_Follow_Up_Date__c\n                   ^\nERROR at Row:3:Column:20\nNo such column 'PS_Assigned__c' on entity 'Lead'. If you are attempting to use a custom field, be sure to append the '__c' after the custom field name. Please reference your WSDL or the describe call for the appropriate names.", 'errorCode': 'INVALID_FIELD'}]
+2025-08-13 13:04:35,528 - WARNING - Salesforce query attempt 2 failed: Malformed request https://atherenergy.my.salesforce.com/services/data/v59.0/query/?q=%0A++++++++++++SELECT+Id%2C+FirstName%2C+LastName%2C+Owner.Name%2C+Phone%2C+LeadSource%2C+%0A+++++++++++++++++++Status%2C+CreatedDate%2C+Branch__c%2C+Rating__c%2C%0A+++++++++++++++++++PS_Assigned__c%2C+Last_Follow_Up_Date__c%2C+Last_3_Follow_Up_Remarks__c%0A++++++++++++FROM+Lead%0A++++++++++++WHERE+CreatedDate+%3E%3D+2025-08-12T07%3A34%3A34Z+AND+CreatedDate+%3C%3D+2025-08-13T07%3A34%3A34Z%0A++++++++. Response content: [{'message': "\n                   PS_Assigned__c, Last_Follow_Up_Date__c\n                   ^\nERROR at Row:3:Column:20\nNo such column 'PS_Assigned__c' on entity 'Lead'. If you are attempting to use a custom field, be sure to append the '__c' after the custom field name. Please reference your WSDL or the describe call for the appropriate names.", 'errorCode': 'INVALID_FIELD'}]
+2025-08-13 13:04:37,722 - WARNING - Salesforce query attempt 3 failed: Malformed request https://atherenergy.my.salesforce.com/services/data/v59.0/query/?q=%0A++++++++++++SELECT+Id%2C+FirstName%2C+LastName%2C+Owner.Name%2C+Phone%2C+LeadSource%2C+%0A+++++++++++++++++++Status%2C+CreatedDate%2C+Branch__c%2C+Rating__c%2C%0A+++++++++++++++++++PS_Assigned__c%2C+Last_Follow_Up_Date__c%2C+Last_3_Follow_Up_Remarks__c%0A++++++++++++FROM+Lead%0A++++++++++++WHERE+CreatedDate+%3E%3D+2025-08-12T07%3A34%3A34Z+AND+CreatedDate+%3C%3D+2025-08-13T07%3A34%3A34Z%0A++++++++. Response content: [{'message': "\n                   PS_Assigned__c, Last_Follow_Up_Date__c\n                   ^\nERROR at Row:3:Column:20\nNo such column 'PS_Assigned__c' on entity 'Lead'. If you are attempting to use a custom field, be sure to append the '__c' after the custom field name. Please reference your WSDL or the describe call for the appropriate names.", 'errorCode': 'INVALID_FIELD'}]
+2025-08-13 13:04:37,722 - ERROR - Failed to fetch data from Salesforce after all retries
+2025-08-13 13:04:37,723 - ERROR - Script completed with errors
+2025-08-13 13:08:00,891 - INFO - Connected to Salesforce
+2025-08-13 13:08:01,520 - INFO - Connected to Supabase
+2025-08-13 13:08:01,554 - INFO - Fetching leads from 2025-08-12 13:08:01.554803+05:30 IST to 2025-08-13 13:08:01.554803+05:30 IST
+2025-08-13 13:08:01,555 - INFO - DEBUG: Using corrected Salesforce query with only existing fields
+2025-08-13 13:08:01,555 - INFO - DEBUG: Removed PS_Assigned__c, Last_Follow_Up_Date__c, Last_3_Follow_Up_Remarks__c
+2025-08-13 13:08:02,100 - INFO - Total leads fetched: 342
+2025-08-13 13:08:02,101 - WARNING - Unmapped source found: Others
+2025-08-13 13:08:02,101 - WARNING - Unmapped source found: Walkin
+2025-08-13 13:08:02,101 - WARNING - Unmapped source found: Others
+2025-08-13 13:08:02,101 - WARNING - Unmapped source found: Others
+2025-08-13 13:08:02,102 - WARNING - Unmapped source found: Walkin
+2025-08-13 13:08:02,102 - WARNING - Unmapped source found: Walkin
+2025-08-13 13:08:02,102 - WARNING - Unmapped source found: Walkin
+2025-08-13 13:08:02,102 - WARNING - Unmapped source found: Walkin
+2025-08-13 13:08:02,103 - WARNING - Unmapped source found: Others
+2025-08-13 13:08:02,103 - WARNING - Unmapped source found: Walkin
+2025-08-13 13:08:02,103 - WARNING - Unmapped source found: Others
+2025-08-13 13:08:02,103 - WARNING - Unmapped source found: Others
+2025-08-13 13:08:02,103 - WARNING - Unmapped source found: Walkin
+2025-08-13 13:08:02,104 - WARNING - Unmapped source found: Walkin
+2025-08-13 13:08:02,104 - WARNING - Unmapped source found: Others
+2025-08-13 13:08:02,104 - WARNING - Unmapped source found: Others
+2025-08-13 13:08:02,105 - WARNING - Unmapped source found: Walkin
+2025-08-13 13:08:02,105 - WARNING - Unmapped source found: Others
+2025-08-13 13:08:02,105 - WARNING - Unmapped source found: Others
+2025-08-13 13:08:02,105 - WARNING - Unmapped source found: Others
+2025-08-13 13:08:02,106 - WARNING - Unmapped source found: Walkin
+2025-08-13 13:08:02,106 - WARNING - Unmapped source found: Others
+2025-08-13 13:08:02,106 - WARNING - Unmapped source found: Others
+2025-08-13 13:08:02,106 - WARNING - Unmapped source found: Others
+2025-08-13 13:08:02,106 - WARNING - Unmapped source found: Others
+2025-08-13 13:08:02,106 - WARNING - Unmapped source found: Walkin
+2025-08-13 13:08:02,107 - WARNING - Unmapped source found: Walkin
+2025-08-13 13:08:02,107 - INFO - 
+=== PS ASSIGNMENT DEBUG ===
+2025-08-13 13:08:02,107 - INFO - Note: PS_Assigned__c field doesn't exist in your Salesforce org
+2025-08-13 13:08:02,107 - INFO - Checking if lead owners are PS instead...
+2025-08-13 13:08:02,108 - INFO - Found PS as lead owners: {'Aravindan P', 'Sathish K', 'Vetrivel Rajendaran', 'Naveen Kumar S'}
+2025-08-13 13:08:02,108 - INFO - Processed 12 valid leads
+2025-08-13 13:08:02,108 - INFO - CRE assignments: 12
+2025-08-13 13:08:02,108 - INFO - PS assignments: 0
+2025-08-13 13:08:02,567 - INFO - HTTP Request: GET https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master?select=id&order=id.desc&limit=1 "HTTP/1.1 200 OK"
+2025-08-13 13:08:02,716 - INFO - HTTP Request: POST https://cnxwblwtygkdimgetlko.supabase.co/rest/v1/lead_master "HTTP/1.1 201 Created"
+2025-08-13 13:08:02,717 - INFO - Successfully inserted 12 leads into lead_master
+2025-08-13 13:08:02,718 - INFO - 
+SUMMARY:
+2025-08-13 13:08:02,718 - INFO - Total leads processed: 12
+2025-08-13 13:08:02,718 - INFO - CRE assignments: 12
+2025-08-13 13:08:02,718 - INFO - PS assignments: 0
+2025-08-13 13:08:02,718 - INFO - Execution time: 1.16 seconds
+2025-08-13 13:08:02,718 - INFO - 
+=== FIELD AVAILABILITY INFO ===
+2025-08-13 13:08:02,718 - INFO - Available fields in your Salesforce org:
+2025-08-13 13:08:02,718 - INFO - - FirstName, LastName, Owner.Name, Phone, LeadSource
+2025-08-13 13:08:02,718 - INFO - - Status, CreatedDate, Branch__c, Rating__c
+2025-08-13 13:08:02,718 - INFO - Fields NOT available (causing the error):
+2025-08-13 13:08:02,718 - INFO - - PS_Assigned__c
+2025-08-13 13:08:02,719 - INFO - - Last_Follow_Up_Date__c
+2025-08-13 13:08:02,719 - INFO - - Last_3_Follow_Up_Remarks__c
+2025-08-13 13:08:02,719 - INFO - Workaround: Checking if lead owner is a PS instead
+2025-08-13 13:08:02,719 - INFO - Script completed successfully
