@@ -15,6 +15,7 @@ matplotlib
 seaborn
 reportlab
 aiohttp
-# Flask-SocketIO removed - not compatible with sync workers
-# eventlet removed due to Python 3.11 SSL compatibility issues
-# For production use, sync workers are recommended to avoid SSL conflicts
+flask-socketio
+# For production use, eventlet is recommended for async workers
+# (if using gevent, you can add gevent instead)
+eventlet
