@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Chennai Salesforce to Supabase Synchronization Script WITH UPDATE CAPABILITY
-FIXED: Manual parsing for robust remarks extraction
+Chennai Salesforce to Supabase Synchronization Script WITH ENHANCED DUPLICATE HANDLING & MANUAL PARSING
+Combines: Enhanced duplicate table logic + Manual parsing for robust remarks extraction
 Handles: 1. rnr  2.  3. VOC : cx enquired about on road price...
 """
 
@@ -46,8 +46,8 @@ if missing_vars:
     logger.error(f"Missing required environment variables: {', '.join(missing_vars)}")
     sys.exit(1)
 
-print("🚀 Chennai Salesforce to Supabase Sync Script (MANUAL PARSING) Starting...")
-print("=" * 70)
+print("🚀 Chennai Salesforce to Supabase Sync Script (ENHANCED DUPLICATES + MANUAL PARSING) Starting...")
+print("=" * 80)
 
 # Initialize connections
 try:
@@ -152,17 +152,144 @@ debug_stats = {
     'existing_leads_updated': 0,
     'ps_followup_created': 0,
     'ps_followup_updated': 0,
-    'duplicates_handled': 0
+    'duplicates_handled': 0,
+    'duplicate_records_created': 0,
+    'duplicate_records_updated': 0,
+    'skipped_exact_duplicates': 0
 }
 
 # ===============================================
-# ENHANCED DUPLICATE HANDLER CLASS WITH UPDATE CAPABILITY
+# ENHANCED DUPLICATE HANDLER HELPER FUNCTIONS
+# ===============================================
+
+def find_next_available_source_slot(duplicate_record):
+    """Find the next available source slot (source1, source2, etc.) in duplicate_leads record"""
+    for i in range(1, 11):  # source1 to source10
+        if duplicate_record.get(f'source{i}') is None:
+            return i
+    return None  # All slots are full
+
+def add_source_to_duplicate_record(supabase, duplicate_record, new_source, new_sub_source, new_date):
+    """Add new source to existing duplicate_leads record"""
+    try:
+        slot = find_next_available_source_slot(duplicate_record)
+        if slot is None:
+            print(f"⚠️ All source slots full for phone: {duplicate_record['customer_mobile_number']}")
+            return False
+        
+        # Update the record with new source in the available slot
+        update_data = {
+            f'source{slot}': new_source,
+            f'sub_source{slot}': new_sub_source,
+            f'date{slot}': new_date,
+            'duplicate_count': duplicate_record['duplicate_count'] + 1,
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        supabase.table("duplicate_leads").update(update_data).eq('id', duplicate_record['id']).execute()
+        print(f"✅ Added source{slot} to duplicate record: {duplicate_record['uid']} | Phone: {duplicate_record['customer_mobile_number']} | New Source: {new_source}")
+        logger.info(f"Added source{slot} to duplicate record: {duplicate_record['uid']} | Phone: {duplicate_record['customer_mobile_number']}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to add source to duplicate record: {e}")
+        logger.error(f"Failed to add source to duplicate record: {e}")
+        return False
+
+def create_duplicate_record(supabase, original_record, new_source, new_sub_source, new_date):
+    """Create new duplicate_leads record when a lead becomes duplicate"""
+    try:
+        duplicate_data = {
+            'uid': original_record['uid'],
+            'customer_mobile_number': original_record['customer_mobile_number'],
+            'customer_name': original_record['customer_name'],
+            'original_lead_id': original_record['id'],
+            'source1': original_record['source'],
+            'sub_source1': original_record['sub_source'],
+            'date1': original_record['date'],
+            'source2': new_source,
+            'sub_source2': new_sub_source,
+            'date2': new_date,
+            'duplicate_count': 2,
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        # Initialize remaining slots as None
+        for i in range(3, 11):
+            duplicate_data[f'source{i}'] = None
+            duplicate_data[f'sub_source{i}'] = None
+            duplicate_data[f'date{i}'] = None
+        
+        supabase.table("duplicate_leads").insert(duplicate_data).execute()
+        print(f"✅ Created duplicate record: {original_record['uid']} | Phone: {original_record['customer_mobile_number']} | Sources: {original_record['source']} + {new_source}")
+        logger.info(f"Created duplicate record: {original_record['uid']} | Phone: {original_record['customer_mobile_number']} | Sources: {original_record['source']} + {new_source}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to create duplicate record: {e}")
+        logger.error(f"Failed to create duplicate record: {e}")
+        return False
+
+def is_duplicate_source(existing_record, new_source, new_sub_source):
+    """Check if the new source/sub_source combination already exists in the record"""
+    # For lead_master, check direct fields
+    if 'source' in existing_record:
+        return (existing_record['source'] == new_source and 
+                existing_record['sub_source'] == new_sub_source)
+    
+    # For duplicate_leads, check all source slots
+    for i in range(1, 11):
+        if (existing_record.get(f'source{i}') == new_source and 
+            existing_record.get(f'sub_source{i}') == new_sub_source):
+            return True
+    
+    return False
+
+def should_update_lead(existing_record: Dict, new_lead_data: Dict) -> bool:
+    """
+    Determine if an existing lead should be updated based on new data
+    Returns True if there are meaningful differences in remarks or dates
+    """
+    # Check if any remarks are different or new
+    remark_fields = ['first_remark', 'second_remark', 'third_remark', 'fourth_remark', 
+                    'fifth_remark', 'sixth_remark', 'seventh_remark']
+    
+    for field in remark_fields:
+        existing_value = existing_record.get(field)
+        new_value = new_lead_data.get(field)
+        
+        # If new data has a remark that existing doesn't have, or they're different
+        if new_value and (not existing_value or existing_value != new_value):
+            print(f"   🔄 Update needed: {field} changed")
+            print(f"      Old: {existing_value}")
+            print(f"      New: {new_value}")
+            return True
+    
+    # Check if any call dates are different or new
+    date_fields = ['first_call_date', 'second_call_date', 'third_call_date', 'fourth_call_date',
+                  'fifth_call_date', 'sixth_call_date', 'seventh_call_date', 'follow_up_date']
+    
+    for field in date_fields:
+        existing_value = existing_record.get(field)
+        new_value = new_lead_data.get(field)
+        
+        # If new data has a date that existing doesn't have, or they're different
+        if new_value and (not existing_value or existing_value != new_value):
+            print(f"   🔄 Update needed: {field} changed")
+            print(f"      Old: {existing_value}")
+            print(f"      New: {new_value}")
+            return True
+    
+    return False
+
+# ===============================================
+# ENHANCED DUPLICATE HANDLER CLASS
 # ===============================================
 
 class DuplicateLeadsHandler:
     """
-    Chennai-specific duplicate leads handler with UPDATE capability
-    Now handles both new inserts AND updates to existing leads
+    Chennai-specific duplicate leads handler with ENHANCED duplicate table logic + UPDATE capability
     """
     
     def __init__(self, supabase_client):
@@ -193,46 +320,9 @@ class DuplicateLeadsHandler:
             logger.error(f"Error checking existing leads: {e}")
             return {}, {}
     
-    def should_update_lead(self, existing_record: Dict, new_lead_data: Dict) -> bool:
-        """
-        Determine if an existing lead should be updated based on new data
-        Returns True if there are meaningful differences in remarks or dates
-        """
-        # Check if any remarks are different or new
-        remark_fields = ['first_remark', 'second_remark', 'third_remark', 'fourth_remark', 
-                        'fifth_remark', 'sixth_remark', 'seventh_remark']
-        
-        for field in remark_fields:
-            existing_value = existing_record.get(field)
-            new_value = new_lead_data.get(field)
-            
-            # If new data has a remark that existing doesn't have, or they're different
-            if new_value and (not existing_value or existing_value != new_value):
-                print(f"   🔄 Update needed: {field} changed")
-                print(f"      Old: {existing_value}")
-                print(f"      New: {new_value}")
-                return True
-        
-        # Check if any call dates are different or new
-        date_fields = ['first_call_date', 'second_call_date', 'third_call_date', 'fourth_call_date',
-                      'fifth_call_date', 'sixth_call_date', 'seventh_call_date', 'follow_up_date']
-        
-        for field in date_fields:
-            existing_value = existing_record.get(field)
-            new_value = new_lead_data.get(field)
-            
-            # If new data has a date that existing doesn't have, or they're different
-            if new_value and (not existing_value or existing_value != new_value):
-                print(f"   🔄 Update needed: {field} changed")
-                print(f"      Old: {existing_value}")
-                print(f"      New: {new_value}")
-                return True
-        
-        return False
-    
     def process_leads_for_duplicates_and_updates(self, new_leads_df: pd.DataFrame) -> Dict[str, Any]:
         """
-        ENHANCED: Process leads with capability to UPDATE existing leads
+        ENHANCED: Process leads with enhanced duplicate table logic + UPDATE capability
         """
         if new_leads_df.empty:
             return {
@@ -241,6 +331,8 @@ class DuplicateLeadsHandler:
                 'updated_duplicates': 0,
                 'skipped_duplicates': 0,
                 'skipped_queue_leads': 0,
+                'duplicate_records_created': 0,
+                'duplicate_records_updated': 0,
                 'master_records': {},
                 'duplicate_records': {}
             }
@@ -253,11 +345,14 @@ class DuplicateLeadsHandler:
         updated_duplicates = 0
         skipped_duplicates = 0
         skipped_queue_leads = 0
+        duplicate_records_created = 0
+        duplicate_records_updated = 0
         
         for _, row in new_leads_df.iterrows():
             phone = row['customer_mobile_number']
             current_source = row['source']
             current_sub_source = row['sub_source']
+            current_date = row['date']
             cre_name = row.get('cre_name')
             
             # Skip CRE queue assignments
@@ -270,33 +365,67 @@ class DuplicateLeadsHandler:
             
             # Handle existing leads
             if phone in master_records:
-                existing_record = master_records[phone]
+                master_record = master_records[phone]
                 lead_data_dict = row.to_dict()
                 
-                # Check if this is the same source (exact duplicate)
-                if (existing_record.get('source') == current_source and 
-                    existing_record.get('sub_source') == current_sub_source):
-                    
+                # Check if this is a duplicate source/sub_source combination
+                if is_duplicate_source(master_record, current_source, current_sub_source):
                     # Same source - check if lead needs updating (new remarks/dates)
-                    if self.should_update_lead(existing_record, lead_data_dict):
+                    
+                    if should_update_lead(master_record, lead_data_dict):
                         # Preserve the original UID and other key fields
-                        lead_data_dict['uid'] = existing_record['uid']
-                        lead_data_dict['id'] = existing_record['id']
+                        lead_data_dict['uid'] = master_record['uid']
+                        lead_data_dict['id'] = master_record['id']
                         leads_to_update.append(lead_data_dict)
                         updated_duplicates += 1
-                        print(f"🔄 Will UPDATE existing lead: {phone} | UID: {existing_record['uid']}")
-                        logger.info(f"Scheduled update for existing lead: {phone} | UID: {existing_record['uid']}")
+                        print(f"🔄 Will UPDATE existing lead: {phone} | UID: {master_record['uid']}")
+                        logger.info(f"Scheduled update for existing lead: {phone} | UID: {master_record['uid']}")
                     else:
-                        print(f"⚠️ No changes detected, skipping: {phone} | UID: {existing_record['uid']}")
+                        print(f"⚠️ Skipping exact duplicate: {phone} | Source: {current_source} | Sub-source: {current_sub_source}")
                         skipped_duplicates += 1
+                        debug_stats['skipped_exact_duplicates'] += 1
+                    continue
+                
+                # Different source - handle via duplicate table logic
+                print(f"🔄 Found duplicate phone, different source: {phone}")
+                logger.info(f"Processing duplicate for phone: {phone}")
+                
+                # Check if already exists in duplicate_leads
+                if phone in duplicate_records:
+                    duplicate_record = duplicate_records[phone]
+                    
+                    # Check if this source/sub_source already exists in duplicate record
+                    if is_duplicate_source(duplicate_record, current_source, current_sub_source):
+                        print(f"⚠️ Skipping duplicate: {phone} | Source: {current_source} | Sub-source: {current_sub_source}")
+                        skipped_duplicates += 1
+                        debug_stats['skipped_exact_duplicates'] += 1
+                        continue
+                    
+                    # Add to existing duplicate record
+                    if add_source_to_duplicate_record(self.supabase, duplicate_record, current_source, current_sub_source, current_date):
+                        duplicate_records_updated += 1
+                        debug_stats['duplicate_records_updated'] += 1
+                        # Update local duplicate_records to avoid conflicts in same batch
+                        duplicate_records[phone]['duplicate_count'] += 1
                 else:
-                    # Different source - handle as before
-                    print(f"🔄 Found duplicate phone, different source: {phone}")
-                    logger.info(f"Processing duplicate for phone: {phone}")
-                    updated_duplicates += 1
-                    debug_stats['duplicates_handled'] += 1
+                    # Create new duplicate record
+                    if create_duplicate_record(self.supabase, master_record, current_source, current_sub_source, current_date):
+                        duplicate_records_created += 1
+                        debug_stats['duplicate_records_created'] += 1
+                        # Add to local duplicate_records to avoid conflicts in same batch
+                        duplicate_records[phone] = {
+                            'customer_mobile_number': phone,
+                            'duplicate_count': 2,
+                            'source1': master_record['source'],
+                            'source2': current_source,
+                            'sub_source1': master_record['sub_source'],
+                            'sub_source2': current_sub_source
+                        }
+                
+                updated_duplicates += 1
+                debug_stats['duplicates_handled'] += 1
             else:
-                # New lead
+                # Completely new lead
                 new_leads.append(row)
         
         return {
@@ -305,6 +434,8 @@ class DuplicateLeadsHandler:
             'updated_duplicates': updated_duplicates,
             'skipped_duplicates': skipped_duplicates,
             'skipped_queue_leads': skipped_queue_leads,
+            'duplicate_records_created': duplicate_records_created,
+            'duplicate_records_updated': duplicate_records_updated,
             'master_records': master_records,
             'duplicate_records': duplicate_records
         }
@@ -674,7 +805,7 @@ def update_ps_followup_record(supabase, lead_data, ps_name):
 # ===============================================
 
 def main():
-    """Main execution function for Chennai sync"""
+    """Main execution function for Chennai sync with enhanced duplicate handling + manual parsing"""
     start_time_main = time.time()
     
     try:
@@ -896,10 +1027,16 @@ def main():
             print("ℹ️ No valid leads to process from past 24 hours")
             return True
         
-        print(f"\n🔄 DUPLICATE HANDLING & UPDATES")
-        print("=" * 35)
+        print(f"\n🔄 ENHANCED DUPLICATE HANDLING + MANUAL PARSING")
+        print("=" * 55)
+        print(f"🎯 Features:")
+        print(f"   - Same phone + same source/sub-source → UPDATE or SKIP")
+        print(f"   - Same phone + different source → DUPLICATE TABLE")
+        print(f"   - New phone → INSERT as new lead")
+        print(f"   - Duplicate table supports up to 10 sources per phone")
+        print(f"   - Manual parsing: '1. rnr  2.  3. VOC : cx enquired...'")
         
-        # Process duplicates with update capability
+        # Process duplicates with enhanced duplicate table handling
         df_processed = pd.DataFrame(processed_leads)
         duplicate_results = duplicate_handler.process_leads_for_duplicates_and_updates(df_processed)
         
@@ -977,7 +1114,6 @@ def main():
                         # Update PS follow-up record if this is a PS lead
                         if lead_dict.get('ps_name'):
                             update_ps_followup_record(supabase, lead_dict, lead_dict['ps_name'])
-                        
                     else:
                         print(f"❌ Failed to update: {uid}")
                         
@@ -1006,31 +1142,73 @@ def main():
         # Final execution summary
         execution_time = time.time() - start_time_main
         
-        print(f"\n🎉 CHENNAI SYNC COMPLETED (MANUAL PARSING)")
-        print("=" * 45)
+        print(f"\n🎉 CHENNAI SYNC COMPLETED (ENHANCED DUPLICATES + MANUAL PARSING)")
+        print("=" * 65)
         print(f"⏱️ Execution time: {execution_time:.2f} seconds")
         print(f"📦 Total leads fetched: {debug_stats['total_fetched']} (past 24 hours only)")
         print(f"🆕 NEW leads inserted: {debug_stats['new_leads_inserted']}")
         print(f"🔄 EXISTING leads updated: {debug_stats['existing_leads_updated']}")
         print(f"🔧 PS follow-ups created: {debug_stats['ps_followup_created']}")
         print(f"🔧 PS follow-ups updated: {debug_stats['ps_followup_updated']}")
+        print(f"📊 Duplicate records created: {debug_stats['duplicate_records_created']}")
+        print(f"📊 Duplicate records updated: {debug_stats['duplicate_records_updated']}")
+        print(f"⚠️ Exact duplicates skipped: {debug_stats['skipped_exact_duplicates']}")
         
-        print(f"\n🎯 MANUAL PARSING RESULTS FOR YOUR CASE:")
+        # Show detailed breakdown
+        if debug_stats['cre_breakdown']:
+            print(f"\n👥 CRE BREAKDOWN:")
+            for cre, count in debug_stats['cre_breakdown'].items():
+                print(f"   - {cre}: {count} leads")
+        
+        if debug_stats['ps_breakdown']:
+            print(f"\n🔧 PS BREAKDOWN:")
+            for ps, count in debug_stats['ps_breakdown'].items():
+                print(f"   - {ps}: {count} leads")
+        
+        if skipped_invalid_owners:
+            print(f"\n⚠️ SKIPPED OWNERS (not Chennai CRE/PS):")
+            for owner in sorted(skipped_invalid_owners):
+                print(f"   - {owner}")
+        
+        if skipped_cre_queues:
+            print(f"\n⚠️ SKIPPED CRE QUEUES:")
+            for queue in sorted(skipped_cre_queues):
+                print(f"   - {queue}")
+        
+        if debug_stats['unmapped_sources']:
+            print(f"\n⚠️ UNMAPPED SOURCES:")
+            for source in sorted(debug_stats['unmapped_sources']):
+                print(f"   - {source}")
+        
+        print(f"\n🎯 MANUAL PARSING EXAMPLE FOR YOUR CASE:")
         print(f"   Input: '1. rnr  2.  3. VOC : cx enquired about on road price...'")
         print(f"   ✅ first_remark: 'rnr'")
         print(f"   ✅ second_remark: NULL (empty section)")
         print(f"   ✅ third_remark: 'VOC : cx enquired about on road price...'")
         
-        print(f"\n🔧 ALL FEATURES:")
+        print(f"\n🔧 ENHANCED FEATURES SUMMARY:")
         print(f"   ✅ MANUAL PARSING: Handles empty sections correctly")
         print(f"   ✅ Exact position mapping: 1. → first_remark, 3. → third_remark")
         print(f"   ✅ Only processes leads CREATED in past 24 hours")
-        print(f"   ✅ Automatic updates to existing leads")
+        print(f"   ✅ Enhanced duplicate table handling (like Meta script)")
+        print(f"   ✅ Same phone + different sources → duplicate_leads table")
+        print(f"   ✅ Supports up to 10 sources per phone number")
+        print(f"   ✅ Automatic updates to existing leads with new remarks")
         print(f"   ✅ Branch and lead_status set to NULL")
         print(f"   ✅ PS records with ps_branch and lead_status NULL")
         print(f"   ✅ NONE values properly handled")
         
-        logger.info("Chennai sync completed successfully (manual parsing)")
+        print(f"\n📊 FINAL STATISTICS:")
+        print(f"   📦 Total fetched: {debug_stats['total_fetched']}")
+        print(f"   🆕 New leads: {debug_stats['new_leads_inserted']}")
+        print(f"   🔄 Updated leads: {debug_stats['existing_leads_updated']}")
+        print(f"   📊 Duplicate records created: {debug_stats['duplicate_records_created']}")
+        print(f"   📊 Duplicate records updated: {debug_stats['duplicate_records_updated']}")
+        print(f"   ⚠️ Skipped exact duplicates: {debug_stats['skipped_exact_duplicates']}")
+        print(f"   📝 Successful remark extractions: {debug_stats['remark_extraction_success']}")
+        print(f"   📅 Successful date mappings: {debug_stats['date_mapping_success']}")
+        
+        logger.info("Chennai sync completed successfully (enhanced duplicates + manual parsing)")
         return True
         
     except Exception as e:
@@ -1040,32 +1218,70 @@ def main():
 
 if __name__ == "__main__":
     try:
-        print("🏢 CHENNAI SALESFORCE TO SUPABASE SYNC (MANUAL PARSING)")
-        print("=" * 65)
-        print("🎯 MANUAL PARSING Features:")
-        print("   - Handles: '1. rnr  2.  3. VOC : cx enquired...'")
-        print("   - 1. content → first_remark")
-        print("   - 2. (empty) → second_remark: NULL") 
-        print("   - 3. content → third_remark")
-        print("   - Robust parsing for empty sections")
+        print("🏢 CHENNAI SALESFORCE TO SUPABASE SYNC (ENHANCED DUPLICATES + MANUAL PARSING)")
+        print("=" * 80)
+        print("🎯 COMBINED FEATURES:")
+        print("   - Manual parsing for robust remarks extraction")
+        print("   - Enhanced duplicate table logic (like Meta script)")
         print("   - Only processes leads CREATED in past 24 hours")
-        print("   - All other features intact")
-        print("=" * 65)
+        print("   - Handles empty remark sections: '1. rnr  2.  3. VOC...'")
+        print("   - Same phone + different sources → duplicate_leads table")
+        print("   - Same phone + same source → UPDATE or SKIP")
+        print("   - Supports up to 10 sources per phone number")
+        print("   - Branch and lead_status set to NULL")
+        print("   - PS records with ps_branch and lead_status NULL")
         
         success = main()
+        
         if success:
-            print("\n✅ Script completed successfully")
-            logger.info("Script completed successfully")
+            print("\n🎉 SCRIPT EXECUTION COMPLETED SUCCESSFULLY!")
+            print("=" * 50)
+            print("🔧 Key Features Implemented:")
+            print("   ✅ Enhanced duplicate handling with duplicate_leads table")
+            print("   ✅ Manual parsing for complex remark formats")
+            print("   ✅ Proper UPDATE logic for existing leads")
+            print("   ✅ Only processes leads created in past 24 hours")
+            print("   ✅ Chennai CRE and PS mappings")
+            print("   ✅ Robust error handling and logging")
+            print("   ✅ NULL values for branch and lead_status")
+            print("   ✅ Handles 'NONE' values properly")
+            print("   ✅ Supports up to 10 duplicate sources per phone")
+            
+            print("\n💡 MANUAL PARSING EXAMPLE:")
+            print("   Input: '1. rnr  2.  3. VOC : cx enquired about on road price'")
+            print("   Result:")
+            print("     ✅ first_remark: 'rnr'")
+            print("     ✅ second_remark: NULL (empty section)")
+            print("     ✅ third_remark: 'VOC : cx enquired about on road price'")
+            print("     ✅ fourth_remark through seventh_remark: NULL")
+            
+            print("\n🔄 DUPLICATE HANDLING LOGIC:")
+            print("   📞 Same phone + same source/sub_source:")
+            print("     → If new remarks/dates: UPDATE existing lead")
+            print("     → If no changes: SKIP (exact duplicate)")
+            print("   📞 Same phone + different source:")
+            print("     → First duplicate: CREATE record in duplicate_leads table")
+            print("     → Additional duplicates: ADD to existing duplicate_leads record")
+            print("     → Supports up to 10 sources per phone number")
+            
+            print("\n🎯 SCRIPT OPTIMIZATIONS:")
+            print("   ⚡ Only fetches leads CREATED in past 24 hours (not modified)")
+            print("   ⚡ Batch processing for better performance")
+            print("   ⚡ Enhanced logging with UTF-8 encoding")
+            print("   ⚡ Retry logic for Salesforce connections")
+            print("   ⚡ Efficient duplicate checking")
+            
             sys.exit(0)
         else:
-            print("\n❌ Script completed with errors")
-            logger.error("Script completed with errors")
+            print("\n❌ SCRIPT EXECUTION FAILED!")
+            print("Check the logs for detailed error information.")
             sys.exit(1)
+            
     except KeyboardInterrupt:
-        print("\n⏹️ Script interrupted by user")
+        print("\n⚠️ Script interrupted by user")
         logger.info("Script interrupted by user")
-        sys.exit(130)
+        sys.exit(1)
     except Exception as e:
-        print(f"\n💥 Unexpected error: {e}")
+        print(f"\n❌ Unexpected error: {e}")
         logger.error(f"Unexpected error: {e}")
         sys.exit(1)
