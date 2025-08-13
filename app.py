@@ -1,4 +1,6 @@
-# # import eventlet  # REMOVED - Not used anywhere
+# Fix Eventlet SSL Monkey Patching Conflict - MUST BE FIRST
+import eventlet
+eventlet.monkey_patch()  # Use default monkey patching
 
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, current_app
 from supabase.client import create_client, Client
@@ -23,6 +25,7 @@ from flask_limiter.util import get_remote_address
 from security_verification import run_security_verification
 import time
 import gc
+import threading
 from flask_socketio import SocketIO, emit
 import math
 # from redis import Redis  # REMOVED - Not needed for local development
@@ -47,9 +50,6 @@ from matplotlib.backends.backend_pdf import PdfPages
 import pytz
 import pandas as pd
 from werkzeug.security import generate_password_hash, check_password_hash
-import threading
-import re
-import requests
 
 # Load environment variables from .env file
 load_dotenv()
@@ -71,12 +71,6 @@ if os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False):
     print("✅ SSL verification disabled for production")
 else:
     print("🔧 Local environment - SSL verification enabled")
-
-# WhatsApp Business API Configuration
-WABA_ID = "1051569503777887"
-WABA_PHONE_ID = "679404361922646"
-MCUBE_ACCESS_TOKEN = os.environ.get("MCUBE_ACCESS_TOKEN", "")
-
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -262,9 +256,6 @@ import time
 
 
 
-# Threading lock for sequence numbers (WhatsApp functionality)
-_sequence_lock = threading.Lock()
-
 # Reduce Flask log noise
 import logging
 log = logging.getLogger('werkzeug')
@@ -390,19 +381,23 @@ except Exception as e:
         print(f"❌ Fallback initialization also failed: {fallback_error}")
         raise
 
-# Initialize optimized operations for faster lead updates
-try:
-    optimized_ops = create_optimized_operations(supabase)
-    print("✅ Optimized operations initialized successfully")
-except Exception as e:
-    print(f"❌ Error initializing optimized operations: {e}")
-    # Continue without optimized operations if there's an error
-    optimized_ops = None
+# Initialize app context for background tasks
+with app.app_context():
+    # Initialize optimized operations for faster lead updates
+    try:
+        optimized_ops = create_optimized_operations(supabase)
+        print("✅ Optimized operations initialized successfully")
+    except Exception as e:
+        print(f"❌ Error initializing optimized operations: {e}")
+        # Continue without optimized operations if there's an error
+        optimized_ops = None
 
-# Initialize AuthManager
-auth_manager = AuthManager(supabase)
-# Store auth_manager in app config instead of direct attribute
-app.config['AUTH_MANAGER'] = auth_manager
+    # Initialize AuthManager
+    auth_manager = AuthManager(supabase)
+    # Store auth_manager in app config instead of direct attribute
+    app.config['AUTH_MANAGER'] = auth_manager
+
+
 
 
 def batch_insert_leads(leads_data, batch_size=100):
@@ -1234,87 +1229,16 @@ def assign_leads_dynamic_action():
         print(f"Error in dynamic lead assignment: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@app.route('/add_cre', methods=['GET', 'POST'])
-@require_admin
-def add_cre():
-    if request.method == 'POST':
-        name = request.form.get('name', '').strip()
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '').strip()
-        phone = request.form.get('phone', '').strip()
-        email = request.form.get('email', '').strip()
-        if not all([name, username, password, phone, email]):
-            flash('All fields are required', 'error')
-            return render_template('add_cre.html')
-        if not auth_manager.validate_password_strength(password):
-            flash(
-                'Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character',
-                'error')
-            return render_template('add_cre.html')
-        try:
-            # Check if username already exists
-            existing = supabase.table('cre_users').select('username').eq('username', username).execute()
-            if existing.data:
-                flash('Username already exists', 'error')
-                return render_template('add_cre.html')
-            # Hash password using auth_manager (provides hash and salt)
-            password_hash, salt = auth_manager.hash_password(password)
-            # Replace the existing cre_data creation with this:
-            cre_data = {
-                'name': name,
-                'username': username,
-                'password': password,  # Keep for backward compatibility
-                'password_hash': password_hash,
-                'salt': salt,  # Add the salt value
-                'phone': phone,
-                'email': email,
-                'is_active': True,
-                'role': 'cre',
-                'failed_login_attempts': 0
-            }
-            result = supabase.table('cre_users').insert(cre_data).execute()
-            # Log CRE creation
-            auth_manager.log_audit_event(
-                user_id=session.get('user_id'),
-                user_type=session.get('user_type'),
-                action='CRE_CREATED',
-                resource='cre_users',
-                resource_id=str(result.data[0]['id']) if result.data else None,
-                details={'cre_name': name, 'username': username}
-            )
-            flash('CRE added successfully', 'success')
-            return redirect(url_for('manage_cre'))
-        except Exception as e:
-            flash(f'Error adding CRE: {str(e)}', 'error')
-    return render_template('add_cre.html')
-
-@app.route('/add_ps', methods=['GET', 'POST'])
-@require_admin
-def add_ps():
-    branches = ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
-    if request.method == 'POST':
-        name = request.form.get('name', '').strip()
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '').strip()
-        phone = request.form.get('phone', '').strip()
-        email = request.form.get('email', '').strip()
-        branch = request.form.get('branch', '').strip()
-        if not all([name, username, password, phone, email, branch]):
-            flash('All fields are required', 'error')
-            return render_template('add_ps.html', branches=branches)
-        if not auth_manager.validate_password_strength(password):
-            flash(
-                'Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character',
-                'error')
-            return render_template('add_ps.html', branches=branches)
         try:
             # Check if username already exists
             existing = supabase.table('ps_users').select('username').eq('username', username).execute()
             if existing.data:
                 flash('Username already exists', 'error')
                 return render_template('add_ps.html', branches=branches)
+
             # Hash password using auth_manager (provides hash and salt)
             password_hash, salt = auth_manager.hash_password(password)
+
             # Replace the existing ps_data creation with this:
             ps_data = {
                 'name': name,
@@ -1329,7 +1253,9 @@ def add_ps():
                 'role': 'ps',
                 'failed_login_attempts': 0
             }
+
             result = supabase.table('ps_users').insert(ps_data).execute()
+
             # Log PS creation
             auth_manager.log_audit_event(
                 user_id=session.get('user_id'),
@@ -1339,12 +1265,13 @@ def add_ps():
                 resource_id=str(result.data[0]['id']) if result.data else None,
                 details={'ps_name': name, 'username': username, 'branch': branch}
             )
+
             flash('Product Specialist added successfully', 'success')
             return redirect(url_for('manage_ps'))
         except Exception as e:
             flash(f'Error adding Product Specialist: {str(e)}', 'error')
-    return render_template('add_ps.html', branches=branches)
 
+    return render_template('add_ps.html', branches=branches)
 
 
 @app.route('/add_bh', methods=['GET', 'POST'])
@@ -1753,14 +1680,24 @@ def start_auto_assign_system():
         is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
         
         if is_production:
-            print("🚀 Production environment detected - using eventlet-compatible auto-assign")
+            print("🚀 Production environment detected - using HTTP-triggered auto-assign")
             print("   📋 Will check for new leads every 5 minutes")
             print("   ⚡ First auto-assign check starting now...")
-            print("   🔧 Using eventlet-compatible scheduling")
+            print("   🔧 Using HTTP endpoint scheduling")
             print("   🚀 Auto-assign will run in production mode!")
             
-            # In production, we'll use a different approach
-            # For now, just return None to indicate no threading
+            # In production, trigger immediate auto-assign via HTTP endpoint
+            try:
+                with app.app_context():
+                    result = check_and_assign_new_leads()
+                    if result and result.get('success'):
+                        print(f"   ✅ Production auto-assign completed: {result.get('total_assigned', 0)} leads assigned")
+                    else:
+                        print(f"   ⚠️ Production auto-assign completed with issues")
+            except Exception as e:
+                print(f"❌ Error in production auto-assign: {e}")
+            
+            # Return None to indicate no threading (use HTTP endpoints instead)
             return None
         else:
             # Development environment - use threading
@@ -1824,6 +1761,27 @@ def api_status():
         'timestamp': get_ist_timestamp(),
         'message': 'Ather CRM is running successfully'
     })
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for production monitoring"""
+    try:
+        # Test Supabase connection
+        test_result = supabase.table('admin_users').select('count', count='exact').limit(1).execute()
+        
+        return jsonify({
+            'status': 'healthy',
+            'database': 'connected',
+            'timestamp': get_ist_timestamp(),
+            'environment': 'production' if os.environ.get('RENDER', False) else 'development'
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'database': 'disconnected',
+            'error': str(e),
+            'timestamp': get_ist_timestamp()
+        }), 500
 
 @app.route('/api/auto_assign_simple', methods=['POST'])
 def api_auto_assign_simple():
@@ -2055,20 +2013,7 @@ def api_auto_assign():
             'message': f'Error triggering auto-assign: {str(e)}'
         })
 
-@app.route('/health')
-def health_check():
-    """Simple health check endpoint to verify system responsiveness"""
-    import os
-    is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
-    
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': get_ist_timestamp(),
-        'environment': 'production' if is_production else 'development',
-        'auto_assign_thread_alive': auto_assign_thread.is_alive() if auto_assign_thread else False,
-        'auto_assign_status': 'eventlet-compatible' if is_production else 'threading',
-        'message': 'System is responsive and auto-assign is running independently'
-    })
+# Removed duplicate health route - keeping the one at line 1764
 
 # =============================================================================
 SECRET_KEY = os.environ.get('FLASK_SECRET_KEY', 'fallback-secret-key-change-this')
@@ -9481,773 +9426,14 @@ def cre_analytics_data():
         return jsonify({'error': str(e)}), 500
 
 
-# WhatsApp Helper Functions
-def send_whatsapp_message(phone_number, message_text):
-    """Send WhatsApp message using Meta Business API"""
-    try:
-        url = f"https://graph.facebook.com/v18.0/{WABA_PHONE_ID}/messages"
-        
-        headers = {
-            'Authorization': f'Bearer {MCUBE_ACCESS_TOKEN}',
-            'Content-Type': 'application/json'
-        }
-        
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": phone_number,
-            "type": "text",
-            "text": {"body": message_text}
-        }
-        
-        response = requests.post(url, headers=headers, json=payload)
-        result = response.json()
-        
-        if response.status_code == 200:
-            print(f"✅ WhatsApp message sent successfully to {phone_number}")
-            print(f"   📱 Message ID: {result.get('messages', [{}])[0].get('id', 'Unknown')}")
-        else:
-            print(f"❌ Failed to send WhatsApp message to {phone_number}")
-            print(f"   🚫 Error: {result}")
-        
-        return result
-    except Exception as e:
-        print(f"❌ Error sending WhatsApp message: {str(e)}")
-        return {"error": str(e)}
-
-def normalize_phone_number(phone: str) -> str:
-    """Normalize phone to 10-digit format (same as Meta script)"""
-    if not phone:
-        return ""
-    
-    digits = ''.join(filter(str.isdigit, str(phone)))
-    
-    if digits.startswith('91') and len(digits) == 12:
-        digits = digits[2:]
-    elif digits.startswith('0') and len(digits) == 11:
-        digits = digits[1:]
-    
-    normalized = digits[-10:] if len(digits) >= 10 else digits
-    return normalized if len(normalized) == 10 else ""
-
-def generate_uid(source, mobile_number, sequence):
-    """Generate UID following the same pattern as Meta script"""
-    source_map = {
-        'GOOGLE': 'G', 
-        'META': 'M', 
-        'Affiliate': 'A', 
-        'Know': 'K', 
-        'WHATSAPP': 'W', 
-        'Tele': 'T', 
-        'BTL': 'B'
-    }
-    
-    source_char = source_map.get(source, 'W')
-    sequence_char = chr(65 + (sequence % 26))
-    mobile_last4 = str(mobile_number).replace(" ", "").replace("-", "").replace("-", "")[-4:].zfill(4)
-    seq_num = f"{(sequence % 9999) + 1:04d}"
-    uid = f"{source_char}{sequence_char}-{mobile_last4}-{seq_num}"
-    
-    print(f"🆔 Generated UID: {uid} | Source: {source} | Phone: {mobile_number}")
-    return uid
-
-def get_next_sequence_number():
-    """Get the next sequence number for UID generation with thread safety"""
-    with _sequence_lock:
-        try:
-            result = supabase.table("lead_master").select("id").order("id", desc=True).limit(1).execute()
-            if result.data:
-                sequence = result.data[0]['id'] + 1
-            else:
-                sequence = 1
-            
-            print(f"📊 Next sequence number: {sequence}")
-            return sequence
-        except Exception as e:
-            print(f"❌ Error getting sequence number: {e}")
-            return 1
-
-def check_existing_leads(phone_number):
-    """Check for existing leads by phone number in both lead_master and duplicate_leads tables"""
-    try:
-        print(f"🔍 Checking existing leads for phone: {phone_number}")
-        
-        # Check lead_master table
-        existing_master = supabase.table("lead_master").select("*").eq("customer_mobile_number", phone_number).execute()
-        master_record = existing_master.data[0] if existing_master.data else None
-        
-        # Check duplicate_leads table
-        existing_duplicate = supabase.table("duplicate_leads").select("*").eq("customer_mobile_number", phone_number).execute()
-        duplicate_record = existing_duplicate.data[0] if existing_duplicate.data else None
-        
-        if master_record:
-            print(f"📞 Found existing in lead_master: UID {master_record['uid']}")
-        if duplicate_record:
-            print(f"📞 Found existing in duplicate_leads: UID {duplicate_record['uid']}")
-        
-        return master_record, duplicate_record
-        
-    except Exception as e:
-        print(f"❌ Error checking existing leads: {e}")
-        return None, None
-
-def find_next_available_source_slot(duplicate_record):
-    """Find the next available source slot (source1, source2, etc.) in duplicate_leads record"""
-    print(f"🔍 Finding next available source slot for UID: {duplicate_record.get('uid', 'Unknown')}")
-    
-    for i in range(1, 11):  # source1 to source10
-        if duplicate_record.get(f'source{i}') is None:
-            print(f"✅ Found available slot: source{i}")
-            return i
-    
-    print(f"⚠️ All source slots full for UID: {duplicate_record.get('uid', 'Unknown')}")
-    return None  # All slots are full
-
-def add_source_to_duplicate_record(duplicate_record, new_source, new_sub_source, new_date, campaign_name=None):
-    """Add new source to existing duplicate_leads record"""
-    try:
-        print(f"🔄 Adding source to duplicate record: {duplicate_record['uid']}")
-        print(f"   📊 New Source: {new_source} | Sub-source: {new_sub_source}")
-        
-        slot = find_next_available_source_slot(duplicate_record)
-        if slot is None:
-            print(f"⚠️ All source slots full for phone: {duplicate_record['customer_mobile_number']}")
-            return False
-        
-        # Update the record with new source in the available slot
-        update_data = {
-            f'source{slot}': new_source,
-            f'sub_source{slot}': new_sub_source,
-            f'date{slot}': new_date,
-            'duplicate_count': duplicate_record['duplicate_count'] + 1,
-            'updated_at': datetime.now().isoformat()
-        }
-        
-        # Add campaign if provided
-        if campaign_name:
-            update_data[f'campaign{slot}'] = campaign_name
-        
-        result = supabase.table("duplicate_leads").update(update_data).eq('id', duplicate_record['id']).execute()
-        
-        if result.data:
-            print(f"✅ Added source{slot} to duplicate record: {duplicate_record['uid']} | Phone: {duplicate_record['customer_mobile_number']}")
-            print(f"   📊 New Source: {new_source} | Duplicate Count: {duplicate_record['duplicate_count'] + 1}")
-            print(f"🔄 UPDATED DUPLICATE RECORD!")
-            print(f"   📱 UID: {duplicate_record['uid']}")
-            print(f"   📞 Phone: {duplicate_record['customer_mobile_number']}")
-            print(f"   📊 Added source{slot}: {new_source} / {new_sub_source}")
-            print(f"   🔢 Total Sources: {duplicate_record['duplicate_count'] + 1}")
-            return True
-        else:
-            print(f"❌ Failed to update duplicate record in database")
-            return False
-        
-    except Exception as e:
-        print(f"❌ Failed to add source to duplicate record: {e}")
-        return False
-
-def create_duplicate_record(original_record, new_source, new_sub_source, new_date, campaign_name=None):
-    """Create new duplicate_leads record when a lead becomes duplicate"""
-    try:
-        print(f"🆕 Creating new duplicate record for UID: {original_record['uid']}")
-        print(f"   📊 Original: {original_record['source']}/{original_record['sub_source']}")
-        print(f"   📊 New: {new_source}/{new_sub_source}")
-        
-        duplicate_data = {
-            'uid': original_record['uid'],
-            'customer_mobile_number': original_record['customer_mobile_number'],
-            'customer_name': original_record['customer_name'],
-            'original_lead_id': original_record['id'],
-            'source1': original_record['source'],
-            'sub_source1': original_record['sub_source'],
-            'date1': original_record['date'],
-            'campaign1': original_record.get('campaign'),
-            'source2': new_source,
-            'sub_source2': new_sub_source,
-            'date2': new_date,
-            'campaign2': campaign_name,
-            'duplicate_count': 2,
-            'created_at': datetime.now().isoformat(),
-            'updated_at': datetime.now().isoformat()
-        }
-        
-        # Initialize remaining slots as None
-        for i in range(3, 11):
-            duplicate_data[f'source{i}'] = None
-            duplicate_data[f'sub_source{i}'] = None
-            duplicate_data[f'date{i}'] = None
-            duplicate_data[f'campaign{i}'] = None
-        
-        print(f"🔍 Duplicate data to insert: {json.dumps(duplicate_data, indent=2)}")
-        
-        result = supabase.table("duplicate_leads").insert(duplicate_data).execute()
-        
-        if result.data:
-            print(f"✅ Created duplicate record: {original_record['uid']} | Phone: {original_record['customer_mobile_number']}")
-            print(f"🆕 CREATED DUPLICATE RECORD!")
-            print(f"   📱 UID: {original_record['uid']}")
-            print(f"   📞 Phone: {original_record['customer_mobile_number']}")
-            print(f"   👤 Name: {original_record['customer_name']}")
-            print(f"   📊 Source1: {original_record['source']}/{original_record['sub_source']}")
-            print(f"   📊 Source2: {new_source}/{new_sub_source}")
-            print(f"   🔢 Duplicate Count: 2")
-            return True
-        else:
-            print(f"❌ Failed to insert duplicate record into database")
-            print(f"🔍 Insert result: {result}")
-            return False
-        
-    except Exception as e:
-        print(f"❌ Failed to create duplicate record: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-def is_duplicate_source(existing_record, new_source, new_sub_source):
-    """Check if the new source/sub_source combination already exists in the record"""
-    print(f"🔍 Checking for duplicate source combination: {new_source}/{new_sub_source}")
-    
-    # For lead_master, check direct fields
-    if 'source' in existing_record and existing_record.get('source'):
-        is_duplicate = (existing_record['source'] == new_source and 
-                       existing_record['sub_source'] == new_sub_source)
-        if is_duplicate:
-            print(f"🚫 Found duplicate in lead_master: {new_source}/{new_sub_source}")
-            return True
-    
-    # For duplicate_leads, check all source slots
-    if 'source1' in existing_record:  # This is a duplicate_leads record
-        for i in range(1, 11):
-            source_key = f'source{i}'
-            sub_source_key = f'sub_source{i}'
-            
-            if (existing_record.get(source_key) == new_source and 
-                existing_record.get(sub_source_key) == new_sub_source):
-                print(f"🚫 Found duplicate in duplicate_leads slot {i}: {new_source}/{new_sub_source}")
-                return True
-    
-    print(f"✅ No duplicate found for: {new_source}/{new_sub_source}")
-    return False
-
-def is_qualified_lead(message_text, button_payload=None):
-    """Check if the lead is qualified based on message content or button clicks"""
-    print(f"🎯 Checking qualification for message: '{message_text}' | Button: '{button_payload}'")
-    
-    if not message_text and not button_payload:
-        print("❌ No message or button payload provided")
-        return False
-    
-    # Check for button clicks first (more reliable)
-    if button_payload:
-        qualified_buttons = [
-            'know_more', 'know-more', 'knowmore',
-            'callback', 'call_back', 'call-back', 'callback',
-            'interested', 'yes_interested', 'book_appointment',
-            'schedule_call', 'need_info', 'get_details'
-        ]
-        
-        for button in qualified_buttons:
-            if button in button_payload.lower():
-                print(f"✅ Qualified by button: {button}")
-                return True
-    
-    # Check message content for qualifying keywords
-    if message_text:
-        message_lower = message_text.lower().strip()
-        
-        # Qualifying phrases/keywords
-        qualifying_keywords = [
-            'know more', 'more details', 'more information', 'tell me more',
-            'need callback', 'call me', 'call back', 'callback', 'need call',
-            'i need a call back',
-            'interested', 'want to know', 'price', 'cost', 'rate',
-            'visit', 'demo', 'appointment', 'meeting', 'schedule',
-            'brochure', 'catalogue', 'details', 'info', 'information',
-            'when can', 'available', 'book', 'reserve'
-        ]
-        
-        # Check if message contains qualifying keywords
-        for keyword in qualifying_keywords:
-            if keyword in message_lower:
-                print(f"✅ Qualified by keyword: '{keyword}'")
-                return True
-        
-        # Check for question patterns (indicating genuine interest)
-        question_patterns = [
-            r'\?', r'when', r'where', r'how', r'what', r'which', r'why',
-            r'can you', r'do you', r'is it', r'are you'
-        ]
-        
-        for pattern in question_patterns:
-            if re.search(pattern, message_lower):
-                print(f"✅ Qualified by question pattern: '{pattern}'")
-                return True
-    
-    print("❌ Message not qualified")
-    return False
-
-# WhatsApp Routes
-@app.route('/webhook/whatsapp', methods=['POST'])
-def whatsapp_webhook():
-    """Webhook to receive qualified WhatsApp leads with advanced duplicate handling"""
-    try:
-        data = request.get_json()
-        if not data:
-            print("❌ No JSON data received in webhook")
-            return jsonify({"error": "No JSON data received"}), 400
-            
-        print(f"📨 Received WhatsApp webhook data: {json.dumps(data, indent=2)}")
-        
-        # Extract information from webhook with better error handling
-        try:
-            phone_number = data.get('from', '')
-            if not phone_number:
-                print("❌ No 'from' field in webhook data")
-                return jsonify({"error": "Missing 'from' field"}), 400
-                
-            phone_number = phone_number.replace('+', '')
-            
-            # Handle different text formats
-            message_content = ""
-            if isinstance(data.get('text'), dict):
-                message_content = data.get('text', {}).get('body', '')
-            elif isinstance(data.get('text'), str):
-                message_content = data.get('text', '')
-            
-            # Handle different profile formats
-            contact_name = ""
-            if isinstance(data.get('profile'), dict):
-                contact_name = data.get('profile', {}).get('name', '')
-            elif isinstance(data.get('contact_name'), str):
-                contact_name = data.get('contact_name', '')
-            
-            # Handle button payload
-            button_payload = ""
-            if isinstance(data.get('button'), dict):
-                button_payload = data.get('button', {}).get('payload', '')
-            
-            campaign_id = data.get('campaign_id', '') or data.get('broadcast_id', '')
-            
-        except Exception as e:
-            print(f"❌ Error extracting webhook data: {e}")
-            return jsonify({"error": f"Error extracting webhook data: {str(e)}"}), 400
-        
-        print(f"📊 Extracted data:")
-        print(f"   📞 Phone: {phone_number}")
-        print(f"   👤 Name: {contact_name}")
-        print(f"   💬 Message: {message_content}")
-        print(f"   🔘 Button: {button_payload}")
-        print(f"   📋 Campaign: {campaign_id}")
-        
-        # Normalize phone number
-        normalized_phone = normalize_phone_number(phone_number)
-        if not normalized_phone:
-            print(f"❌ Invalid phone number: {phone_number}")
-            return jsonify({"error": "Invalid phone number"}), 400
-        
-        print(f"📱 Normalized phone: {normalized_phone}")
-        
-        # Check if this is a qualified lead
-        if not is_qualified_lead(message_content, button_payload):
-            print(f"🚫 Non-qualified message from {normalized_phone}")
-            return jsonify({
-                "status": "ignored", 
-                "reason": "Not a qualified lead - no interest indicators found"
-            }), 200
-        
-        print(f"🎯 QUALIFIED LEAD detected for {normalized_phone}")
-        
-        # Check existing records in both tables (same as Meta script logic)
-        try:
-            master_record, duplicate_record = check_existing_leads(normalized_phone)
-        except Exception as e:
-            print(f"❌ Error checking existing leads: {e}")
-            return jsonify({"error": f"Database error: {str(e)}"}), 500
-        
-        current_source = "WHATSAPP"
-        current_sub_source = "Whatsapp Blast"
-        current_date = datetime.now().date().isoformat()
-        
-        # Process lead based on existing records (same logic as Meta script)
-        if master_record:
-            print(f"📞 Phone exists in lead_master: {master_record['uid']}")
-            
-            # Check if this is a duplicate source/sub_source combination
-            if is_duplicate_source(master_record, current_source, current_sub_source):
-                print(f"⚠️ Skipping exact duplicate: {normalized_phone} | {current_source}/{current_sub_source}")
-                print(f"⚠️ SKIPPED EXACT DUPLICATE!")
-                print(f"   📱 Phone: {normalized_phone}")
-                print(f"   📊 Source: {current_source}/{current_sub_source}")
-                print(f"   🚫 Reason: Same source already exists")
-                
-                return jsonify({
-                    "status": "skipped_duplicate",
-                    "reason": f"Exact duplicate source: {current_source}/{current_sub_source}",
-                    "existing_uid": master_record['uid']
-                }), 200
-            
-            # Check if already exists in duplicate_leads
-            if duplicate_record:
-                print(f"📞 Phone exists in duplicate_leads: {duplicate_record['uid']}")
-                
-                # Check if this source/sub_source already exists in duplicate record
-                if is_duplicate_source(duplicate_record, current_source, current_sub_source):
-                    print(f"⚠️ Skipping duplicate in duplicate_leads: {normalized_phone}")
-                    return jsonify({
-                        "status": "skipped_duplicate",
-                        "reason": f"Source already exists in duplicate_leads: {current_source}/{current_sub_source}",
-                        "existing_uid": duplicate_record['uid']
-                    }), 200
-                
-                # Add to existing duplicate record
-                if add_source_to_duplicate_record(duplicate_record, current_source, current_sub_source, current_date, campaign_id):
-                    return jsonify({
-                        "status": "duplicate_updated",
-                        "uid": duplicate_record['uid'],
-                        "phone": normalized_phone,
-                        "new_source": f"{current_source}/{current_sub_source}",
-                        "message": "Added new source to existing duplicate record"
-                    }), 200
-                else:
-                    return jsonify({"error": "Failed to update duplicate record"}), 500
-            else:
-                # Create new duplicate record
-                if create_duplicate_record(master_record, current_source, current_sub_source, current_date, campaign_id):
-                    return jsonify({
-                        "status": "duplicate_created",
-                        "uid": master_record['uid'],
-                        "phone": normalized_phone,
-                        "sources": f"{master_record['source']}/{master_record['sub_source']} + {current_source}/{current_sub_source}",
-                        "message": "Created new duplicate record"
-                    }), 200
-                else:
-                    return jsonify({"error": "Failed to create duplicate record"}), 500
-        else:
-            # Completely new lead - create in lead_master
-            print(f"🆕 Creating new lead in lead_master for {normalized_phone}")
-            
-            try:
-                sequence = get_next_sequence_number()
-                uid = generate_uid(current_source, normalized_phone, sequence)
-                current_time = datetime.now()
-                
-                # Create minimal lead record - no remarks, no call dates filled
-                lead_data = {
-                    'uid': uid,
-                    'date': current_date,
-                    'customer_name': contact_name or "WhatsApp User",
-                    'customer_mobile_number': normalized_phone,
-                    'source': current_source,
-                    'sub_source': current_sub_source,
-                    'campaign': campaign_id if campaign_id else None,
-                    
-                    # All other fields as NULL (new lead)
-                    'lead_category': None,
-                    'model_interested': None,
-                    'branch': None,
-                    'cre_name': None,
-                    'cre_assigned_at': None,
-                    'ps_name': None,
-                    'ps_assigned_at': None,
-                    'lead_status': None,
-                    'follow_up_date': None,
-                    'final_status': 'Pending',
-                    'assigned': 'No',
-                    
-                    # No call dates filled
-                    'first_call_date': None,
-                    'second_call_date': None,
-                    'third_call_date': None,
-                    'fourth_call_date': None,
-                    'fifth_call_date': None,
-                    'sixth_call_date': None,
-                    'seventh_call_date': None,
-                    
-                    # No remarks filled
-                    'first_remark': None,
-                    'second_remark': None,
-                    'third_remark': None,
-                    'fourth_remark': None,
-                    'fifth_remark': None,
-                    'sixth_remark': None,
-                    'seventh_remark': None,
-                    
-                    # Timestamps
-                    'created_at': current_time.isoformat(),
-                    'updated_at': current_time.isoformat()
-                }
-                
-                # Insert new qualified lead
-                result = supabase.table("lead_master").insert(lead_data).execute()
-                
-                if result.data:
-                    print(f"✅ NEW QUALIFIED WhatsApp Lead created: {uid} | {normalized_phone}")
-                    print(f"🎯 NEW QUALIFIED LEAD CREATED!")
-                    print(f"   📱 UID: {uid}")
-                    print(f"   📞 Phone: {normalized_phone}")
-                    print(f"   👤 Name: {contact_name}")
-                    print(f"   💬 Qualifying Message: {message_content}")
-                    print(f"   🔘 Button Clicked: {button_payload}")
-                    print(f"   📊 Source: {current_source} / {current_sub_source}")
-                    print(f"   📋 Campaign: {campaign_id}")
-                    print(f"   ⏰ Time: {current_time}")
-                    
-                    return jsonify({
-                        "status": "qualified_lead_created",
-                        "uid": uid,
-                        "phone": normalized_phone,
-                        "source": f"{current_source}/{current_sub_source}",
-                        "message": "New qualified WhatsApp lead captured successfully"
-                    }), 200
-                else:
-                    print(f"❌ Failed to create qualified lead for: {normalized_phone}")
-                    return jsonify({"error": "Failed to create qualified lead"}), 500
-                    
-            except Exception as e:
-                print(f"❌ Error creating new lead: {e}")
-                return jsonify({"error": f"Error creating new lead: {str(e)}"}), 500
-        
-    except Exception as e:
-        print(f"❌ WhatsApp webhook error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/leads/qualified', methods=['GET'])
-def get_qualified_leads():
-    """Get all qualified WhatsApp leads"""
-    try:
-        result = supabase.table("lead_master")\
-            .select("uid, customer_name, customer_mobile_number, source, sub_source, created_at, assigned, cre_name")\
-            .eq("sub_source", "Whatsapp Blast")\
-            .eq("assigned", "No")\
-            .order("created_at", desc=True)\
-            .execute()
-        
-        print(f"📊 Retrieved {len(result.data)} qualified WhatsApp leads")
-        
-        return jsonify({
-            "qualified_leads": result.data,
-            "count": len(result.data)
-        }), 200
-    except Exception as e:
-        print(f"❌ Error fetching qualified leads: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/leads/duplicates', methods=['GET'])
-def get_duplicate_leads():
-    """Get all duplicate WhatsApp leads"""
-    try:
-        result = supabase.table("duplicate_leads")\
-            .select("*")\
-            .or_("sub_source1.eq.Whatsapp Blast,sub_source2.eq.Whatsapp Blast,sub_source3.eq.Whatsapp Blast,sub_source4.eq.Whatsapp Blast,sub_source5.eq.Whatsapp Blast")\
-            .order("created_at", desc=True)\
-            .execute()
-        
-        print(f"📊 Retrieved {len(result.data)} WhatsApp duplicate records")
-        
-        return jsonify({
-            "duplicate_leads": result.data,
-            "count": len(result.data)
-        }), 200
-    except Exception as e:
-        print(f"❌ Error fetching duplicate leads: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/leads/stats', methods=['GET'])
-def get_lead_stats():
-    """Get detailed lead statistics with debugging info"""
-    try:
-        print("📊 Fetching lead statistics...")
-        
-        # Count qualified leads
-        qualified_result = supabase.table("lead_master")\
-            .select("uid", count="exact")\
-            .eq("sub_source", "Whatsapp Blast")\
-            .execute()
-        
-        # Count duplicate leads with WhatsApp
-        try:
-            duplicate_result = supabase.table("duplicate_leads")\
-                .select("uid", count="exact")\
-                .or_("sub_source1.eq.Whatsapp Blast,sub_source2.eq.Whatsapp Blast,sub_source3.eq.Whatsapp Blast,sub_source4.eq.Whatsapp Blast,sub_source5.eq.Whatsapp Blast")\
-                .execute()
-        except Exception as e:
-            print(f"⚠️ Error counting duplicate leads: {e}")
-            duplicate_result = type('obj', (object,), {'count': 0})()
-        
-        # Count unassigned leads
-        unassigned_result = supabase.table("lead_master")\
-            .select("uid", count="exact")\
-            .eq("sub_source", "Whatsapp Blast")\
-            .eq("assigned", "No")\
-            .execute()
-        
-        # Get recent leads (last 24 hours)
-        yesterday = (datetime.now() - pd.Timedelta(days=1)).isoformat()
-        recent_result = supabase.table("lead_master")\
-            .select("uid", count="exact")\
-            .eq("sub_source", "Whatsapp Blast")\
-            .gte("created_at", yesterday)\
-            .execute()
-        
-        stats = {
-            "total_qualified_leads": qualified_result.count or 0,
-            "total_duplicate_records": duplicate_result.count or 0,
-            "unassigned_leads": unassigned_result.count or 0,
-            "recent_leads_24h": recent_result.count or 0,
-            "total_processed": (qualified_result.count or 0) + (duplicate_result.count or 0)
-        }
-        
-        print(f"📊 Statistics: {stats}")
-        
-        return jsonify({"stats": stats}), 200
-    except Exception as e:
-        print(f"❌ Error fetching lead stats: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/test-qualification', methods=['POST'])
-def test_qualification():
-    """Test endpoint to check if a message would qualify as a lead"""
-    try:
-        data = request.get_json()
-        message = data.get('message', '')
-        button_payload = data.get('button_payload', '')
-        phone = data.get('phone', '1234567890')
-        
-        is_qualified = is_qualified_lead(message, button_payload)
-        normalized_phone = normalize_phone_number(phone)
-        
-        # Check what would happen with this lead
-        master_record, duplicate_record = check_existing_leads(normalized_phone)
-        
-        status_info = {
-            "message": message,
-            "button_payload": button_payload,
-            "phone": phone,
-            "normalized_phone": normalized_phone,
-            "is_qualified": is_qualified,
-            "would_create_lead": is_qualified and not master_record,
-            "existing_in_master": bool(master_record),
-            "existing_in_duplicates": bool(duplicate_record),
-            "action": "Would ignore - not qualified" if not is_qualified else
-                     "Would create new lead" if not master_record else
-                     "Would handle as duplicate"
-        }
-        
-        if master_record:
-            status_info["existing_uid"] = master_record['uid']
-            status_info["existing_source"] = f"{master_record['source']}/{master_record['sub_source']}"
-        
-        return jsonify(status_info), 200
-        
-    except Exception as e:
-        print(f"❌ Error in test qualification: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/debug/phone/<phone_number>', methods=['GET'])
-def debug_phone_status(phone_number):
-    """Debug endpoint to check detailed status of a phone number"""
-    try:
-        normalized_phone = normalize_phone_number(phone_number)
-        
-        if not normalized_phone:
-            return jsonify({"error": "Invalid phone number"}), 400
-        
-        master_record, duplicate_record = check_existing_leads(normalized_phone)
-        
-        debug_info = {
-            "original_phone": phone_number,
-            "normalized_phone": normalized_phone,
-            "exists_in_master": bool(master_record),
-            "exists_in_duplicates": bool(duplicate_record),
-            "master_record": master_record,
-            "duplicate_record": duplicate_record
-        }
-        
-        if duplicate_record:
-            # Count actual sources
-            source_count = 0
-            sources = []
-            for i in range(1, 11):
-                if duplicate_record.get(f'source{i}'):
-                    source_count += 1
-                    sources.append({
-                        f"source{i}": duplicate_record.get(f'source{i}'),
-                        f"sub_source{i}": duplicate_record.get(f'sub_source{i}'),
-                        f"date{i}": duplicate_record.get(f'date{i}')
-                    })
-            
-            debug_info["duplicate_analysis"] = {
-                "actual_source_count": source_count,
-                "recorded_duplicate_count": duplicate_record.get('duplicate_count', 0),
-                "sources": sources,
-                "next_available_slot": find_next_available_source_slot(duplicate_record)
-            }
-        
-        return jsonify(debug_info), 200
-        
-    except Exception as e:
-        print(f"❌ Error in phone debug: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Enhanced health check with system status"""
-    try:
-        # Test database connection
-        test_result = supabase.table("lead_master").select("id").limit(1).execute()
-        db_status = "connected" if test_result else "error"
-        
-        return jsonify({
-            "status": "healthy",
-            "service": "WhatsApp Qualified Leads with Advanced Duplicate Handling",
-            "database_status": db_status,
-            "features": [
-                "Qualification filtering",
-                "Advanced duplicate handling",
-                "Real-time processing",
-                "Multi-source tracking",
-                "Detailed debugging",
-                "WhatsApp messaging"
-            ],
-            "timestamp": datetime.now().isoformat()
-        }), 200
-    except Exception as e:
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }), 500
-
-@app.route('/send-whatsapp', methods=['POST'])
-def send_test_whatsapp():
-    """Test endpoint to send WhatsApp messages"""
-    try:
-        data = request.get_json()
-        phone_number = data.get('phone_number', '')
-        message_text = data.get('message', 'Test message from Ather CRM')
-        
-        if not phone_number:
-            return jsonify({"error": "Phone number is required"}), 400
-        
-        # Ensure phone number has country code
-        if not phone_number.startswith('91'):
-            phone_number = f"91{phone_number}"
-        
-        result = send_whatsapp_message(phone_number, message_text)
-        
-        return jsonify({
-            "success": "error" not in result,
-            "result": result,
-            "phone_number": phone_number,
-            "message": message_text
-        }), 200 if "error" not in result else 500
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
 if __name__ == '__main__':
-    print(" Starting Ather CRM System...")
+    print("🚀 Starting Ather CRM System...")
     print("📱 Server will be available at: http://127.0.0.1:5000")
     print("🌐 You can also try: http://localhost:5000")
+    
+    # Ensure app context is available for background operations
+    with app.app_context():
+        print("✅ Flask application context initialized")
+        print("🔧 Background services ready")
+    
     socketio.run(app, host='0.0.0.0', port=5000, debug=True, use_reloader=False)
