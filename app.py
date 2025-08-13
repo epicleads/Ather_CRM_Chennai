@@ -2295,12 +2295,38 @@ def unified_login() -> Response:
     password = request.form.get('password', '').strip()
     user_type = request.form.get('user_type', '').strip().lower()
 
-    valid_user_types = ['admin', 'cre', 'ps', 'rec']
+    valid_user_types = ['admin', 'bh', 'cre', 'ps', 'rec']
     if user_type not in valid_user_types:
-        flash('Please select a valid role (Admin, CRE, PS, or Receptionist)', 'error')
+        flash('Please select a valid role (Admin, Branch Head, CRE, PS, or Receptionist)', 'error')
         return redirect(url_for('index'))
 
-    # Branch Head login removed
+    # Branch Head authentication
+    if user_type == 'bh':
+        try:
+            bh_user = supabase.table('branch_head_users').select('*').eq('username', username).execute().data
+            if not bh_user:
+                flash('Invalid username or password', 'error')
+                return redirect(url_for('index'))
+            bh_user = bh_user[0]
+            if not bh_user.get('is_active', True):
+                flash('User is inactive', 'error')
+                return redirect(url_for('index'))
+            # Check password using werkzeug
+            if not check_password_hash(bh_user['password_hash'], password):
+                flash('Incorrect password', 'error')
+                return redirect(url_for('index'))
+            session.clear()
+            session['bh_user_id'] = bh_user['id']
+            session['bh_branch'] = bh_user['branch']
+            session['bh_name'] = bh_user.get('name', username)
+            session['user_type'] = 'bh'
+            session['username'] = username
+            flash('Welcome! Logged in as Branch Head', 'success')
+            return redirect(url_for('bh_dashboard'))
+        except Exception as e:
+            print(f"Error in Branch Head login: {e}")
+            flash('Error during login. Please try again.', 'error')
+            return redirect(url_for('index'))
 
     elif user_type == 'rec':
         # Receptionist authentication
