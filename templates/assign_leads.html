@@ -1176,7 +1176,7 @@
     updateRemainingLeads();
     
     // Auto-Assign Functionality
-    let autoAssignConfigs = {};
+    let autoAssignConfigs = [];
     
     // Load auto-assign configurations on page load
     loadAutoAssignConfigs();
@@ -1189,7 +1189,7 @@
         .then(response => response.json())
         .then(data => {
           if (data.success) {
-            autoAssignConfigs = data.configs;
+            autoAssignConfigs = data.data || [];
             console.log('Loaded auto-assign configs:', autoAssignConfigs);
             console.log('Available CREs:', allCREs);
             updateAutoAssignUI();
@@ -1201,81 +1201,114 @@
     }
     
     function updateAutoAssignUI() {
-      console.log('Updating auto-assign UI for sources:', Object.keys(autoAssignConfigs));
-      // Update toggle buttons and config panels
-      Object.keys(autoAssignConfigs).forEach(source => {
-        const configs = autoAssignConfigs[source];
-        const toggleBtn = document.querySelector(`.auto-assign-toggle[data-source="${source}"]`);
-        const configPanel = document.getElementById(`auto_assign_config_${source.replace(/ /g, '_')}`);
-        const creList = document.getElementById(`auto_assign_cre_list_${source.replace(/ /g, '_')}`);
-        const statusDiv = document.getElementById(`auto_assign_status_${source.replace(/ /g, '_')}`);
-        
-        console.log(`Processing source: ${source}, configs:`, configs);
-        console.log(`Toggle button found:`, toggleBtn);
-        console.log(`Config panel found:`, configPanel);
-        console.log(`Status div found:`, statusDiv);
-        
-        if (configs.length > 0) {
-          // Show active state
-          toggleBtn.classList.add('active');
-          configPanel.classList.add('show');
-          
-          // Show success indicator
-          const successIndicator = document.getElementById(`success_indicator_${source.replace(/ /g, '_')}`);
-          if (successIndicator) {
-            successIndicator.style.display = 'block';
-          }
-          
-          // Update status display
-          statusDiv.classList.add('show', 'active');
-          const creNames = configs.map(config => {
-            const cre = allCREs.find(c => c.id == config.cre_id);
-            return cre ? cre.name : `CRE ID: ${config.cre_id}`;
-          });
-          
-          statusDiv.innerHTML = `
-            <div class="status-title">
-              <i class="fas fa-check-circle"></i> Auto-Assign Active
-            </div>
-          `;
-          
-          if (creNames.length > 0) {
-            statusDiv.innerHTML += `
-              <div class="assigned-cres">
-                ${creNames.map(name => `<span class="cre-tag">${name}</span>`).join('')}
-              </div>
-            `;
-          }
-          
-          // Update CRE list
-          creList.innerHTML = '';
-          configs.forEach(config => {
-            const cre = allCREs.find(c => c.id == config.cre_id);
-            const creName = cre ? cre.name : `CRE ID: ${config.cre_id}`;
-            const creItem = document.createElement('div');
-            creItem.className = 'auto-assign-cre-item';
-            creItem.innerHTML = `
-              <span>${creName}</span>
-              <button class="remove-cre" data-cre-id="${config.cre_id}" data-source="${source}">&times;</button>
-            `;
-            creList.appendChild(creItem);
-          });
-        } else {
-          // Show inactive state but keep config panel visible
-          toggleBtn.classList.remove('active');
-          configPanel.classList.add('show'); // Always show config panel
-          statusDiv.classList.remove('show', 'active');
-          
-          // Hide success indicator
-          const successIndicator = document.getElementById(`success_indicator_${source.replace(/ /g, '_')}`);
-          if (successIndicator) {
-            successIndicator.style.display = 'none';
-          }
-          
-          // Clear CRE list for inactive sources
-          creList.innerHTML = '';
+      // Group configs by source
+      const configsBySource = {};
+      autoAssignConfigs.forEach(config => {
+        if (!configsBySource[config.source]) {
+          configsBySource[config.source] = [];
         }
+        configsBySource[config.source].push(config);
       });
+      
+      console.log('Updating auto-assign UI for sources:', Object.keys(configsBySource));
+      
+      // Also get all sources that have auto-assign configurations from the backend
+      // This ensures we show all configured sources even if they have zero CREs or zero unassigned leads
+      fetch('/get_auto_assign_configs')
+        .then(response => response.json())
+        .then(data => {
+          if (data.success && data.data) {
+            // Get unique sources from backend configs
+            const backendSources = [...new Set(data.data.map(config => config.source))];
+            
+            // Add any backend sources that aren't in the frontend configs
+            backendSources.forEach(source => {
+              if (!configsBySource[source]) {
+                configsBySource[source] = [];
+              }
+            });
+            
+            console.log('All sources with auto-assign configs:', Object.keys(configsBySource));
+            
+            // Update toggle buttons and config panels for all sources
+            Object.keys(configsBySource).forEach(source => {
+              const configs = configsBySource[source];
+              const toggleBtn = document.querySelector(`.auto-assign-toggle[data-source="${source}"]`);
+              const configPanel = document.getElementById(`auto_assign_config_${source.replace(/ /g, '_')}`);
+              const creList = document.getElementById(`auto_assign_cre_list_${source.replace(/ /g, '_')}`);
+              const statusDiv = document.getElementById(`auto_assign_status_${source.replace(/ /g, '_')}`);
+              
+              console.log(`Processing source: ${source}, configs:`, configs);
+              console.log(`Toggle button found:`, toggleBtn);
+              console.log(`Config panel found:`, configPanel);
+              console.log(`Status div found:`, statusDiv);
+              
+              if (configs.length > 0) {
+                // Show active state
+                toggleBtn.classList.add('active');
+                configPanel.classList.add('show');
+                
+                // Show success indicator
+                const successIndicator = document.getElementById(`success_indicator_${source.replace(/ /g, '_')}`);
+                if (successIndicator) {
+                  successIndicator.style.display = 'block';
+                }
+                
+                // Update status display
+                statusDiv.classList.add('show', 'active');
+                const creNames = configs.map(config => {
+                  const cre = allCREs.find(c => c.id == config.cre_id);
+                  return cre ? cre.name : `CRE ID: ${config.cre_id}`;
+                });
+                
+                statusDiv.innerHTML = `
+                  <div class="status-title">
+                    <i class="fas fa-check-circle"></i> Auto-Assign Active
+                  </div>
+                `;
+                
+                if (creNames.length > 0) {
+                  statusDiv.innerHTML += `
+                    <div class="assigned-cres">
+                      ${creNames.map(name => `<span class="cre-tag">${name}</span>`).join('')}
+                    </div>
+                  `;
+                }
+                
+                // Update CRE list
+                creList.innerHTML = '';
+                configs.forEach(config => {
+                  const cre = allCREs.find(c => c.id == config.cre_id);
+                  const creName = cre ? cre.name : `CRE ID: ${config.cre_id}`;
+                  const creItem = document.createElement('div');
+                  creItem.className = 'auto-assign-cre-item';
+                  creItem.innerHTML = `
+                    <span>${creName}</span>
+                    <button class="remove-cre" data-cre-id="${config.cre_id}" data-source="${source}">&times;</button>
+                  `;
+                  creList.appendChild(creItem);
+                });
+              } else {
+                // Show inactive state but keep config panel visible
+                toggleBtn.classList.remove('active');
+                configPanel.classList.add('show'); // Always show config panel
+                statusDiv.classList.remove('show', 'active');
+                
+                // Hide success indicator
+                const successIndicator = document.getElementById(`success_indicator_${source.replace(/ /g, '_')}`);
+                if (successIndicator) {
+                  successIndicator.style.display = 'none';
+                }
+                
+                // Clear CRE list for inactive sources
+                creList.innerHTML = '';
+              }
+            });
+          }
+        })
+        .catch(error => {
+          console.error('Error fetching auto-assign configs for UI update:', error);
+        });
     }
     
     // Auto-assign toggle button click
@@ -1289,7 +1322,8 @@
           // Deactivate auto-assign
           toggleBtn.classList.remove('active');
           configPanel.classList.add('show'); // Keep config panel visible
-          delete autoAssignConfigs[source];
+          // Remove all configs for this source
+          autoAssignConfigs = autoAssignConfigs.filter(config => config.source !== source);
           
           // Refresh page after deactivating auto-assign
           setTimeout(() => {
@@ -1299,10 +1333,6 @@
           // Activate auto-assign
           toggleBtn.classList.add('active');
           configPanel.classList.add('show');
-          if (!autoAssignConfigs[source]) {
-            autoAssignConfigs[source] = [];
-          }
-          
           // Refresh page after activating auto-assign
           setTimeout(() => {
             location.reload();
@@ -1318,7 +1348,7 @@
         const source = addBtn.dataset.source;
         
         // Get current configs for this source
-        const currentConfigs = autoAssignConfigs[source] || [];
+        const currentConfigs = autoAssignConfigs.filter(config => config.source === source);
         const currentCreIds = currentConfigs.map(config => config.cre_id);
         
         // Get available CREs (excluding already added ones)
@@ -1386,10 +1416,14 @@
           if (selectedId) {
             const selectedCRE = availableCREs.find(cre => cre.id == selectedId);
             if (selectedCRE) {
-              if (!autoAssignConfigs[source]) {
-                autoAssignConfigs[source] = [];
-              }
-              autoAssignConfigs[source].push({ cre_id: selectedId });
+                        // Check if this CRE is already configured for this source
+          const existingConfig = autoAssignConfigs.find(config => config.source === source && config.cre_id == selectedId);
+          if (!existingConfig) {
+                          autoAssignConfigs.push({ 
+                cre_id: parseInt(selectedId),
+                source: source 
+              });
+          }
               updateAutoAssignUI();
               
               // Show success alert
@@ -1412,16 +1446,12 @@
         const cre = allCREs.find(c => c.id == creId);
         const creName = cre ? cre.name : `CRE ID: ${creId}`;
         
-        if (autoAssignConfigs[source]) {
-          autoAssignConfigs[source] = autoAssignConfigs[source].filter(config => config.cre_id != creId);
-          if (autoAssignConfigs[source].length === 0) {
-            delete autoAssignConfigs[source];
-          }
-          updateAutoAssignUI();
-          
-          // Show removal alert
-          showAlert(`🗑️ CRE "${creName}" removed from auto-assign configuration for "${source}"`, 'warning');
-        }
+        // Remove CRE from auto-assign configuration
+        autoAssignConfigs = autoAssignConfigs.filter(config => !(config.source === source && config.cre_id == creId));
+        updateAutoAssignUI();
+        
+        // Show removal alert
+        showAlert(`🗑️ CRE "${creName}" removed from auto-assign configuration for "${source}"`, 'warning');
       }
     });
     
@@ -1430,7 +1460,7 @@
       if (e.target.closest('.save-and-assign-btn')) {
         const saveBtn = e.target.closest('.save-and-assign-btn');
         const source = saveBtn.dataset.source;
-        const configs = autoAssignConfigs[source] || [];
+        const configs = autoAssignConfigs.filter(config => config.source === source);
         
         if (configs.length === 0) {
           showAlert('⚠️ Please add at least one CRE to the auto-assign configuration.', 'error');
@@ -1534,7 +1564,8 @@
           
           if (data.success) {
             showAlert(`✅ ${data.message}`, 'success');
-            delete autoAssignConfigs[source];
+            // Remove all configs for this source
+            autoAssignConfigs = autoAssignConfigs.filter(config => config.source !== source);
             updateAutoAssignUI();
             
             // Auto-refresh the page after a short delay
@@ -1626,11 +1657,11 @@
       fetch('/get_auto_assign_history')
         .then(response => response.json())
         .then(data => {
-          if (data.success && data.history) {
-            console.log('📊 Loaded auto-assign history:', data.history);
+          if (data.success && data.data) {
+            console.log('📊 Loaded auto-assign history:', data.data);
             
             // Display the history in the table
-            displayAutoAssignHistory(data.history);
+            displayAutoAssignHistory(data.data);
           }
         })
         .catch(error => {

@@ -4926,6 +4926,1171 @@ def performance_metrics():
 
 
 
+@app.route('/analytics')
+@require_admin
+def analytics():
+    """Main analytics dashboard for admin users"""
+    try:
+        # Get filter period or custom date range from query parameter
+        period = request.args.get('period', '30')
+        start_date_str = request.args.get('start_date')
+        end_date_str = request.args.get('end_date')
+
+        today = datetime.now().date()
+        start_date = None
+        end_date = None
+        if start_date_str and end_date_str:
+            try:
+                start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            except Exception:
+                start_date = None
+                end_date = None
+        elif period == 'all':
+            start_date = None
+        else:
+            days = int(period) if period.isdigit() else 30
+            start_date = today - timedelta(days=days)
+            end_date = today
+
+        # Get all data
+        all_leads = safe_get_data('lead_master')
+        all_cres = safe_get_data('cre_users')
+        all_ps = safe_get_data('ps_users')
+        ps_followups = safe_get_data('ps_followup_master')
+
+        # Filter leads by date if needed
+        filtered_leads = []
+        for lead in all_leads:
+            lead_date_str = lead.get('created_at') or lead.get('date')
+            if lead_date_str:
+                try:
+                    if 'T' in lead_date_str:
+                        lead_date = datetime.fromisoformat(lead_date_str.replace('Z', '+00:00')).date()
+                    else:
+                        lead_date = datetime.strptime(lead_date_str, '%Y-%m-%d').date()
+                except (ValueError, TypeError):
+                    filtered_leads.append(lead)
+                    continue
+                if start_date and end_date:
+                    if start_date <= lead_date <= end_date:
+                        filtered_leads.append(lead)
+                elif start_date:
+                    if lead_date >= start_date:
+                        filtered_leads.append(lead)
+                else:
+                    filtered_leads.append(lead)
+            else:
+                filtered_leads.append(lead)
+        leads = filtered_leads
+
+        # Calculate KPIs
+        total_leads = len(leads)
+        won_leads = len([l for l in leads if l.get('final_status') == 'Won'])
+        conversion_rate = round((won_leads / total_leads * 100) if total_leads > 0 else 0, 1)
+
+        # Calculate average response time (days to first call)
+        response_times = []
+        for lead in leads:
+            if lead.get('first_call_date') and lead.get('date'):
+                try:
+                    lead_date = datetime.strptime(lead['date'], '%Y-%m-%d').date()
+                    
+                    # Handle both old date format and new timestamp format
+                    first_call_date_str = lead['first_call_date']
+                    if 'T' in first_call_date_str or ':' in first_call_date_str:
+                        # New timestamp format (ISO format with timezone)
+                        try:
+                            call_date = datetime.fromisoformat(first_call_date_str).date()
+                        except ValueError:
+                            # Fallback for old format without timezone
+                            call_date = datetime.fromisoformat(first_call_date_str.replace('Z', '+00:00')).date()
+                    else:
+                        # Old date format
+                        call_date = datetime.strptime(first_call_date_str, '%Y-%m-%d').date()
+                    
+                    response_times.append((call_date - lead_date).days)
+                except (ValueError, TypeError):
+                    continue
+        avg_response_time = f"{round(sum(response_times) / len(response_times), 1)} days" if response_times else "N/A"
+
+        # Active CREs (CREs with leads assigned)
+        active_cres = len(set([l.get('cre_name') for l in leads if l.get('cre_name')]))
+        total_cres = len(all_cres)
+
+        # Source distribution
+        source_counts = Counter([l.get('source', 'Unknown') for l in leads])
+        source_labels = list(source_counts.keys())
+        source_data = list(source_counts.values())
+
+        # Lead trends (last 30 days)
+        trend_data = []
+        trend_labels = []
+        for i in range(29, -1, -1):
+            date = today - timedelta(days=i)
+            count = len([l for l in leads if l.get('date') == str(date)])
+            trend_data.append(count)
+            trend_labels.append(date.strftime('%m/%d'))
+
+        # Top performing CREs with new parameters
+        cre_performance = defaultdict(lambda: {'total': 0, 'hot': 0, 'warm': 0, 'cold': 0, 'won': 0, 'lost': 0, 'calls': []})
+        for lead in leads:
+            cre_name = lead.get('cre_name')
+            if cre_name:
+                cre_performance[cre_name]['total'] += 1
+                # Hot/Warm/Cold by lead_category
+                category = (lead.get('lead_category') or '').strip().lower()
+                if category == 'hot':
+                    cre_performance[cre_name]['hot'] += 1
+                elif category == 'warm':
+                    cre_performance[cre_name]['warm'] += 1
+                elif category == 'cold':
+                    cre_performance[cre_name]['cold'] += 1
+                # Won/Lost by final_status
+                if (lead.get('final_status') or '').strip().lower() == 'won':
+                    cre_performance[cre_name]['won'] += 1
+                elif (lead.get('final_status') or '').strip().lower() == 'lost':
+                    cre_performance[cre_name]['lost'] += 1
+                # Count calls made
+                call_count = 0
+                call_fields = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
+                for call_field in call_fields:
+                    if lead.get(f'{call_field}_call_date'):
+                        call_count += 1
+                cre_performance[cre_name]['calls'].append(call_count)
+
+        # Calculate conversion rates and average calls for CREs
+        top_cres = []
+        for cre_name, data in cre_performance.items():
+            total_calls = sum(data['calls'])
+            avg_calls = round(total_calls / len(data['calls']), 1) if data['calls'] else 0
+            conversion_rate_cre = round((data['won'] / data['total'] * 100) if data['total'] > 0 else 0, 1)
+            top_cres.append({
+                'name': cre_name,
+                'total_leads': data['total'],
+                'hot': data['hot'],
+                'warm': data['warm'],
+                'cold': data['cold'],
+                'won_leads': data['won'],
+                'lost_leads': data['lost'],
+                'conversion_rate': conversion_rate_cre,
+                'avg_calls': avg_calls
+            })
+        # Sort by won leads and take top 5
+        top_cres = sorted(top_cres, key=lambda x: x['won_leads'], reverse=True)[:5]
+
+        # Lead categories (add Won and Lost as categories)
+        category_counts = Counter([l.get('lead_category', 'None') for l in leads])
+        won_count = len([l for l in leads if (l.get('final_status') or '').strip().lower() == 'won'])
+        lost_count = len([l for l in leads if (l.get('final_status') or '').strip().lower() == 'lost'])
+        total_leads = len(leads)
+        lead_categories = []
+        # Add regular categories
+        for category, count in category_counts.items():
+            percentage = round((count / total_leads * 100) if total_leads > 0 else 0, 1)
+            lead_categories.append({
+                'name': category,
+                'count': count,
+                'percentage': percentage
+            })
+        # Add Won and Lost as categories
+        if won_count > 0:
+            lead_categories.append({
+                'name': 'Won',
+                'count': won_count,
+                'percentage': round((won_count / total_leads * 100) if total_leads > 0 else 0, 1)
+            })
+        if lost_count > 0:
+            lead_categories.append({
+                'name': 'Lost',
+                'count': lost_count,
+                'percentage': round((lost_count / total_leads * 100) if total_leads > 0 else 0, 1)
+            })
+
+        # Model interest
+        model_counts = Counter([l.get('model_interested', 'Not specified') for l in leads])
+        model_interest = []
+        for model, count in model_counts.items():
+            percentage = round((count / total_leads * 100) if total_leads > 0 else 0, 1)
+            model_interest.append({
+                'name': model,
+                'count': count,
+                'percentage': percentage
+            })
+
+        # Branch performance
+        branch_performance = []
+        branches = set([ps.get('branch') for ps in all_ps if ps.get('branch')])
+        for branch in branches:
+            branch_ps = [ps for ps in all_ps if ps.get('branch') == branch]
+            ps_names = [ps['name'] for ps in branch_ps]
+            branch_leads = [l for l in leads if l.get('ps_name') in ps_names]
+            branch_won = len([l for l in branch_leads if l.get('final_status') == 'Won'])
+            success_rate = round((branch_won / len(branch_leads) * 100) if branch_leads else 0, 1)
+            branch_performance.append({
+                'name': branch,
+                'ps_count': len(branch_ps),
+                'assigned_leads': len(branch_leads),
+                'won_leads': branch_won,
+                'success_rate': success_rate
+            })
+
+        # Funnel data
+        assigned_cre = len([l for l in leads if l.get('cre_name')])
+        first_call = len([l for l in leads if l.get('first_call_date')])
+        assigned_ps = len([l for l in leads if l.get('ps_name')])
+        funnel = {
+            'total': total_leads,
+            'assigned_cre': assigned_cre,
+            'assigned_cre_percent': round((assigned_cre / total_leads * 100) if total_leads > 0 else 0, 1),
+            'first_call': first_call,
+            'first_call_percent': round((first_call / total_leads * 100) if total_leads > 0 else 0, 1),
+            'assigned_ps': assigned_ps,
+            'assigned_ps_percent': round((assigned_ps / total_leads * 100) if total_leads > 0 else 0, 1),
+            'won': won_leads,
+            'won_percent': round((won_leads / total_leads * 100) if total_leads > 0 else 0, 1)
+        }
+
+        # Recent activities (mock data for now)
+        recent_activities = [
+            {
+                'title': 'New Lead Assigned',
+                'description': 'Lead assigned to CRE for follow-up',
+                'time': '2 hours ago'
+            },
+            {
+                'title': 'Lead Converted',
+                'description': 'Customer purchased Rizta Z model',
+                'time': '4 hours ago'
+            },
+            {
+                'title': 'Follow-up Scheduled',
+                'description': 'PS scheduled follow-up call',
+                'time': '6 hours ago'
+            }
+        ]
+
+        # Calculate leads growth (mock calculation)
+        leads_growth = 15
+
+        # Calculate Campaign & Platform Lead Counts
+        def parse_timestamp(timestamp_str):
+            """Parse timestamp string to datetime object"""
+            if not timestamp_str:
+                return None
+            try:
+                if 'T' in timestamp_str:
+                    return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                else:
+                    return datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+            except (ValueError, TypeError):
+                return None
+
+        def is_within_date_filter(target_date, start_date, end_date):
+            """Check if target date is within the filter range"""
+            if not target_date:
+                return False
+            if start_date and end_date:
+                return start_date <= target_date.date() <= end_date
+            elif start_date:
+                return target_date.date() >= start_date
+            return True
+
+        # Get today's date for "Today's Leads" calculation
+        today = datetime.now().date()
+        
+        # Group leads by campaign and source
+        campaign_platform_data = {}
+        
+        for lead in all_leads:
+            campaign = lead.get('campaign')
+            source = lead.get('source')
+            # Normalize and check for None, empty, whitespace, or 'none' (case-insensitive)
+            campaign_clean = str(campaign).strip().lower() if campaign is not None else ''
+            source_clean = str(source).strip().lower() if source is not None else ''
+            if not campaign_clean or campaign_clean == 'none' or not source_clean or source_clean == 'none':
+                continue
+            key = f"{campaign}|{source}"
+            
+            if key not in campaign_platform_data:
+                campaign_platform_data[key] = {
+                    'campaign': campaign,
+                    'platform': source,
+                    'total_leads': 0,
+                    'todays_leads': 0,
+                    'lost': 0,
+                    'pending': 0,
+                    'won': 0
+                }
+            
+            # Parse timestamps
+            created_at = parse_timestamp(lead.get('created_at'))
+            won_timestamp = parse_timestamp(lead.get('won_timestamp'))
+            lost_timestamp = parse_timestamp(lead.get('lost_timestamp'))
+            final_status = lead.get('final_status', '').strip()
+            
+            # Total Leads (respects date filter)
+            if created_at and is_within_date_filter(created_at, start_date, end_date):
+                campaign_platform_data[key]['total_leads'] += 1
+            
+            # Today's Leads (ignores date filter)
+            if created_at and created_at.date() == today:
+                campaign_platform_data[key]['todays_leads'] += 1
+            
+            # Lost leads (lost_timestamp within date filter)
+            if lost_timestamp and is_within_date_filter(lost_timestamp, start_date, end_date):
+                campaign_platform_data[key]['lost'] += 1
+            
+            # Pending leads (final_status = 'Pending', no won/lost timestamp, created_at within filter)
+            if (final_status == 'Pending' and 
+                not won_timestamp and 
+                not lost_timestamp and 
+                created_at and 
+                is_within_date_filter(created_at, start_date, end_date)):
+                campaign_platform_data[key]['pending'] += 1
+            
+            # Won leads (won_timestamp within date filter)
+            if won_timestamp and is_within_date_filter(won_timestamp, start_date, end_date):
+                campaign_platform_data[key]['won'] += 1
+        
+        # Calculate conversion rates and format data
+        campaign_platform_counts = []
+        for key, data in campaign_platform_data.items():
+            conversion_rate = round((data['won'] / data['total_leads'] * 100) if data['total_leads'] > 0 else 0, 1)
+            
+            campaign_platform_counts.append({
+                'campaign': data['campaign'],
+                'platform': data['platform'],
+                'total_leads': data['total_leads'],
+                'todays_leads': data['todays_leads'],
+                'lost': data['lost'],
+                'pending': data['pending'],
+                'won': data['won'],
+                'conversion_rate': conversion_rate
+            })
+        
+        # Sort by total leads descending
+        campaign_platform_counts.sort(key=lambda x: x['total_leads'], reverse=True)
+
+        # Create analytics object that matches template expectations
+        analytics = {
+            'total_leads': total_leads,
+            'leads_growth': leads_growth,
+            'conversion_rate': conversion_rate,
+            'avg_response_time': avg_response_time,
+            'active_cres': active_cres,
+            'total_cres': total_cres,
+            'source_labels': source_labels,
+            'source_data': source_data,
+            'trend_labels': trend_labels,
+            'trend_data': trend_data,
+            'top_cres': top_cres,
+            'lead_categories': lead_categories,
+            'model_interest': model_interest,
+            'branch_performance': branch_performance,
+            'funnel': funnel,
+            'recent_activities': recent_activities,
+            'campaign_platform_counts': campaign_platform_counts,
+            'all_leads_count': len(all_leads)
+        }
+
+        # Log analytics access
+        auth_manager.log_audit_event(
+            user_id=session.get('user_id'),
+            user_type=session.get('user_type'),
+            action='ANALYTICS_ACCESS',
+            resource='analytics',
+            details={'period': period, 'start_date': start_date_str, 'end_date': end_date_str}
+        )
+
+        return render_template('analytics.html', analytics=analytics)
+
+    except Exception as e:
+        print(f"Error in analytics: {e}")
+        flash(f'Error loading analytics: {str(e)}', 'error')
+        # Return empty analytics object to prevent template errors
+        empty_analytics = {
+            'total_leads': 0,
+            'leads_growth': 0,
+            'conversion_rate': 0,
+            'avg_response_time': "N/A",
+            'active_cres': 0,
+            'total_cres': 0,
+            'source_labels': [],
+            'source_data': [],
+            'trend_labels': [],
+            'trend_data': [],
+            'top_cres': [],
+            'lead_categories': [],
+            'model_interest': [],
+            'branch_performance': [],
+            'funnel': {
+                'total': 0,
+                'assigned_cre': 0,
+                'assigned_cre_percent': 0,
+                'first_call': 0,
+                'first_call_percent': 0,
+                'assigned_ps': 0,
+                'assigned_ps_percent': 0,
+                'won': 0,
+                'won_percent': 0
+            },
+            'recent_activities': [],
+            'campaign_platform_counts': [],
+            'all_leads_count': 0
+        }
+        return render_template('analytics.html', analytics=empty_analytics)
+
+
+@app.route('/source_analysis_data')
+@require_admin
+def source_analysis_data():
+    """API endpoint for source analysis data"""
+    try:
+        start_date_str = request.args.get('start_date')
+        end_date_str = request.args.get('end_date')
+        today = datetime.now().date()
+        start_date = None
+        end_date = None
+        if start_date_str and end_date_str:
+            try:
+                start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            except Exception:
+                start_date = None
+                end_date = None
+        sources = [
+            'Google (KNOW)', 'Google', 'Meta(KNOW)', 'Know', 'OEM Web', 'OEM Tele',
+            'Affiliate Bikewale', 'Affiliate 91wheels', 'Affiliate Bikedekho',
+            'BTL (KNOW)', 'Meta'
+        ]
+        all_leads = safe_get_data('lead_master')
+        all_followups = safe_get_data('ps_followup_master')
+        
+        def in_date_range(lead):
+            lead_date_str = lead.get('created_at') or lead.get('date')
+            if not lead_date_str:
+                return True
+            try:
+                if 'T' in lead_date_str:
+                    lead_date = datetime.fromisoformat(lead_date_str.replace('Z', '+00:00')).date()
+                else:
+                    lead_date = datetime.strptime(lead_date_str, '%Y-%m-%d').date()
+            except Exception:
+                return True
+            if start_date and end_date:
+                return start_date <= lead_date <= end_date
+            elif start_date:
+                return lead_date >= start_date
+            else:
+                return True
+        
+        leads = [l for l in all_leads if in_date_range(l)]
+        data = {}
+        for source in sources:
+            data[source] = {
+                'calls_allocated': 0,
+                'calls_attempted': 0,
+                'calls_connected': 0,
+                'pending_total': 0,
+                'pending_interested': 0,
+                'pending_hot': 0,
+                'pending_warm': 0,
+                'pending_cold': 0,
+                'pending_callback': 0,
+                'pending_rnr': 0,
+                'pending_disconnected': 0,
+                'closed_lost_total': 0,
+                'closed_lost_competition': 0,
+                'closed_lost_not_interested': 0,
+                'closed_lost_did_not_enquire': 0,
+                'closed_lost_wrong_lead': 0,
+                'closed_lost_rnr_lost': 0,
+                'closed_lost_finance_reject': 0,
+                'closed_lost_co_dealer': 0,
+                'sales_pipeline_total': 0,
+                'call_progress': {},
+                'latest_remark': '',
+            }
+        
+        def get_source(lead):
+            s = lead.get('source', '').strip()
+            for src in sources:
+                if s.lower() == src.lower():
+                    return src
+            for src in sources:
+                if src.lower() in s.lower():
+                    return src
+            return None
+        
+        for lead in leads:
+            src = get_source(lead)
+            if not src:
+                continue
+            data[src]['calls_allocated'] += 1
+            attempted = any(lead.get(f'{c}_call_date') for c in ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh'])
+            if attempted:
+                data[src]['calls_attempted'] += 1
+            call_statuses = [lead.get(f'{c}_call_status', '').lower() for c in ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']]
+            connected = any(s and s not in ['rnr', 'busy', 'busy on another call'] for s in call_statuses)
+            if connected:
+                data[src]['calls_connected'] += 1
+            status = (lead.get('lead_status') or '').strip().lower()
+            if status in ['interested', 'call back', 'rnr', 'call disconnected']:
+                data[src]['pending_total'] += 1
+                if status == 'interested':
+                    data[src]['pending_interested'] += 1
+                    cat = (lead.get('lead_category') or '').strip().lower()
+                    if cat == 'hot':
+                        data[src]['pending_hot'] += 1
+                    elif cat == 'warm':
+                        data[src]['pending_warm'] += 1
+                    elif cat == 'cold':
+                        data[src]['pending_cold'] += 1
+                elif status == 'call back':
+                    data[src]['pending_callback'] += 1
+                elif status == 'rnr':
+                    data[src]['pending_rnr'] += 1
+                elif status == 'call disconnected':
+                    data[src]['pending_disconnected'] += 1
+            
+            # Use latest follow-up for final_status and lead_status for lost reasons
+            uid = lead.get('uid')
+            latest_final_status = (lead.get('final_status') or '').strip().lower()
+            latest_lost_reason = (lead.get('lost_reason') or '').strip().lower()
+            latest_lead_status = (lead.get('lead_status') or '').strip().lower()
+            if uid:
+                followups = [f for f in all_followups if f.get('lead_uid') == uid]
+                if followups:
+                    latest_fu = max(followups, key=lambda f: f.get('created_at', ''))
+                    if latest_fu.get('final_status'):
+                        latest_final_status = latest_fu.get('final_status').strip().lower()
+                    if latest_fu.get('lost_reason'):
+                        latest_lost_reason = latest_fu.get('lost_reason').strip().lower()
+                    if latest_fu.get('lead_status'):
+                        latest_lead_status = latest_fu.get('lead_status').strip().lower()
+            
+            if latest_final_status == 'lost':
+                data[src]['closed_lost_total'] += 1
+                # Use lead_status for lost reason
+                if latest_lead_status == 'rnr-lost':
+                    data[src]['closed_lost_rnr_lost'] += 1
+                elif latest_lead_status == 'did not enquire':
+                    data[src]['closed_lost_did_not_enquire'] += 1
+                elif latest_lead_status == 'not interested':
+                    data[src]['closed_lost_not_interested'] += 1
+                elif latest_lead_status == 'lost to competition':
+                    data[src]['closed_lost_competition'] += 1
+                elif latest_lead_status == 'lost to co-dealer':
+                    data[src]['closed_lost_co_dealer'] += 1
+                elif latest_lead_status == 'finance rejected':
+                    data[src]['closed_lost_finance_reject'] += 1
+                elif latest_lead_status == 'wrong lead':
+                    data[src]['closed_lost_wrong_lead'] += 1
+            
+            if latest_final_status == 'won':
+                data[src]['sales_pipeline_total'] += 1
+            
+            call_progress = None
+            for idx, c in enumerate(['seventh', 'sixth', 'fifth', 'fourth', 'third', 'second', 'first']):
+                if lead.get(f'{c}_call_date'):
+                    call_progress = c.capitalize()
+                    break
+            if call_progress:
+                data[src]['call_progress'][lead.get('uid')] = call_progress
+            
+            if uid:
+                followups = [f for f in all_followups if f.get('lead_uid') == uid]
+                if followups:
+                    latest = max(followups, key=lambda f: f.get('created_at', ''))
+                    data[src]['latest_remark'] = latest.get('remark', '')
+        
+        total_row = {k: sum(data[src][k] for src in sources) if isinstance(data[sources[0]][k], int) else {} for k in data[sources[0]].keys()}
+        data['Total'] = total_row
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/cre_analysis_data')
+@require_admin
+def cre_analysis_data():
+    """API endpoint for CRE analysis data"""
+    # Return a mock response or implement your actual logic here
+    return jsonify({'success': True, 'data': {}})
+
+
+@app.route('/get_cre_list')
+@require_admin
+def get_cre_list():
+    """API endpoint to get list of all CRE users"""
+    try:
+        cres = safe_get_data('cre_users', select_fields='name')
+        cre_list = [{'name': cre.get('name')} for cre in cres if cre.get('name')]
+        return jsonify({'success': True, 'cre_list': cre_list})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/negative_call_attempt_history', methods=['GET'])
+@require_admin
+def negative_call_attempt_history():
+    """API endpoint for negative call attempt history analysis"""
+    try:
+        from_date = request.args.get('from_date')
+        to_date = request.args.get('to_date')
+        call_no_order = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
+        
+        # Fetch data (only columns that exist)
+        cre_attempts = safe_get_data('cre_call_attempt_history', select_fields='call_no,created_at,status')
+        ps_attempts = safe_get_data('ps_call_attempt_history', select_fields='call_no,updated_at,status')
+        
+        # Parse date filters
+        start_date = pd.to_datetime(from_date) if from_date else None
+        end_date = pd.to_datetime(to_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1) if to_date else None
+        
+        cre_filtered, cre_statuses = get_cre_feedback_analysis(cre_attempts, call_no_order, start_date, end_date)
+        ps_filtered, ps_statuses = get_ps_feedback_analysis(ps_attempts, call_no_order, start_date, end_date)
+        
+        # Debug prints
+        print('CRE Statuses:', cre_statuses)
+        print('CRE Filtered Data:', cre_filtered)
+        print('PS Statuses:', ps_statuses)
+        print('PS Filtered Data:', ps_filtered)
+        
+        return jsonify({
+            'statuses': cre_statuses,  # for CRE table
+            'ps_statuses': ps_statuses,  # for PS table (optional, for symmetry)
+            'call_no_order': call_no_order,
+            'CRE': {'filtered': cre_filtered},
+            'PS': {'filtered': ps_filtered}
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+def get_cre_feedback_analysis(cre_attempts, call_no_order, start_date, end_date):
+    """Analyze CRE feedback data"""
+    try:
+        cre_df = pd.DataFrame(cre_attempts)
+        if cre_df.empty:
+            print("No data in cre_attempts!")
+            return {call_no: {} for call_no in call_no_order}, []
+        
+        cre_df['created_at'] = pd.to_datetime(cre_df['created_at'], errors='coerce')
+        
+        # Fix: Localize filter dates if needed
+        if start_date is not None and end_date is not None:
+            if pd.api.types.is_datetime64tz_dtype(cre_df['created_at']):
+                if start_date.tzinfo is None:
+                    start_date = start_date.tz_localize('UTC')
+                if end_date.tzinfo is None:
+                    end_date = end_date.tz_localize('UTC')
+            cre_df = cre_df[(cre_df['created_at'] >= start_date) & (cre_df['created_at'] <= end_date)]
+        
+        cre_df['status'] = cre_df['status'].fillna('').astype(str).str.strip()
+        print("Unique statuses in data:", cre_df['status'].unique())
+        
+        grouped = cre_df.groupby(['call_no', 'status']).size().reset_index(name='count')
+        print("\nGrouped data (call_no, status, count):\n", grouped)
+        
+        cre_filtered = {call_no: {} for call_no in call_no_order}
+        for call_no in call_no_order:
+            call_data = grouped[grouped['call_no'] == call_no]
+            for _, row in call_data.iterrows():
+                cre_filtered[call_no][row['status']] = int(row['count'])
+        
+        print("\nCRE Filtered Data:", cre_filtered)
+        return cre_filtered, sorted(cre_df['status'].unique())
+    except Exception as e:
+        print(f"Error in get_cre_feedback_analysis: {e}")
+        return {call_no: {} for call_no in call_no_order}, []
+
+
+def get_ps_feedback_analysis(ps_attempts, call_no_order, start_date, end_date):
+    """Analyze PS feedback data"""
+    try:
+        ps_df = pd.DataFrame(ps_attempts)
+        if ps_df.empty:
+            print("No data in ps_attempts!")
+            return {call_no: {} for call_no in call_no_order}, []
+        
+        ps_df['updated_at'] = pd.to_datetime(ps_df['updated_at'], errors='coerce')
+        
+        # Apply date filters if provided
+        if start_date is not None and end_date is not None:
+            if pd.api.types.is_datetime64tz_dtype(ps_df['updated_at']):
+                if start_date.tzinfo is None:
+                    start_date = start_date.tz_localize('UTC')
+                if end_date.tzinfo is None:
+                    end_date = end_date.tz_localize('UTC')
+            ps_df = ps_df[(ps_df['updated_at'] >= start_date) & (ps_df['updated_at'] <= end_date)]
+        
+        ps_df['status'] = ps_df['status'].fillna('').astype(str).str.strip()
+        print("Unique PS statuses in data:", ps_df['status'].unique())
+        
+        grouped = ps_df.groupby(['call_no', 'status']).size().reset_index(name='count')
+        print("\nPS Grouped data (call_no, status, count):\n", grouped)
+        
+        ps_filtered = {call_no: {} for call_no in call_no_order}
+        for call_no in call_no_order:
+            call_data = grouped[grouped['call_no'] == call_no]
+            for _, row in call_data.iterrows():
+                ps_filtered[call_no][row['status']] = int(row['count'])
+        
+        print("\nPS Filtered Data:", ps_filtered)
+        return ps_filtered, sorted(ps_df['status'].unique())
+    except Exception as e:
+        print(f"Error in get_ps_feedback_analysis: {e}")
+        return {call_no: {} for call_no in call_no_order}, []
+
+
+@app.route('/api/hot_duplicate_leads')
+@require_admin
+def api_hot_duplicate_leads():
+    """API endpoint for hot duplicate leads that need immediate attention"""
+    try:
+        # Get leads with high duplicate probability
+        # This would typically involve fuzzy matching logic
+        # For now, return leads that might be duplicates based on phone/email
+        all_leads = safe_get_data('lead_master')
+        
+        # Simple duplicate detection - find leads with same phone or email
+        potential_duplicates = []
+        seen_phones = {}
+        seen_emails = {}
+        
+        for lead in all_leads:
+            phone = lead.get('customer_mobile_number', '').strip()
+            email = lead.get('customer_email', '').strip()
+            
+            if phone and phone != 'N/A':
+                if phone in seen_phones:
+                    # Found duplicate phone
+                    potential_duplicates.append({
+                        'lead_uid': lead.get('uid'),
+                        'customer_name': lead.get('customer_name', ''),
+                        'phone': phone,
+                        'email': email,
+                        'source': lead.get('source', ''),
+                        'created_at': lead.get('created_at'),
+                        'duplicate_type': 'phone',
+                        'duplicate_score': 0.9,
+                        'urgency_level': 'high'
+                    })
+                else:
+                    seen_phones[phone] = lead.get('uid')
+            
+            if email and email != 'N/A' and '@' in email:
+                if email in seen_emails:
+                    # Found duplicate email
+                    potential_duplicates.append({
+                        'lead_uid': lead.get('uid'),
+                        'customer_name': lead.get('customer_name', ''),
+                        'phone': phone,
+                        'email': email,
+                        'source': lead.get('source', ''),
+                        'created_at': lead.get('created_at'),
+                        'duplicate_type': 'email',
+                        'duplicate_score': 0.8,
+                        'urgency_level': 'medium'
+                    })
+                else:
+                    seen_emails[email] = lead.get('uid')
+        
+        # Sort by duplicate score and urgency
+        potential_duplicates.sort(key=lambda x: (x['duplicate_score'], x['urgency_level'] == 'high'), reverse=True)
+        
+        return jsonify({
+            'success': True, 
+            'data': potential_duplicates[:50]  # Return top 50 duplicates
+        })
+        
+    except Exception as e:
+        print(f"Error in api_hot_duplicate_leads: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/get_auto_assign_configs')
+@require_admin
+def get_auto_assign_configs():
+    """API endpoint to get auto-assignment configuration settings"""
+    try:
+        # Get all auto-assign configurations
+        configs = safe_get_data('auto_assign_config')
+        
+        # Format the data for frontend consumption
+        formatted_configs = []
+        for config in configs:
+            # Get CRE details for each config
+            cre_result = supabase.table('cre_users').select('name, username, is_active').eq('id', config['cre_id']).execute()
+            cre_data = cre_result.data[0] if cre_result.data else {}
+            
+            formatted_configs.append({
+                'id': config['id'],
+                'source': config['source'],
+                'cre_id': config['cre_id'],
+                'cre_name': cre_data.get('name', 'Unknown'),
+                'cre_username': cre_data.get('username', ''),
+                'is_active': config['is_active'],
+                'priority': config['priority'],
+                'created_at': config['created_at']
+            })
+        
+        return jsonify({
+            'success': True, 
+            'data': formatted_configs
+        })
+        
+    except Exception as e:
+        print(f"Error in get_auto_assign_configs: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/get_auto_assign_history')
+@require_admin
+def get_auto_assign_history():
+    """API endpoint to get auto-assignment history"""
+    try:
+        # Get auto-assign history with pagination
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 50, type=int)
+        source_filter = request.args.get('source', '')
+        cre_filter = request.args.get('cre_id', '')
+        
+        # Build query
+        query = supabase.table('auto_assign_history').select('*').order('created_at', desc=True)
+        
+        # Apply filters
+        if source_filter:
+            query = query.eq('source', source_filter)
+        if cre_filter:
+            query = query.eq('assigned_cre_id', cre_filter)
+        
+        # Get total count
+        count_result = query.execute()
+        total_count = len(count_result.data) if count_result.data else 0
+        
+        # Apply pagination
+        offset = (page - 1) * per_page
+        query = query.range(offset, offset + per_page - 1)
+        
+        # Execute query
+        result = query.execute()
+        history_data = result.data or []
+        
+        # Format the data
+        formatted_history = []
+        for record in history_data:
+            # Get CRE details
+            cre_result = supabase.table('cre_users').select('name, username').eq('id', record['assigned_cre_id']).execute()
+            cre_data = cre_result.data[0] if cre_result.data else {}
+            
+            formatted_history.append({
+                'id': record['id'],
+                'lead_uid': record['lead_uid'],
+                'source': record['source'],
+                'assigned_cre_id': record['assigned_cre_id'],
+                'assigned_cre_name': record['assigned_cre_name'],
+                'cre_total_leads_before': record['cre_total_leads_before'],
+                'cre_total_leads_after': record['cre_total_leads_after'],
+                'assignment_method': record['assignment_method'],
+                'created_at': record['created_at'],
+                'cre_username': cre_data.get('username', '')
+            })
+        
+        return jsonify({
+            'success': True,
+            'data': formatted_history,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total_count': total_count,
+                'total_pages': (total_count + per_page - 1) // per_page
+            }
+        })
+        
+    except Exception as e:
+        print(f"Error in get_auto_assign_history: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/save_auto_assign_config', methods=['POST'])
+@require_admin
+def save_auto_assign_config():
+    try:
+        data = request.get_json()
+        source = data.get('source')
+        cre_ids = data.get('cre_ids', [])
+        
+        if not source:
+            return jsonify({'success': False, 'message': 'Source is required'})
+        
+        if not cre_ids:
+            return jsonify({'success': False, 'message': 'At least one CRE must be selected'})
+        
+        print(f"🔄 Saving auto-assign configuration for {source} with CREs: {cre_ids}")
+        
+        # Delete existing configs for this source
+        supabase.table('auto_assign_config').delete().eq('source', source).execute()
+        print(f"🗑️ Deleted existing configs for {source}")
+        
+        # Insert new configs
+        configs = []
+        for cre_id in cre_ids:
+            configs.append({
+                'source': source,
+                'cre_id': cre_id,
+                'is_active': True,
+                'priority': 1,
+                'created_at': datetime.now().isoformat()
+            })
+        
+        supabase.table('auto_assign_config').insert(configs).execute()
+        print(f"✅ Saved {len(configs)} new configs for {source}")
+        
+        # Get CRE names for feedback
+        cre_result = supabase.table('cre_users').select('name').in_('id', cre_ids).execute()
+        cre_names = [cre['name'] for cre in cre_result.data] if cre_result.data else [f"CRE ID: {id}" for id in cre_ids]
+        
+        # Immediately assign existing unassigned leads for this source using integrated auto-assign
+        auto_assigned_count = 0
+        if cre_ids:
+            try:
+                print(f"🤖 Triggering integrated auto-assign for existing leads in {source}")
+                # Use the integrated auto-assign function
+                result = auto_assign_new_leads_for_source(source)
+                if result and 'assigned_count' in result:
+                    auto_assigned_count = result['assigned_count']
+                    print(f"✅ Integrated auto-assign completed: {auto_assigned_count} leads assigned")
+                else:
+                    print(f"⚠️ Integrated auto-assign completed but no count returned")
+                    
+            except Exception as e:
+                print(f"❌ Error in integrated auto-assign for {source}: {e}")
+                auto_assigned_count = 0
+        
+        if auto_assigned_count > 0:
+            message = f'Auto-assign configuration saved for {source} with CREs: {", ".join(cre_names)}. {auto_assigned_count} existing unassigned leads were automatically assigned using fair distribution. New leads will be automatically assigned as they come in.'
+        else:
+            message = f'Auto-assign configuration saved for {source} with CREs: {", ".join(cre_names)}. No unassigned leads found to assign. New leads will be automatically assigned as they come in.'
+        
+        print(f"✅ Save operation completed: {message}")
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'auto_assigned_count': auto_assigned_count,
+            'cre_names': cre_names
+        })
+        
+    except Exception as e:
+        print(f"❌ Error saving auto-assign config: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/get_unassigned_leads_by_source')
+@require_admin
+def get_unassigned_leads_by_source():
+    source = request.args.get('source')
+    if not source:
+        return jsonify({'success': False, 'message': 'Source is required'}), 400
+    try:
+        leads = safe_get_data('lead_master', {'assigned': 'No', 'source': source})
+        return jsonify({'success': True, 'leads': leads})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/trigger_auto_assign/<source>', methods=['POST'])
+@require_admin
+def trigger_auto_assign_for_source(source):
+    """Manually trigger auto-assignment for existing leads of a specific source"""
+    try:
+        print(f"🔄 Triggering integrated auto-assign for {source}")
+        
+        # Use the integrated auto-assign function
+        result = auto_assign_new_leads_for_source(source)
+        
+        if result and 'assigned_count' in result:
+            assigned_count = result['assigned_count']
+            print(f"✅ Integrated auto-assign completed: {assigned_count} leads assigned")
+            
+            if assigned_count > 0:
+                return jsonify({
+                    'success': True,
+                    'message': f'Successfully auto-assigned {assigned_count} leads from {source} using fair distribution',
+                    'assigned_count': assigned_count
+                })
+            else:
+                return jsonify({
+                    'success': True,
+                    'message': f'No unassigned leads found for {source} to assign',
+                    'assigned_count': 0
+                })
+        else:
+            print(f"⚠️ Integrated auto-assign completed but no count returned")
+            return jsonify({
+                'success': True,
+                'message': f'Auto-assign triggered for {source} but no leads were assigned',
+                'assigned_count': 0
+            })
+            
+    except Exception as e:
+        print(f"❌ Error triggering integrated auto-assign for {source}: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/delete_auto_assign_config', methods=['POST'])
+@require_admin
+def delete_auto_assign_config():
+    try:
+        data = request.get_json()
+        source = data.get('source')
+        
+        if not source:
+            return jsonify({'success': False, 'message': 'Source is required'})
+        
+        print(f"🗑️ Deleting auto-assign configuration for {source}")
+        
+        # Get current configs to show what was deleted
+        current_configs = supabase.table('auto_assign_config').select('cre_id').eq('source', source).execute()
+        cre_ids = [config['cre_id'] for config in current_configs.data] if current_configs.data else []
+        
+        # Get CRE names for feedback
+        cre_names = []
+        if cre_ids:
+            cre_result = supabase.table('cre_users').select('name').in_('id', cre_ids).execute()
+            cre_names = [cre['name'] for cre in cre_result.data] if cre_result.data else [f"CRE ID: {id}" for id in cre_ids]
+        
+        # Delete auto-assign configs for this source
+        supabase.table('auto_assign_config').delete().eq('source', source).execute()
+        print(f"✅ Deleted auto-assign configuration for {source}")
+        
+        if cre_names:
+            message = f'Auto-assign configuration deleted for {source}. Removed CREs: {", ".join(cre_names)}'
+        else:
+            message = f'Auto-assign configuration deleted for {source}'
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'deleted_cre_names': cre_names
+        })
+        
+    except Exception as e:
+        print(f"❌ Error deleting auto-assign config: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/get_unassigned_count/<source>', methods=['GET'])
+@require_admin
+def get_unassigned_count(source):
+    """Get unassigned lead count for a specific source"""
+    try:
+        # Get count of unassigned leads for this source
+        count_result = supabase.table('lead_master').select('uid', count='exact').eq('assigned', 'No').eq('source', source).execute()
+        count = count_result.count if hasattr(count_result, 'count') else 0
+        
+        return jsonify({
+            'success': True,
+            'count': count
+        })
+        
+    except Exception as e:
+        print(f"❌ Error getting unassigned count for {source}: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/branch_performance/<branch_name>')
+@require_admin
+def branch_performance(branch_name):
+    """API endpoint for branch performance data"""
+    try:
+        # Get PS users in the branch
+        ps_result = supabase.table('ps_users').select('*').eq('branch', branch_name).eq('is_active', True).execute()
+        ps_users = ps_result.data or []
+        
+        if not ps_users:
+            return jsonify({'success': False, 'message': 'No PS users found in this branch'})
+        
+        # Get performance data for each PS
+        ps_performance = []
+        for ps in ps_users:
+            ps_name = ps['name']
+            
+            # Get leads assigned to this PS
+            leads_result = supabase.table('ps_followup_master').select('*').eq('ps_name', ps_name).eq('ps_branch', branch_name).execute()
+            leads = leads_result.data or []
+            
+            # Calculate metrics
+            total_leads = len(leads)
+            pending_leads = len([l for l in leads if l.get('final_status') == 'Pending'])
+            in_progress_leads = len([l for l in leads if l.get('final_status') == 'In Progress'])
+            won_leads = len([l for l in leads if l.get('final_status') == 'Won'])
+            lost_leads = len([l for l in leads if l.get('final_status') == 'Lost'])
+            
+            # Calculate success rate
+            success_rate = round((won_leads / total_leads * 100) if total_leads > 0 else 0, 1)
+            
+            # Calculate average calls
+            total_calls = 0
+            for lead in leads:
+                call_count = 0
+                for call_field in ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']:
+                    if lead.get(f'{call_field}_call_date'):
+                        call_count += 1
+                total_calls += call_count
+            
+            avg_calls = round(total_calls / total_leads, 1) if total_leads > 0 else 0
+            
+            # Get last activity
+            last_activity = None
+            if leads:
+                latest_lead = max(leads, key=lambda x: x.get('updated_at', ''))
+                last_activity = latest_lead.get('updated_at')
+            
+            ps_performance.append({
+                'name': ps_name,
+                'username': ps.get('username', ''),
+                'phone': ps.get('phone', ''),
+                'email': ps.get('email', ''),
+                'total_leads': total_leads,
+                'pending_leads': pending_leads,
+                'in_progress_leads': in_progress_leads,
+                'won_leads': won_leads,
+                'lost_leads': lost_leads,
+                'success_rate': success_rate,
+                'avg_calls': avg_calls,
+                'last_activity': last_activity
+            })
+        
+        # Calculate summary
+        total_ps = len(ps_users)
+        total_leads = sum(p['total_leads'] for p in ps_performance)
+        total_won = sum(p['won_leads'] for p in ps_performance)
+        overall_success_rate = round((total_won / total_leads * 100) if total_leads > 0 else 0, 1)
+        
+        summary = {
+            'total_ps': total_ps,
+            'total_leads': total_leads,
+            'won_leads': total_won,
+            'success_rate': overall_success_rate
+        }
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'summary': summary,
+                'ps_performance': ps_performance
+            }
+        })
+        
+    except Exception as e:
+        print(f"Error in branch_performance: {str(e)}")
+        return jsonify({'success': False, 'message': f'Error loading branch performance: {str(e)}'})
+
+
 def ensure_static_directories():
     """Ensure static directories exist"""
     try:
