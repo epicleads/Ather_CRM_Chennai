@@ -50,6 +50,177 @@
             border: 1px solid var(--airbnb-gray-200);
         }
 
+        /* PS Performance Table Styles */
+        .performance-table th {
+            background-color: #343a40 !important;
+            color: white !important;
+            font-weight: 600;
+            text-align: center;
+            vertical-align: middle;
+            border: none;
+            padding: 12px 8px;
+            line-height: 1.2;
+        }
+        
+        .performance-table th small {
+            font-size: 0.75em;
+            font-weight: 400;
+            opacity: 0.8;
+            display: block;
+            margin-top: 2px;
+        }
+        
+        .performance-table td {
+            vertical-align: middle;
+            border: 1px solid #dee2e6;
+        }
+        
+        .performance-table tbody tr:hover {
+            background-color: #f8f9fa;
+            transform: scale(1.01);
+            transition: all 0.2s ease;
+        }
+        
+        .f-count {
+            font-weight: 600;
+            min-width: 40px;
+            display: inline-block;
+            text-align: center;
+            padding: 4px 8px;
+            border-radius: 6px;
+            background-color: #e9ecef;
+            color: #495057;
+        }
+        
+        .f-count.positive {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .f-count.zero {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .branch-cell {
+            background-color: #e3f2fd !important;
+            color: #1976d2 !important;
+            font-weight: 700;
+            text-align: center;
+        }
+        
+        .ps-name-cell {
+            font-weight: 600;
+            color: #495057;
+        }
+        
+        .total-leads-cell {
+            font-weight: 700;
+            color: #28a745;
+            background-color: #f8fff9;
+        }
+        
+        .summary-row {
+            background-color: #e3f2fd !important;
+            font-weight: 700;
+            border-top: 2px solid #1976d2;
+        }
+        
+        .summary-row td {
+            background-color: #e3f2fd !important;
+            color: #1976d2;
+        }
+        
+        .branch-subtotal-row {
+            background-color: #fff3cd !important;
+            font-weight: 700;
+            border-top: 2px solid #ffc107;
+        }
+        
+        .branch-subtotal-row td {
+            background-color: #fff3cd !important;
+            color: #856404;
+        }
+        
+        .branch-subtotal-row:hover {
+            background-color: #ffeaa7 !important;
+        }
+        
+        /* F4-F7 columns toggle functionality */
+        .f4-f7-columns {
+            display: none;
+        }
+        
+        .f4-f7-columns.show {
+            display: table-cell;
+        }
+        
+        .toggle-f4f7-btn.showing {
+            background-color: #28a745;
+            border-color: #28a745;
+            color: white;
+        }
+        
+        .toggle-f4f7-btn.showing:hover {
+            background-color: #218838;
+            border-color: #1e7e34;
+        }
+        
+        /* Clickable cells styling */
+        .clickable-cell {
+            cursor: pointer;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+        
+        .clickable-cell:hover {
+            background-color: #e3f2fd !important;
+            transform: scale(1.02);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            z-index: 5;
+        }
+        
+        .clickable-cell:active {
+            transform: scale(0.98);
+        }
+        
+        .clickable-cell::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, transparent 30%, rgba(255,255,255,0.1) 50%, transparent 70%);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .clickable-cell:hover::after {
+            opacity: 1;
+        }
+        
+        /* Call history styling */
+        .call-history-item {
+            background-color: #f8f9fa;
+            border-left: 3px solid #007bff;
+            padding: 8px 12px;
+            margin: 4px 0;
+            border-radius: 4px;
+        }
+        
+        .call-history-item.success {
+            border-left-color: #28a745;
+        }
+        
+        .call-history-item.warning {
+            border-left-color: #ffc107;
+        }
+        
+        .call-history-item.danger {
+            border-left-color: #dc3545;
+        }
+
         .kpi-card {
             background: linear-gradient(135deg, var(--airbnb-red) 0%, var(--airbnb-red-dark) 100%);
             color: var(--airbnb-white);
@@ -1916,8 +2087,658 @@
             document.getElementById('nf_end_date').value = '';
             fetchNegativeCallAttempts();
         }
-        document.addEventListener('DOMContentLoaded', function() { fetchNegativeCallAttempts(); });
+        document.addEventListener('DOMContentLoaded', function() { 
+            fetchNegativeCallAttempts();
+            loadPSPerformance(); // Load PS performance data on page load
+        });
+
+        // PS Performance Functions
+        function loadPSPerformance() {
+            const tbody = document.getElementById('ps-performance-tbody');
+            
+            // Show loading state
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="12" class="text-center">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Loading PS performance data...</p>
+                    </td>
+                </tr>
+            `;
+            
+            fetch('/api/admin_ps_performance')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Update current month display
+                        if (data.current_month) {
+                            document.getElementById('current-month-display').textContent = `Current Month: ${data.current_month}`;
+                        }
+                        displayPSPerformance(data.performance_data);
+                    } else {
+                        console.error('Error loading PS performance:', data.message);
+                        tbody.innerHTML = 
+                            '<tr><td colspan="12" class="text-center text-danger">Error loading data: ' + data.message + '</td></tr>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching PS performance:', error);
+                    tbody.innerHTML = 
+                        '<tr><td colspan="12" class="text-center text-danger">Error loading data. Please try again.</td></tr>';
+                });
+        }
+
+        function displayPSPerformance(performanceData) {
+            const tbody = document.getElementById('ps-performance-tbody');
+            
+            if (!performanceData || performanceData.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="12" class="text-center text-muted py-4">
+                            <i class="fas fa-info-circle fa-2x mb-3 text-muted"></i>
+                            <p class="mb-0">No PS users found.</p>
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+            
+            // Group data by branch
+            const branchGroups = {};
+            performanceData.forEach(ps => {
+                if (!branchGroups[ps.ps_branch]) {
+                    branchGroups[ps.ps_branch] = [];
+                }
+                branchGroups[ps.ps_branch].push(ps);
+            });
+            
+            let html = '';
+            let grandTotalLeads = 0;
+            let grandTotalF1 = 0;
+            let grandTotalF2 = 0;
+            let grandTotalF3 = 0;
+            let grandTotalF4 = 0;
+            let grandTotalF5 = 0;
+            let grandTotalF6 = 0;
+            let grandTotalF7 = 0;
+            let grandTotalWonMTD = 0;
+            let grandTotalLostMTD = 0;
+            
+            // Process each branch
+            Object.keys(branchGroups).sort().forEach(branch => {
+                const branchData = branchGroups[branch];
+                let branchTotalLeads = 0;
+                let branchTotalF1 = 0;
+                let branchTotalF2 = 0;
+                let branchTotalF3 = 0;
+                let branchTotalF4 = 0;
+                let branchTotalF5 = 0;
+                let branchTotalF6 = 0;
+                let branchTotalF7 = 0;
+                let branchTotalWonMTD = 0;
+                let branchTotalLostMTD = 0;
+                
+                // Add PS rows for this branch
+                branchData.forEach(ps => {
+                    // Add to branch totals
+                    branchTotalLeads += ps.total_leads_assigned;
+                    branchTotalF1 += ps.f1;
+                    branchTotalF2 += ps.f2;
+                    branchTotalF3 += ps.f3;
+                    branchTotalF4 += ps.f4;
+                    branchTotalF5 += ps.f5;
+                    branchTotalF6 += ps.f6;
+                    branchTotalF7 += ps.f7;
+                    branchTotalWonMTD += ps.won_mtd;
+                    branchTotalLostMTD += ps.lost_mtd;
+                    
+                    // Add to grand totals
+                    grandTotalLeads += ps.total_leads_assigned;
+                    grandTotalF1 += ps.f1;
+                    grandTotalF2 += ps.f2;
+                    grandTotalF3 += ps.f3;
+                    grandTotalF4 += ps.f4;
+                    grandTotalF5 += ps.f5;
+                    grandTotalF6 += ps.f6;
+                    grandTotalF7 += ps.f7;
+                    grandTotalWonMTD += ps.won_mtd;
+                    grandTotalLostMTD += ps.lost_mtd;
+                    
+                    html += `<tr>
+                        <td class="align-middle branch-cell">${ps.ps_branch}</td>
+                        <td class="ps-name-cell">${ps.ps_name}</td>
+                        <td class="text-center total-leads-cell clickable-cell" onclick="showLeadsList('${ps.ps_name}', 'total', ${ps.total_leads_assigned}, '${ps.ps_branch}')">
+                            <span class="f-count ${ps.total_leads_assigned > 0 ? 'positive' : 'zero'}">${ps.total_leads_assigned}</span>
+                        </td>
+                        <td class="text-center clickable-cell" onclick="showLeadsList('${ps.ps_name}', 'f1', ${ps.f1}, '${ps.ps_branch}')">
+                            <span class="f-count ${ps.f1 > 0 ? 'positive' : 'zero'}">${ps.f1}</span>
+                        </td>
+                        <td class="text-center clickable-cell" onclick="showLeadsList('${ps.ps_name}', 'f2', ${ps.f2}, '${ps.ps_branch}')">
+                            <span class="f-count ${ps.f2 > 0 ? 'positive' : 'zero'}">${ps.f2}</span>
+                        </td>
+                        <td class="text-center clickable-cell" onclick="showLeadsList('${ps.ps_name}', 'f3', ${ps.f3}, '${ps.ps_branch}')">
+                            <span class="f-count ${ps.f3 > 0 ? 'positive' : 'zero'}">${ps.f3}</span>
+                        </td>
+                        <td class="text-center f4-f7-columns clickable-cell" onclick="showLeadsList('${ps.ps_name}', 'f4', ${ps.f4}, '${ps.ps_branch}')">
+                            <span class="f-count ${ps.f4 > 0 ? 'positive' : 'zero'}">${ps.f4}</span>
+                        </td>
+                        <td class="text-center f4-f7-columns clickable-cell" onclick="showLeadsList('${ps.ps_name}', 'f5', ${ps.f5}, '${ps.ps_branch}')">
+                            <span class="f-count ${ps.f5 > 0 ? 'positive' : 'zero'}">${ps.f5}</span>
+                        </td>
+                        <td class="text-center f4-f7-columns clickable-cell" onclick="showLeadsList('${ps.ps_name}', 'f6', ${ps.f6}, '${ps.ps_branch}')">
+                            <span class="f-count ${ps.f6 > 0 ? 'positive' : 'zero'}">${ps.f6}</span>
+                        </td>
+                        <td class="text-center f4-f7-columns clickable-cell" onclick="showLeadsList('${ps.ps_name}', 'f7', ${ps.f7}, '${ps.ps_branch}')">
+                            <span class="f-count ${ps.f7 > 0 ? 'positive' : 'zero'}">${ps.f7}</span>
+                        </td>
+                        <td class="text-center text-danger fw-bold clickable-cell" onclick="showLeadsList('${ps.ps_name}', 'lost', ${ps.lost_mtd}, '${ps.ps_branch}')">${ps.lost_mtd}</td>
+                        <td class="text-center text-success fw-bold clickable-cell" onclick="showLeadsList('${ps.ps_name}', 'won', ${ps.won_mtd}, '${ps.ps_branch}')">${ps.won_mtd}</td>
+                    </tr>`;
+                });
+                
+                // Add branch subtotal row
+                html += `<tr class="table-warning fw-bold branch-subtotal-row">
+                    <td colspan="2" class="text-center text-dark">
+                        <i class="fas fa-building me-2"></i>SUBTOTAL (${branch})
+                    </td>
+                    <td class="text-center total-leads-cell">${branchTotalLeads}</td>
+                    <td class="text-center"><span class="f-count positive">${branchTotalF1}</span></td>
+                    <td class="text-center"><span class="f-count positive">${branchTotalF2}</span></td>
+                    <td class="text-center"><span class="f-count positive">${branchTotalF3}</span></td>
+                    <td class="text-center f4-f7-columns"><span class="f-count positive">${branchTotalF4}</span></td>
+                    <td class="text-center f4-f7-columns"><span class="f-count positive">${branchTotalF5}</span></td>
+                    <td class="text-center f4-f7-columns"><span class="f-count positive">${branchTotalF6}</span></td>
+                    <td class="text-center f4-f7-columns"><span class="f-count positive">${branchTotalF7}</span></td>
+                    <td class="text-center text-danger fw-bold">${branchTotalLostMTD}</td>
+                    <td class="text-center text-success fw-bold">${branchTotalWonMTD}</td>
+                </tr>`;
+            });
+            
+            // Add grand total row
+            html += `<tr class="table-info fw-bold summary-row">
+                <td colspan="2" class="text-center">
+                    <i class="fas fa-globe me-2"></i>GRAND TOTAL (ALL BRANCHES)
+                </td>
+                <td class="text-center total-leads-cell">${grandTotalLeads}</td>
+                <td class="text-center"><span class="f-count positive">${grandTotalF1}</span></td>
+                <td class="text-center"><span class="f-count positive">${grandTotalF2}</span></td>
+                <td class="text-center"><span class="f-count positive">${grandTotalF3}</span></td>
+                <td class="text-center f4-f7-columns"><span class="f-count positive">${grandTotalF4}</span></td>
+                <td class="text-center f4-f7-columns"><span class="f-count positive">${grandTotalF5}</span></td>
+                <td class="text-center f4-f7-columns"><span class="f-count positive">${grandTotalF6}</span></td>
+                <td class="text-center f4-f7-columns"><span class="f-count positive">${grandTotalF7}</span></td>
+                <td class="text-center text-danger fw-bold">${grandTotalLostMTD}</td>
+                <td class="text-center text-success fw-bold">${grandTotalWonMTD}</td>
+            </tr>`;
+            
+            tbody.innerHTML = html;
+        }
+
+        function toggleF4F7Columns() {
+            const toggleBtn = document.getElementById('toggle-f4f7-btn');
+            const f4f7Columns = document.querySelectorAll('.f4-f7-columns');
+            const isShowing = toggleBtn.classList.contains('showing');
+            
+            if (isShowing) {
+                // Hide F4-F7 columns
+                f4f7Columns.forEach(col => col.classList.remove('show'));
+                toggleBtn.classList.remove('showing');
+                toggleBtn.innerHTML = '<i class="fas fa-plus"></i>';
+                toggleBtn.title = 'Show F4-F7 Columns';
+                toggleBtn.style.backgroundColor = 'transparent';
+                toggleBtn.style.borderColor = '#f8f9fa';
+                toggleBtn.style.color = '#f8f9fa';
+            } else {
+                // Show F4-F7 columns
+                f4f7Columns.forEach(col => col.classList.add('show'));
+                toggleBtn.classList.add('showing');
+                toggleBtn.innerHTML = '<i class="fas fa-minus"></i>';
+                toggleBtn.title = 'Hide F4-F7 Columns';
+                toggleBtn.style.backgroundColor = '#dc3545';
+                toggleBtn.style.borderColor = '#dc3545';
+                toggleBtn.style.color = 'white';
+            }
+        }
+
+        function refreshPSPerformance() {
+            const refreshBtn = document.querySelector('button[onclick="refreshPSPerformance()"]');
+            const originalText = refreshBtn.innerHTML;
+            refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Refreshing...';
+            refreshBtn.disabled = true;
+            
+            loadPSPerformance().finally(() => {
+                setTimeout(() => {
+                    refreshBtn.innerHTML = originalText;
+                    refreshBtn.disabled = false;
+                }, 1000);
+            });
+        }
+
+        // Function to show leads list based on cell type
+        function showLeadsList(psName, cellType, count, branch) {
+            if (count === 0) {
+                alert('No leads found for this criteria.');
+                return;
+            }
+            
+            // Set modal title and subtitle
+            const modal = new bootstrap.Modal(document.getElementById('leadsListModal'));
+            const modalTitle = document.getElementById('leadsListModalLabel');
+            const modalSubtitle = document.getElementById('leadsListSubtitle');
+            const leadsCount = document.getElementById('leadsCount');
+            
+            let title = '';
+            let subtitle = '';
+            
+            switch(cellType) {
+                case 'total':
+                    title = `Total Leads Assigned - ${psName} (${branch})`;
+                    subtitle = `All leads assigned to ${psName} in ${branch} for current month`;
+                    break;
+                case 'f1':
+                    title = `F1 Follow-ups - ${psName} (${branch})`;
+                    subtitle = `Leads with first call completed by ${psName} in ${branch} for current month`;
+                    break;
+                case 'f2':
+                    title = `F2 Follow-ups - ${psName} (${branch})`;
+                    subtitle = `Leads with second call completed by ${psName} in ${branch} for current month`;
+                    break;
+                case 'f3':
+                    title = `F3 Follow-ups - ${psName} (${branch})`;
+                    subtitle = `Leads with third call completed by ${psName} in ${branch} for current month`;
+                    break;
+                case 'f4':
+                    title = `F4 Follow-ups - ${psName} (${branch})`;
+                    subtitle = `Leads with fourth call completed by ${psName} in ${branch} for current month`;
+                    break;
+                case 'f5':
+                    title = `F5 Follow-ups - ${psName} (${branch})`;
+                    subtitle = `Leads with fifth call completed by ${psName} in ${branch} for current month`;
+                    break;
+                case 'f6':
+                    title = `F6 Follow-ups - ${psName} (${branch})`;
+                    subtitle = `Leads with sixth call completed by ${psName} in ${branch} for current month`;
+                    break;
+                case 'f7':
+                    title = `F7 Follow-ups - ${psName} (${branch})`;
+                    subtitle = `Leads with seventh call completed by ${psName} in ${branch} for current month`;
+                    break;
+                case 'lost':
+                    title = `Lost Leads - ${psName} (${branch})`;
+                    subtitle = `Leads lost by ${psName} in ${branch} for current month`;
+                    break;
+                case 'won':
+                    title = `Won Leads - ${psName} (${branch})`;
+                    subtitle = `Leads won by ${psName} in ${branch} for current month`;
+                    break;
+            }
+            
+            modalTitle.textContent = title;
+            modalSubtitle.textContent = subtitle;
+            leadsCount.textContent = `${count} leads`;
+            
+            // Load leads data
+            loadLeadsData(psName, cellType, branch);
+            
+            // Show modal
+            modal.show();
+        }
+
+        // Function to load leads data
+        function loadLeadsData(psName, cellType, branch) {
+            const tbody = document.getElementById('leadsListTableBody');
+            
+            // Show loading state
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Loading leads data...</p>
+                    </td>
+                </tr>
+            `;
+            
+            // Fetch leads data from API
+            fetch(`/api/admin_leads_list?ps_name=${encodeURIComponent(psName)}&cell_type=${cellType}&branch=${encodeURIComponent(branch)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        displayLeadsList(data.leads, cellType);
+                    } else {
+                        tbody.innerHTML = `
+                            <tr>
+                                <td colspan="7" class="text-center text-danger">
+                                    Error loading leads: ${data.message}
+                                </td>
+                            </tr>
+                        `;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching leads:', error);
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="7" class="text-center text-danger">
+                                Error loading leads. Please try again.
+                            </td>
+                        </tr>
+                    `;
+                });
+        }
+
+        // Function to display leads list
+        function displayLeadsList(leads, cellType) {
+            const tbody = document.getElementById('leadsListTableBody');
+            
+            if (!leads || leads.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="text-center text-muted py-4">
+                            <i class="fas fa-info-circle fa-2x mb-3 text-muted"></i>
+                            <p class="mb-0">No leads found for this criteria.</p>
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+            
+            let html = '';
+            leads.forEach(lead => {
+                html += `
+                    <tr>
+                        <td>${lead.customer_name || 'N/A'}</td>
+                        <td>${lead.customer_mobile_number || 'N/A'}</td>
+                        <td>${lead.source || 'N/A'}</td>
+                        <td>${lead.lead_category || 'N/A'}</td>
+                        <td>
+                            <span class="badge bg-${getStatusBadgeColor(lead.final_status)}">
+                                ${lead.final_status || 'Pending'}
+                            </span>
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-info" onclick="showCallHistory('${lead.lead_uid}')">
+                                <i class="fas fa-phone me-1"></i>History
+                            </button>
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-primary" onclick="showLeadDetails('${lead.lead_uid}')">
+                                <i class="fas fa-eye me-1"></i>View
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            });
+            
+            tbody.innerHTML = html;
+        }
+
+        // Function to get status badge color
+        function getStatusBadgeColor(status) {
+            switch(status?.toLowerCase()) {
+                case 'won':
+                    return 'success';
+                case 'lost':
+                    return 'danger';
+                case 'pending':
+                    return 'warning';
+                default:
+                    return 'secondary';
+            }
+        }
+
+        // Function to show call history
+        function showCallHistory(leadUid) {
+            // Fetch call history from API
+            fetch(`/api/admin_call_history?lead_uid=${leadUid}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        displayCallHistory(data.call_history);
+                    } else {
+                        alert('Error loading call history: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching call history:', error);
+                    alert('Error loading call history. Please try again.');
+                });
+        }
+
+        // Function to display call history
+        function displayCallHistory(callHistory) {
+            let historyHtml = '<div class="call-history-container">';
+            
+            if (callHistory && callHistory.length > 0) {
+                callHistory.forEach(call => {
+                    const statusClass = call.status === 'success' ? 'success' : 
+                                      call.status === 'no_answer' ? 'warning' : 'danger';
+                    
+                    historyHtml += `
+                        <div class="call-history-item ${statusClass}">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <strong>${call.call_date || 'N/A'}</strong>
+                                <span class="badge bg-${statusClass}">${call.status || 'N/A'}</span>
+                            </div>
+                            <div class="mt-1">
+                                <small class="text-muted">Notes: ${call.notes || 'No notes'}</small>
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                historyHtml += '<p class="text-muted">No call history available.</p>';
+            }
+            
+            historyHtml += '</div>';
+            
+            // Show call history in modal
+            const historyModal = new bootstrap.Modal(document.getElementById('leadDetailsModal'));
+            document.getElementById('leadDetailsModalLabel').textContent = 'Call History';
+            document.getElementById('leadDetailsModalBody').innerHTML = historyHtml;
+            historyModal.show();
+        }
+
+        // Function to show lead details
+        function showLeadDetails(leadUid) {
+            // Fetch lead details from API
+            fetch(`/api/admin_lead_details?lead_uid=${leadUid}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        displayLeadDetails(data.lead);
+                    } else {
+                        alert('Error loading lead details: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching lead details:', error);
+                    alert('Error loading lead details. Please try again.');
+                });
+        }
+
+        // Function to display lead details
+        function displayLeadDetails(lead) {
+            const modalBody = document.getElementById('leadDetailsModalBody');
+            const modalTitle = document.getElementById('leadDetailsModalLabel');
+            
+            modalTitle.textContent = `Lead Details - ${lead.customer_name || 'N/A'}`;
+            
+            modalBody.innerHTML = `
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6 class="text-primary mb-3">Customer Information</h6>
+                        <table class="table table-borderless">
+                            <tr><td><strong>Name:</strong></td><td>${lead.customer_name || 'N/A'}</td></tr>
+                            <tr><td><strong>Mobile:</strong></td><td>${lead.customer_mobile_number || 'N/A'}</td></tr>
+                            <tr><td><strong>Email:</strong></td><td>${lead.customer_email || 'N/A'}</td></tr>
+                            <tr><td><strong>Source:</strong></td><td>${lead.source || 'N/A'}</td></tr>
+                            <tr><td><strong>Category:</strong></td><td>${lead.lead_category || 'N/A'}</td></tr>
+                        </table>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="text-primary mb-3">Lead Status</h6>
+                        <table class="table table-borderless">
+                            <tr><td><strong>Status:</strong></td><td><span class="badge bg-${getStatusBadgeColor(lead.final_status)}">${lead.final_status || 'Pending'}</span></td></tr>
+                            <tr><td><strong>Assigned to:</strong></td><td>${lead.ps_name || 'N/A'}</td></tr>
+                            <tr><td><strong>Branch:</strong></td><td>${lead.ps_branch || 'N/A'}</td></tr>
+                            <tr><td><strong>Created:</strong></td><td>${lead.created_at || 'N/A'}</td></tr>
+                            <tr><td><strong>Last Updated:</strong></td><td>${lead.updated_at || 'N/A'}</td></tr>
+                        </table>
+                    </div>
+                </div>
+                <div class="row mt-3">
+                    <div class="col-12">
+                        <h6 class="text-primary mb-3">Additional Information</h6>
+                        <table class="table table-borderless">
+                            <tr><td><strong>Address:</strong></td><td>${lead.customer_address || 'N/A'}</td></tr>
+                            <tr><td><strong>City:</strong></td><td>${lead.customer_city || 'N/A'}</td></tr>
+                            <tr><td><strong>State:</strong></td><td>${lead.customer_state || 'N/A'}</td></tr>
+                            <tr><td><strong>Pincode:</strong></td><td>${lead.customer_pincode || 'N/A'}</td></tr>
+                            <tr><td><strong>Notes:</strong></td><td>${lead.notes || 'N/A'}</td></tr>
+                        </table>
+                    </div>
+                </div>
+            `;
+            
+            // Show the modal
+            const modal = new bootstrap.Modal(document.getElementById('leadDetailsModal'));
+            modal.show();
+        }
         </script>
+    </div>
+
+    <!-- PS Performance Overview Section -->
+    <div class="analytics-container">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 class="h3 mb-0">
+                <i class="fas fa-table me-2 text-primary"></i>PS Performance Overview - All Branches
+            </h2>
+            <div class="d-flex gap-2">
+                <button class="btn btn-outline-primary btn-sm" onclick="toggleF4F7Columns()" title="Toggle F4-F7 Columns" id="toggle-f4f7-btn">
+                    <i class="fas fa-plus"></i> Show F4-F7
+                </button>
+                <button class="btn btn-primary btn-sm" onclick="refreshPSPerformance()" title="Refresh Data">
+                    <i class="fas fa-sync-alt me-1"></i>Refresh
+                </button>
+            </div>
+        </div>
+        
+        <div class="card shadow">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="card-title mb-0">
+                        <i class="fas fa-chart-line me-2"></i>PS Performance Across All Branches
+                    </h5>
+                    <small class="text-light opacity-75" id="current-month-display">Current Month: Loading...</small>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover performance-table" id="ps-performance-table">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Branch</th>
+                                <th>PS Name</th>
+                                <th>Total Leads Assigned<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                <th>F1<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                <th>F2<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                                            <th class="position-relative">
+                                F3<br><small class="text-light opacity-75">(Current Month)</small>
+                                <button class="btn btn-sm btn-outline-light toggle-f4f7-btn position-absolute" onclick="toggleF4F7Columns()" title="Toggle F4-F7 Columns" id="toggle-f4f7-btn" style="width: 20px; height: 20px; padding: 0; font-size: 10px; border-radius: 50%; right: -10px; top: 50%; transform: translateY(-50%); z-index: 10;">
+                                    <i class="fas fa-plus"></i>
+                                </button>
+                            </th>
+                                <th class="f4-f7-columns">F4<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                <th class="f4-f7-columns">F5<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                <th class="f4-f7-columns">F6<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                <th class="f4-f7-columns">F7<br><small class="text-light opacity-75">(Current Month)</small></th>
+                                <th>Lost (MTD)</th>
+                                <th>Won (MTD)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ps-performance-tbody">
+                            <tr>
+                                <td colspan="12" class="text-center">
+                                    <div class="spinner-border text-primary" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                    <p class="mt-2">Loading PS performance data...</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lead Details Modal -->
+    <div class="modal fade" id="leadDetailsModal" tabindex="-1" aria-labelledby="leadDetailsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="leadDetailsModalLabel">
+                        <i class="fas fa-user me-2"></i>Lead Details
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="leadDetailsModalBody">
+                    <!-- Lead details will be loaded here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leads List Modal -->
+    <div class="modal fade" id="leadsListModal" tabindex="-1" aria-labelledby="leadsListModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header bg-info text-white">
+                    <h5 class="modal-title" id="leadsListModalLabel">
+                        <i class="fas fa-list me-2"></i>Leads List
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6 class="text-muted" id="leadsListSubtitle">Loading...</h6>
+                        </div>
+                        <div class="col-md-6 text-end">
+                            <span class="badge bg-primary fs-6" id="leadsCount">0 leads</span>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover" id="leadsListTable">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Customer Name</th>
+                                    <th>Mobile Number</th>
+                                    <th>Source</th>
+                                    <th>Lead Category</th>
+                                    <th>Status</th>
+                                    <th>Call History</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="leadsListTableBody">
+                                <!-- Leads will be loaded here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Branch Details Modal -->

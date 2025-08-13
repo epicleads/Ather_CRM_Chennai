@@ -10580,6 +10580,261 @@ def api_bh_lead_details():
         print(f"Error in api_bh_lead_details: {str(e)}")
         return jsonify({'success': False, 'message': 'Error fetching lead details'})
 
+@app.route('/api/admin_ps_performance')
+def api_admin_ps_performance():
+    """API to get PS performance data for Admin dashboard analytics - ALL BRANCHES"""
+    try:
+        # Check if user is logged in as Admin
+        if session.get('user_type') != 'admin':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        # Get current month (first day and last day)
+        from datetime import datetime
+        current_date = datetime.now()
+        first_day_of_month = current_date.replace(day=1).strftime('%Y-%m-%d')
+        
+        # Get last day of current month
+        if current_date.month == 12:
+            next_month = current_date.replace(year=current_date.year + 1, month=1, day=1)
+        else:
+            next_month = current_date.replace(month=current_date.month + 1, day=1)
+        last_day_of_month = (next_month - timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        # Get all PS users from all branches
+        ps_result = supabase.table('ps_users').select('name, branch').eq('is_active', True).execute()
+        if not ps_result.data:
+            return jsonify({'success': False, 'message': 'No PS users found'})
+        
+        performance_data = []
+        
+        for ps in ps_result.data:
+            ps_name = ps['name']
+            branch = ps['branch']
+            
+            # Get total leads assigned to this PS in current month
+            total_leads_result = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_name', ps_name).eq('ps_branch', branch).gte('ps_assigned_at', first_day_of_month).lte('ps_assigned_at', last_day_of_month).execute()
+            total_leads = total_leads_result.count or 0
+            
+            # Get F1-F7 call counts for leads assigned in current month
+            f1_count = 0
+            f2_count = 0
+            f3_count = 0
+            f4_count = 0
+            f5_count = 0
+            f6_count = 0
+            f7_count = 0
+            
+            if total_leads > 0:
+                # Get leads with call dates for current month
+                leads_result = supabase.table('ps_followup_master').select('first_call_date, second_call_date, third_call_date, fourth_call_date, fifth_call_date, sixth_call_date, seventh_call_date').eq('ps_name', ps_name).eq('ps_branch', branch).gte('ps_assigned_at', first_day_of_month).lte('ps_assigned_at', last_day_of_month).execute()
+                
+                for lead in leads_result.data:
+                    if lead.get('first_call_date'):
+                        f1_count += 1
+                    if lead.get('second_call_date'):
+                        f2_count += 1
+                    if lead.get('third_call_date'):
+                        f3_count += 1
+                    if lead.get('fourth_call_date'):
+                        f4_count += 1
+                    if lead.get('fifth_call_date'):
+                        f5_count += 1
+                    if lead.get('sixth_call_date'):
+                        f6_count += 1
+                    if lead.get('seventh_call_date'):
+                        f7_count += 1
+            
+            # Get Won(MTD) - leads with final_status = 'Won' and won_timestamp in current month
+            won_mtd_result = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_name', ps_name).eq('ps_branch', branch).eq('final_status', 'Won').gte('won_timestamp', first_day_of_month).lte('won_timestamp', last_day_of_month).execute()
+            won_mtd = won_mtd_result.count or 0
+            
+            # Get Lost(MTD) - leads with final_status = 'Lost' and lost_timestamp in current month
+            lost_mtd_result = supabase.table('ps_followup_master').select('*', count='exact').eq('ps_name', ps_name).eq('ps_branch', branch).eq('final_status', 'Lost').gte('lost_timestamp', first_day_of_month).lte('lost_timestamp', last_day_of_month).execute()
+            lost_mtd = lost_mtd_result.count or 0
+            
+            performance_data.append({
+                'ps_name': ps_name,
+                'ps_branch': branch,
+                'total_leads_assigned': total_leads,
+                'f1': f1_count,
+                'f2': f2_count,
+                'f3': f3_count,
+                'f4': f4_count,
+                'f5': f5_count,
+                'f6': f6_count,
+                'f7': f7_count,
+                'lost_mtd': lost_mtd,
+                'won_mtd': won_mtd
+            })
+        
+        return jsonify({
+            'success': True,
+            'current_month': current_date.strftime('%B %Y'),
+            'performance_data': performance_data
+        })
+        
+    except Exception as e:
+        print(f"Error in api_admin_ps_performance: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error fetching PS performance data'})
+
+@app.route('/api/admin_leads_list')
+def api_admin_leads_list():
+    """API to get leads list for Admin dashboard cells - ALL BRANCHES"""
+    try:
+        # Check if user is logged in as Admin
+        if session.get('user_type') != 'admin':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        ps_name = request.args.get('ps_name')
+        cell_type = request.args.get('cell_type')
+        branch = request.args.get('branch')
+        
+        if not ps_name or not cell_type or not branch:
+            return jsonify({'success': False, 'message': 'Missing parameters'})
+        
+        # Get current month (first day and last day)
+        from datetime import datetime
+        current_date = datetime.now()
+        first_day_of_month = current_date.replace(day=1).strftime('%Y-%m-%d')
+        
+        # Get last day of current month
+        if current_date.month == 12:
+            next_month = current_date.replace(year=current_date.year + 1, month=1, day=1)
+        else:
+            next_month = current_date.replace(month=current_date.month + 1, day=1)
+        last_day_of_month = (next_month - timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        # Build query based on cell type
+        query = supabase.table('ps_followup_master').select('*').eq('ps_name', ps_name).eq('ps_branch', branch)
+        
+        if cell_type == 'total':
+            # All leads assigned in current month
+            query = query.gte('ps_assigned_at', first_day_of_month).lte('ps_assigned_at', last_day_of_month)
+        elif cell_type.startswith('f'):
+            # F1-F7 follow-ups
+            followup_num = int(cell_type[1])
+            followup_date_field = get_followup_date_field(followup_num)
+            query = query.gte('ps_assigned_at', first_day_of_month).lte('ps_assigned_at', last_day_of_month).not_.is_(followup_date_field, 'null')
+        elif cell_type == 'won':
+            # Won leads in current month
+            query = query.eq('final_status', 'Won').gte('won_timestamp', first_day_of_month).lte('won_timestamp', last_day_of_month)
+        elif cell_type == 'lost':
+            # Lost leads in current month
+            query = query.eq('final_status', 'Lost').gte('lost_timestamp', first_day_of_month).lte('lost_timestamp', last_day_of_month)
+        
+        result = query.execute()
+        
+        if not result.data:
+            return jsonify({'success': True, 'leads': []})
+        
+        # Format leads data
+        leads = []
+        for lead in result.data:
+            leads.append({
+                'lead_uid': lead.get('lead_uid'),
+                'customer_name': lead.get('customer_name'),
+                'customer_mobile_number': lead.get('customer_mobile_number'),
+                'source': lead.get('source'),
+                'lead_category': lead.get('lead_category'),
+                'final_status': lead.get('final_status'),
+                'ps_name': lead.get('ps_name'),
+                'ps_branch': lead.get('ps_branch'),
+                'created_at': lead.get('created_at'),
+                'updated_at': lead.get('updated_at')
+            })
+        
+        return jsonify({'success': True, 'leads': leads})
+        
+    except Exception as e:
+        print(f"Error in api_admin_leads_list: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error fetching leads list'})
+
+@app.route('/api/admin_call_history')
+def api_admin_call_history():
+    """API to get call history for a specific lead - Admin access"""
+    try:
+        # Check if user is logged in as Admin
+        if session.get('user_type') != 'admin':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        lead_uid = request.args.get('lead_uid')
+        if not lead_uid:
+            return jsonify({'success': False, 'message': 'Missing lead UID'})
+        
+        # Get call history from ps_followup_master
+        result = supabase.table('ps_followup_master').select('first_call_date, second_call_date, third_call_date, fourth_call_date, fifth_call_date, sixth_call_date, seventh_call_date, first_call_notes, second_call_notes, third_call_notes, fourth_call_notes, fifth_call_notes, sixth_call_notes, seventh_call_notes').eq('lead_uid', lead_uid).execute()
+        
+        if not result.data:
+            return jsonify({'success': True, 'call_history': []})
+        
+        lead = result.data[0]
+        call_history = []
+        
+        # Process each follow-up call
+        for i in range(1, 8):
+            call_date = lead.get(f'{get_followup_name(i)}_call_date')
+            call_notes = lead.get(f'{get_followup_name(i)}_call_notes')
+            
+            if call_date:
+                call_history.append({
+                    'call_number': i,
+                    'call_date': call_date,
+                    'notes': call_notes or 'No notes',
+                    'status': 'success'  # Default status
+                })
+        
+        return jsonify({'success': True, 'call_history': call_history})
+        
+    except Exception as e:
+        print(f"Error in api_admin_call_history: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error fetching call history'})
+
+@app.route('/api/admin_lead_details')
+def api_admin_lead_details():
+    """API to get detailed lead information - Admin access"""
+    try:
+        # Check if user is logged in as Admin
+        if session.get('user_type') != 'admin':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        lead_uid = request.args.get('lead_uid')
+        if not lead_uid:
+            return jsonify({'success': False, 'message': 'Missing lead UID'})
+        
+        # Get lead details from ps_followup_master
+        result = supabase.table('ps_followup_master').select('*').eq('lead_uid', lead_uid).execute()
+        
+        if not result.data:
+            return jsonify({'success': False, 'message': 'Lead not found'})
+        
+        lead = result.data[0]
+        
+        # Format lead data
+        lead_data = {
+            'lead_uid': lead.get('lead_uid'),
+            'customer_name': lead.get('customer_name'),
+            'customer_mobile_number': lead.get('customer_mobile_number'),
+            'customer_email': lead.get('customer_email'),
+            'customer_address': lead.get('customer_address'),
+            'customer_city': lead.get('customer_city'),
+            'customer_state': lead.get('customer_state'),
+            'customer_pincode': lead.get('customer_pincode'),
+            'source': lead.get('source'),
+            'lead_category': lead.get('lead_category'),
+            'final_status': lead.get('final_status'),
+            'ps_name': lead.get('ps_name'),
+            'ps_branch': lead.get('ps_branch'),
+            'created_at': lead.get('created_at'),
+            'updated_at': lead.get('updated_at'),
+            'notes': lead.get('notes')
+        }
+        
+        return jsonify({'success': True, 'lead': lead_data})
+        
+    except Exception as e:
+        print(f"Error in api_admin_lead_details: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error fetching lead details'})
+
 @app.route('/api/branches')
 @require_admin
 def api_branches():
