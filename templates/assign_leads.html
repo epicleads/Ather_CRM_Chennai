@@ -536,17 +536,17 @@
   <h3 class="mb-3" style="font-weight:700;"><i class="fas fa-random text-success"></i> Smart Dynamic Lead Assignment</h3>
   
   <!-- Auto-Assignment Status Banner -->
-  <div id="auto-assignment-status-banner" class="alert alert-success alert-dismissible fade show" style="display: none; margin-bottom: 20px;">
-    <div class="d-flex align-items-center">
-      <i class="fas fa-robot me-2"></i>
-      <div>
-        <strong>🤖 Automatic Auto-Assignment Active!</strong>
-        <br><small>Your configured sources will automatically assign new leads every 5 minutes.</small>
-        <br><small id="next-auto-assign-countdown" style="font-weight: 600; color: #155724;"></small>
-      </div>
-      <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert" aria-label="Close"></button>
-    </div>
-  </div>
+                  <div id="auto-assignment-status-banner" class="alert alert-success alert-dismissible fade show" style="display: none; margin-bottom: 20px;">
+                  <div class="d-flex align-items-center">
+                    <i class="fas fa-robot me-2"></i>
+                    <div>
+                      <strong>🤖 Backend Auto-Assignment System Active!</strong>
+                      <br><small>Your configured sources will automatically assign new leads every 5 minutes via the backend system.</small>
+                      <br><small id="next-auto-assign-countdown" style="font-weight: 600; color: #155724;">Checking system status...</small>
+                    </div>
+                    <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert" aria-label="Close"></button>
+                  </div>
+                </div>
    
   <div class="card mb-4" style="border-radius: 14px; box-shadow: 0 2px 12px rgba(60,72,88,0.07);">
     <div class="card-header" style="background: var(--bg-light); border-bottom: 1.5px solid var(--border); border-radius: 14px 14px 0 0;">
@@ -686,9 +686,12 @@
       <a href="{{ url_for('auto_assign_history_page') }}" class="btn btn-info">
         <i class="fas fa-history me-2"></i>View Auto-Assign History
       </a>
-      <button id="manualAutoAssignBtn" class="btn btn-warning ms-2" style="font-weight:600;">
-        <i class="fas fa-play"></i> Trigger Auto-Assign Now
-      </button>
+                      <button id="manualAutoAssignBtn" class="btn btn-warning ms-2" style="font-weight:600;">
+                  <i class="fas fa-play"></i> Trigger Auto-Assign Now
+                </button>
+                <button id="checkSystemStatusBtn" class="btn btn-info ms-2" style="font-weight:600;">
+                  <i class="fas fa-info-circle"></i> Check System Status
+                </button>
     </div>
     <div>
       <button id="assignButton" class="btn btn-primary btn-lg" style="font-weight:600;letter-spacing:0.5px;">
@@ -1666,140 +1669,59 @@
     // Set up periodic refresh of auto-assign history (every 30 seconds)
     setInterval(refreshAutoAssignHistory, 30000);
     
-    // AUTO-ASSIGNMENT AUTOMATIC SCHEDULER - RUNS EVERY 5 MINUTES
-    console.log('🚀 Setting up automatic auto-assignment scheduler (every 5 minutes)...');
+    // BACKEND AUTO-ASSIGNMENT SYSTEM STATUS
+    console.log('🚀 Backend auto-assignment system is handling scheduling automatically');
     
-    // Function to automatically trigger auto-assignment for all configured sources
-    function triggerAutomaticAutoAssign() {
-        console.log('🤖 Automatic auto-assignment triggered at:', new Date().toLocaleString());
-        
-        // Record the trigger time for countdown
-        window.lastAutoAssignTime = new Date().getTime();
-        
-        // Get all sources that have auto-assign configurations
-        const configuredSources = [...new Set(autoAssignConfigs.map(config => config.source))];
-        
-        if (configuredSources.length === 0) {
-            console.log('ℹ️ No auto-assign configurations found - skipping automatic trigger');
-            return;
-        }
-        
-        console.log(`📋 Found ${configuredSources.length} configured sources:`, configuredSources);
-        
-        // Trigger auto-assignment for each configured source
-        configuredSources.forEach(source => {
-            console.log(`🔄 Triggering auto-assignment for source: ${source}`);
-            
-            fetch('/trigger_auto_assign/' + encodeURIComponent(source), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            })
+    // Function to check backend auto-assign system status
+    function checkBackendAutoAssignStatus() {
+        fetch('/api/auto_assign_status')
             .then(response => response.json())
             .then(data => {
-                if (data.success) {
-                    console.log(`✅ Auto-assignment for ${source}: ${data.assigned_count} leads assigned`);
+                if (data.success && data.status.is_running) {
+                    console.log('✅ Backend auto-assign system is running');
+                    console.log('📊 Status:', data.status);
+                    
+                    // Show the auto-assignment status banner
+                    const banner = document.getElementById('auto-assignment-status-banner');
+                    if (banner) {
+                        banner.style.display = 'block';
+                        
+                        // Update countdown with backend info
+                        const countdownElement = document.getElementById('next-auto-assign-countdown');
+                        if (countdownElement) {
+                            countdownElement.textContent = `Backend system active - Last run: ${data.status.last_run || 'N/A'}`;
+                        }
+                    }
                     
                     // Show success notification
-                    showAlert(`🤖 Auto-assignment for ${source}: ${data.assigned_count} leads assigned automatically`, 'success');
-                    
-                    // Refresh the page data after a short delay
                     setTimeout(() => {
-                        location.reload();
-                    }, 3000);
+                        showAlert('🤖 Backend auto-assignment system is active! Leads will be assigned automatically every 5 minutes.', 'success');
+                    }, 2000);
                 } else {
-                    console.log(`⚠️ Auto-assignment for ${source} failed:`, data.message);
-                    showAlert(`⚠️ Auto-assignment for ${source} failed: ${data.message}`, 'warning');
+                    console.log('⚠️ Backend auto-assign system is not running');
+                    
+                    // Show warning
+                    setTimeout(() => {
+                        showAlert('⚠️ Backend auto-assignment system is not running. Please contact admin to restart it.', 'warning');
+                    }, 2000);
                 }
             })
             .catch(error => {
-                console.error(`❌ Error triggering auto-assignment for ${source}:`, error);
-                showAlert(`❌ Error triggering auto-assignment for ${source}`, 'error');
+                console.error('❌ Error checking backend status:', error);
             });
-        });
     }
     
-    // Start automatic scheduler - runs every 5 minutes (300,000 milliseconds)
-    const autoAssignInterval = setInterval(triggerAutomaticAutoAssign, 300000);
-    
-    // Countdown timer for next auto-assignment
-    let countdownInterval;
-    function updateCountdownTimer() {
-        const countdownElement = document.getElementById('next-auto-assign-countdown');
-        if (!countdownElement) return;
-        
-        // Calculate time until next auto-assignment (5 minutes from last trigger)
-        const now = new Date().getTime();
-        const lastTrigger = window.lastAutoAssignTime || now;
-        const nextTrigger = lastTrigger + 300000; // 5 minutes
-        const timeLeft = nextTrigger - now;
-        
-        if (timeLeft > 0) {
-            const minutes = Math.floor(timeLeft / 60000);
-            const seconds = Math.floor((timeLeft % 60000) / 1000);
-            countdownElement.textContent = `Next auto-assignment in: ${minutes}:${seconds.toString().padStart(2, '0')}`;
-        } else {
-            countdownElement.textContent = 'Auto-assignment running...';
-        }
-    }
-    
-    // Update countdown every second
+    // Check backend status when page loads
     if (autoAssignConfigs.length > 0) {
-        countdownInterval = setInterval(updateCountdownTimer, 1000);
-        updateCountdownTimer(); // Initial update
+        setTimeout(checkBackendAutoAssignStatus, 1000);
     }
     
-    // Also trigger immediately when page loads (if there are configurations)
+    // Show the auto-assignment status banner if configurations exist
     if (autoAssignConfigs.length > 0) {
-        console.log('⚡ Triggering immediate auto-assignment on page load...');
-        setTimeout(triggerAutomaticAutoAssign, 2000); // Wait 2 seconds for page to fully load
-    }
-    
-    // Show status indicator for automatic scheduling
-    function showAutoAssignSchedulerStatus() {
-        const statusDiv = document.createElement('div');
-        statusDiv.id = 'auto-assign-scheduler-status';
-        statusDiv.style.cssText = `
-            position: fixed;
-            top: 20px;
-            left: 20px;
-            background: #28a745;
-            color: white;
-            padding: 10px 15px;
-            border-radius: 8px;
-            font-weight: 600;
-            z-index: 10000;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-            animation: pulse 2s infinite;
-        `;
-        statusDiv.innerHTML = `
-            <i class="fas fa-robot"></i> Auto-Assign Active
-            <br><small>Running every 5 minutes</small>
-        `;
-        document.body.appendChild(statusDiv);
-        
-        // Auto-hide after 10 seconds
-        setTimeout(() => {
-            if (statusDiv.parentElement) {
-                statusDiv.style.animation = 'slideOutLeft 0.3s ease-in';
-                setTimeout(() => statusDiv.remove(), 300);
-            }
-        }, 10000);
-    }
-    
-    // Show scheduler status if there are configurations
-    if (autoAssignConfigs.length > 0) {
-        setTimeout(showAutoAssignSchedulerStatus, 1000);
-        
-        // Show the auto-assignment status banner
         const banner = document.getElementById('auto-assignment-status-banner');
         if (banner) {
             banner.style.display = 'block';
         }
-        
-        // Show success notification about auto-assignment being active
-        setTimeout(() => {
-            showAlert('🤖 Automatic auto-assignment is now active! Your configured sources will assign leads every 5 minutes.', 'success');
-        }, 3000);
     } else {
         // Show info notification if no configurations exist
         setTimeout(() => {
@@ -1807,38 +1729,75 @@
         }, 3000);
     }
     
-    // Cleanup function for when page is unloaded
-    window.addEventListener('beforeunload', () => {
-        if (autoAssignInterval) {
-            clearInterval(autoAssignInterval);
-            console.log('🧹 Auto-assignment scheduler stopped');
-        }
-        if (countdownInterval) {
-            clearInterval(countdownInterval);
-            console.log('🧹 Countdown timer stopped');
-        }
-    });
-    
     // Manual trigger button event handler
     document.getElementById('manualAutoAssignBtn').addEventListener('click', function() {
         const btn = this;
         const originalText = btn.innerHTML;
-        
-        // Disable button and show loading
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Triggering...';
-        
-        // Show info alert
         showAlert('🔄 Manually triggering auto-assignment for all configured sources...', 'info');
         
-        // Trigger auto-assignment
-        triggerAutomaticAutoAssign();
+        // Trigger auto-assignment for all configured sources
+        const configuredSources = [...new Set(autoAssignConfigs.map(config => config.source))];
+        if (configuredSources.length > 0) {
+            configuredSources.forEach(source => {
+                fetch('/trigger_auto_assign/' + encodeURIComponent(source), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showAlert(`✅ Auto-assignment for ${source}: ${data.assigned_count} leads assigned`, 'success');
+                    } else {
+                        showAlert(`⚠️ Auto-assignment for ${source} failed: ${data.message}`, 'warning');
+                    }
+                })
+                .catch(error => {
+                    showAlert(`❌ Error triggering auto-assignment for ${source}`, 'error');
+                });
+            });
+        } else {
+            showAlert('ℹ️ No auto-assignment configurations found', 'info');
+        }
         
-        // Re-enable button after 3 seconds
         setTimeout(() => {
             btn.disabled = false;
             btn.innerHTML = originalText;
         }, 3000);
+    });
+    
+    // System status button event handler
+    document.getElementById('checkSystemStatusBtn').addEventListener('click', function() {
+        const btn = this;
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
+        
+        fetch('/api/auto_assign_status')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const status = data.status;
+                    let message = `🤖 Auto-Assign System Status:\n`;
+                    message += `• Running: ${status.is_running ? '✅ Yes' : '❌ No'}\n`;
+                    message += `• Last Run: ${status.last_run || 'N/A'}\n`;
+                    message += `• Total Runs: ${status.total_runs}\n`;
+                    message += `• Total Leads Assigned: ${status.total_leads_assigned}\n`;
+                    message += `• Thread ID: ${status.thread_id || 'N/A'}`;
+                    
+                    showAlert(message, status.is_running ? 'success' : 'warning');
+                } else {
+                    showAlert('❌ Failed to get system status', 'error');
+                }
+            })
+            .catch(error => {
+                showAlert('❌ Error checking system status', 'error');
+            })
+            .finally(() => {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            });
     });
     
 

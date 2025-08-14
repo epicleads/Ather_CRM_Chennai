@@ -248,6 +248,36 @@ def auto_assign_new_leads_for_source(source):
         print(f"❌ Error in auto_assign_new_leads_for_source: {e}")
         return {'success': False, 'message': str(e), 'assigned_count': 0}
 
+
+def reset_cre_auto_assign_counts(cre_ids):
+    """
+    Helper function to reset auto_assign_count to 0 for specified CREs.
+    This is called when CRE configurations change to ensure fair distribution starts fresh.
+    
+    Args:
+        cre_ids (list): List of CRE IDs whose counts should be reset
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        if not cre_ids:
+            return True
+            
+        print(f"🔄 Resetting auto_assign_count to 0 for {len(cre_ids)} CREs: {cre_ids}")
+        
+        reset_result = supabase.table('cre_users').update({
+            'auto_assign_count': 0
+        }).in_('id', cre_ids).execute()
+        
+        print(f"✅ Successfully reset auto_assign_count for {len(cre_ids)} CREs")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error resetting auto_assign_count for CREs {cre_ids}: {e}")
+        return False
+
+
 # =============================================================================
 
 # Start background auto-assign thread
@@ -1721,46 +1751,204 @@ def start_auto_assign_system():
         print(f"❌ Failed to start auto-assign system: {e}")
         return None
 
-# Start the auto-assign system
-auto_assign_thread = start_auto_assign_system()
+# =============================================================================
+# ROBUST AUTO-ASSIGNMENT SYSTEM
+# =============================================================================
 
-# Production auto-assign scheduler (eventlet-compatible)
-def setup_production_auto_assign():
-    """Setup production-compatible auto-assign scheduling"""
-    import os
-    is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
+# Global variable to track auto-assign system status
+auto_assign_system_status = {
+    'is_running': False,
+    'thread': None,
+    'last_run': None,
+    'next_run': None,
+    'total_runs': 0,
+    'total_leads_assigned': 0
+}
+
+def robust_auto_assign_worker():
+    """Robust background worker that continuously checks for new leads to auto-assign"""
+    global auto_assign_system_status
     
-    if is_production:
-        print("🚀 Setting up production auto-assign scheduler...")
-        print("   📋 Auto-assign will be triggered via HTTP requests")
-        print("   🔧 Use /api/auto_assign_trigger endpoint to trigger manually")
-        print("   📊 Set up external cron job or scheduler to call this endpoint every 5 minutes")
-        print("   💡 Example cron job: */5 * * * * curl 'https://your-domain.com/api/auto_assign_trigger'")
-        print("   💡 Example with uptimerobot: Monitor /api/auto_assign_trigger every 5 minutes")
-        print("   💡 Example with render cron: Add cron job to call /api/auto_assign_trigger")
-        
-        # In production, we can't use background threads with eventlet
-        # Instead, we'll rely on external scheduling
-        return True
-    return False
+    print("🚀 Robust auto-assign background worker started")
+    auto_assign_system_status['is_running'] = True
+    
+    # Immediate auto-assign when server starts
+    print("🚀 Starting immediate auto-assign check...")
+    try:
+        with app.app_context():
+            result = check_and_assign_new_leads()
+            if result and result.get('success'):
+                print(f"   ✅ Immediate auto-assign completed successfully")
+                auto_assign_system_status['total_leads_assigned'] += result.get('total_assigned', 0)
+                if result.get('total_assigned', 0) > 0:
+                    print(f"   📊 {result.get('total_assigned')} leads assigned immediately")
+                else:
+                    print(f"   ℹ️ No new leads found for immediate assignment")
+            else:
+                print(f"   ⚠️ Immediate auto-assign completed with issues")
+    except Exception as e:
+        print(f"❌ Error in immediate auto-assign: {e}")
+    
+    print("   " + "="*80)
+    
+    # Continuous background auto-assign every 5 minutes
+    while auto_assign_system_status['is_running']:
+        try:
+            # Check for new leads every 5 minutes
+            time.sleep(300)  # 5 minutes
+            
+            # Update status
+            auto_assign_system_status['last_run'] = get_ist_timestamp()
+            auto_assign_system_status['next_run'] = get_ist_timestamp()
+            auto_assign_system_status['total_runs'] += 1
+            
+            print("🔄 Background auto-assign check running...")
+            print(f"   ⏰ Check Time: {get_ist_timestamp()}")
+            print(f"   📊 Run #{auto_assign_system_status['total_runs']}")
+            print("   " + "="*80)
+            
+            # Run within Flask application context
+            try:
+                with app.app_context():
+                    result = check_and_assign_new_leads()
+                    if result and result.get('success'):
+                        print(f"   ✅ Background check completed successfully")
+                        auto_assign_system_status['total_leads_assigned'] += result.get('total_assigned', 0)
+                        if result.get('total_assigned', 0) > 0:
+                            print(f"   📊 {result.get('total_assigned')} leads assigned")
+                            print(f"   🎯 Total leads assigned so far: {auto_assign_system_status['total_leads_assigned']}")
+                    else:
+                        print(f"   ⚠️ Background check completed with issues")
+            except Exception as context_error:
+                print(f"❌ Error in Flask context: {context_error}")
+                
+        except Exception as e:
+            print(f"❌ 🔴 CRITICAL ERROR in background auto-assign worker: {e}")
+            print(f"   ⏰ Error Time: {get_ist_timestamp()}")
+            print(f"   🚨 Error Type: {type(e).__name__}")
+            print(f"   🔍 Error Details: {str(e)}")
+            print("   " + "="*80)
+            time.sleep(60)  # Wait 1 minute on error before retrying
+    
+    print("🛑 Auto-assign worker stopped")
+    auto_assign_system_status['is_running'] = False
 
-# Setup production auto-assign if needed
-production_auto_assign = setup_production_auto_assign()
+def start_robust_auto_assign_system():
+    """Start the robust auto-assign system"""
+    global auto_assign_system_status
+    
+    try:
+        # Check if system is already running
+        if auto_assign_system_status['is_running'] and auto_assign_system_status['thread'] and auto_assign_system_status['thread'].is_alive():
+            print("🔄 Auto-assign system is already running")
+            return auto_assign_system_status['thread']
+        
+        # Stop any existing system
+        if auto_assign_system_status['thread']:
+            auto_assign_system_status['is_running'] = False
+            time.sleep(2)  # Give thread time to stop
+        
+        print("🚀 Starting robust auto-assign system...")
+        print("   📋 Will check for new leads every 5 minutes")
+        print("   ⚡ First auto-assign check starting now...")
+        
+        # Create and start new thread
+        auto_assign_thread = threading.Thread(
+            target=robust_auto_assign_worker, 
+            name="RobustAutoAssignWorker",
+            daemon=False
+        )
+        auto_assign_thread.start()
+        
+        # Update status
+        auto_assign_system_status['thread'] = auto_assign_thread
+        auto_assign_system_status['is_running'] = True
+        
+        print("   🔧 Thread ID:", auto_assign_thread.ident)
+        print("   🧵 Thread Name:", auto_assign_thread.name)
+        print("   🚀 Thread running independently - main app remains responsive!")
+        
+        return auto_assign_thread
+        
+    except Exception as e:
+        print(f"❌ Failed to start robust auto-assign system: {e}")
+        auto_assign_system_status['is_running'] = False
+        return None
+
+def stop_auto_assign_system():
+    """Stop the auto-assign system"""
+    global auto_assign_system_status
+    
+    try:
+        print("🛑 Stopping auto-assign system...")
+        auto_assign_system_status['is_running'] = False
+        
+        if auto_assign_system_status['thread']:
+            print("   ⏳ Waiting for thread to finish...")
+            time.sleep(3)  # Give thread time to stop gracefully
+        
+        print("✅ Auto-assign system stopped")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error stopping auto-assign system: {e}")
+        return False
+
+def get_auto_assign_status():
+    """Get current auto-assign system status"""
+    global auto_assign_system_status
+    
+    if auto_assign_system_status['thread']:
+        is_alive = auto_assign_system_status['thread'].is_alive()
+    else:
+        is_alive = False
+    
+    return {
+        'is_running': auto_assign_system_status['is_running'] and is_alive,
+        'last_run': auto_assign_system_status['last_run'],
+        'next_run': auto_assign_system_status['next_run'],
+        'total_runs': auto_assign_system_status['total_runs'],
+        'total_leads_assigned': auto_assign_system_status['total_leads_assigned'],
+        'thread_id': auto_assign_system_status['thread'].ident if auto_assign_system_status['thread'] else None
+    }
+
+# Start the robust auto-assign system
+auto_assign_thread = start_robust_auto_assign_system()
 
 # Production status endpoint
 @app.route('/api/status')
 def api_status():
-    """Production status endpoint"""
+    """System status endpoint with auto-assign monitoring"""
     import os
     is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
+    
+    # Get auto-assign system status
+    auto_assign_status = get_auto_assign_status()
     
     return jsonify({
         'status': 'operational',
         'environment': 'production' if is_production else 'development',
-        'auto_assign': 'http-triggered' if is_production else 'background-thread',
+        'auto_assign': auto_assign_status,
         'timestamp': get_ist_timestamp(),
-        'message': 'Ather CRM is running successfully'
+        'message': 'Ather CRM is running successfully with robust auto-assignment'
     })
+
+@app.route('/api/auto_assign_status')
+def api_auto_assign_status():
+    """Get detailed auto-assign system status"""
+    try:
+        status = get_auto_assign_status()
+        return jsonify({
+            'success': True,
+            'status': status,
+            'timestamp': get_ist_timestamp()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'timestamp': get_ist_timestamp()
+        })
 
 @app.route('/health')
 def health_check():
@@ -1910,7 +2098,7 @@ def monitor_threads():
         print("⚠️ Auto-assign thread died, restarting...")
         # Note: We can't modify global variable here due to scope
         # This function is for monitoring only
-        print("⚠️ Auto-assign thread needs restart - use /debug/restart_auto_assign endpoint")
+        print("⚠️ Auto-assign thread needs restart - will restart automatically on next cycle")
 
 # Add thread monitoring to Flask app
 @app.before_request
@@ -1919,66 +2107,10 @@ def check_thread_health():
     # Only check thread health in development environment
     if auto_assign_thread and not auto_assign_thread.is_alive():
         print("⚠️ Auto-assign thread health check failed - needs restart")
-        # Note: We can't restart here due to request context
-        # Use /debug/restart_auto_assign endpoint to restart
+        # Note: Auto-assign system will restart automatically on next cycle
 
-# Debug routes for thread management
-@app.route('/debug/threads')
-@require_admin
-def debug_threads():
-    """Debug endpoint to check thread status"""
-    import threading
-    import os
-    is_production = os.environ.get('RENDER', False) or os.environ.get('DYNO', False)
-    
-    active_threads = threading.active_count()
-    thread_info = {
-        'active_threads': active_threads,
-        'environment': 'production' if is_production else 'development',
-        'auto_assign_thread_alive': auto_assign_thread.is_alive() if auto_assign_thread else False,
-        'auto_assign_thread_id': auto_assign_thread.ident if auto_assign_thread else None,
-        'auto_assign_thread_name': auto_assign_thread.name if auto_assign_thread else None,
-        'auto_assign_status': 'eventlet-compatible' if is_production else 'threading'
-    }
-    return jsonify(thread_info)
-
-@app.route('/debug/restart_auto_assign', methods=['POST'])
-@require_admin
-def restart_auto_assign():
-    """Manually restart auto-assign system"""
-    global auto_assign_thread
-    if auto_assign_thread and auto_assign_thread.is_alive():
-        print("🔄 Manually restarting auto-assign system...")
-        # Note: We can't directly stop a running thread, but we can start a new one
-        # The old one will eventually complete its current cycle
-    
-    auto_assign_thread = start_auto_assign_system()
-    return jsonify({'success': True, 'message': 'Auto-assign system restarted'})
-
-@app.route('/debug/trigger_auto_assign', methods=['POST'])
-@require_admin
-def trigger_auto_assign():
-    """Manually trigger immediate auto-assign"""
-    try:
-        with app.app_context():
-            result = check_and_assign_new_leads()
-            if result and result.get('success'):
-                return jsonify({
-                    'success': True, 
-                    'message': f'Auto-assign completed: {result.get("total_assigned", 0)} leads assigned',
-                    'total_assigned': result.get('total_assigned', 0)
-                })
-            else:
-                return jsonify({
-                    'success': False, 
-                    'message': 'Auto-assign completed with issues',
-                    'error': result.get('message', 'Unknown error') if result else 'No result'
-                })
-    except Exception as e:
-        return jsonify({
-            'success': False, 
-            'message': f'Error triggering auto-assign: {str(e)}'
-        })
+# Production-ready auto-assign system
+# Debug endpoints removed for production deployment
 
 @app.route('/api/auto_assign', methods=['POST'])
 def api_auto_assign():
@@ -2806,7 +2938,8 @@ def add_cre():
                 'email': email,
                 'is_active': True,
                 'role': 'cre',
-                'failed_login_attempts': 0
+                'failed_login_attempts': 0,
+                'auto_assign_count': 0  # Initialize auto-assign count to 0 for new CREs
             }
 
             result = supabase.table('cre_users').insert(cre_data).execute()
@@ -3143,6 +3276,25 @@ def delete_cre(cre_id):
         supabase.table('ps_followup_master').update({
             'cre_name': None
         }).eq('cre_name', cre_name).execute()
+
+        # Reset auto_assign_count for other CREs who might have been in auto-assign configs with this CRE
+        try:
+            # Get all sources where this CRE was configured
+            cre_configs = supabase.table('auto_assign_config').select('source').eq('cre_id', cre_id).execute()
+            if cre_configs.data:
+                affected_sources = [config['source'] for config in cre_configs.data]
+                print(f"🔄 CRE {cre_name} was configured for sources: {affected_sources}")
+                
+                # Get all other CREs configured for these sources
+                other_cre_configs = supabase.table('auto_assign_config').select('cre_id').in_('source', affected_sources).execute()
+                if other_cre_configs.data:
+                    other_cre_ids = list(set([config['cre_id'] for config in other_cre_configs.data if config['cre_id'] != cre_id]))
+                    if other_cre_ids:
+                        # Reset counts for other CREs in affected sources
+                        reset_cre_auto_assign_counts(other_cre_ids)
+                        print(f"🔄 Reset auto_assign_count to 0 for {len(other_cre_ids)} other CREs in affected sources: {other_cre_ids}")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not reset auto_assign_count for other CREs: {e}")
 
         # Delete the CRE user
         supabase.table('cre_users').delete().eq('id', cre_id).execute()
@@ -6951,6 +7103,22 @@ def save_auto_assign_config():
         
         print(f"🔄 Saving auto-assign configuration for {source} with CREs: {cre_names}")
         
+        # Get existing configs for this source to identify CREs whose counts need to be reset
+        try:
+            existing_configs = supabase.table('auto_assign_config').select('cre_id').eq('source', source).execute()
+            existing_cre_ids = [config['cre_id'] for config in existing_configs.data] if existing_configs.data else []
+            
+            # Identify CREs that are being added or removed from this source
+            added_cre_ids = list(set(valid_cre_ids) - set(existing_cre_ids))
+            removed_cre_ids = list(set(existing_cre_ids) - set(valid_cre_ids))
+            
+            print(f"📊 CRE changes for {source}: Added: {added_cre_ids}, Removed: {removed_cre_ids}")
+            
+        except Exception as e:
+            print(f"⚠️ Warning: Could not get existing configs: {e}")
+            added_cre_ids = valid_cre_ids  # Assume all are new if we can't check
+            removed_cre_ids = []
+        
         # Delete existing configs for this source
         try:
             delete_result = supabase.table('auto_assign_config').delete().eq('source', source).execute()
@@ -6976,6 +7144,14 @@ def save_auto_assign_config():
         except Exception as e:
             print(f"❌ Error inserting configs: {e}")
             return jsonify({'success': False, 'message': f'Error saving configuration: {str(e)}'})
+        
+        # Reset auto_assign_count to 0 for all CREs involved in this configuration change
+        try:
+            all_affected_cre_ids = list(set(valid_cre_ids + existing_cre_ids))
+            if all_affected_cre_ids:
+                reset_cre_auto_assign_counts(all_affected_cre_ids)
+        except Exception as e:
+            print(f"⚠️ Warning: Could not reset auto_assign_count: {e}")
         
         # Verify the configs were saved
         try:
@@ -7004,9 +7180,9 @@ def save_auto_assign_config():
         
         # Prepare success message
         if auto_assigned_count > 0:
-            message = f'Auto-assign configuration saved successfully for {source} with CREs: {", ".join(cre_names)}. {auto_assigned_count} existing unassigned leads were automatically assigned using fair distribution. New leads will be automatically assigned as they come in.'
+            message = f'Auto-assign configuration saved successfully for {source} with CREs: {", ".join(cre_names)}. {auto_assigned_count} existing unassigned leads were automatically assigned using fair distribution. New leads will be automatically assigned as they come in. Auto-assign counts have been reset for all affected CREs.'
         else:
-            message = f'Auto-assign configuration saved successfully for {source} with CREs: {", ".join(cre_names)}. No unassigned leads found to assign. New leads will be automatically assigned as they come in.'
+            message = f'Auto-assign configuration saved successfully for {source} with CREs: {", ".join(cre_names)}. No unassigned leads found to assign. New leads will be automatically assigned as they come in. Auto-assign counts have been reset for all affected CREs.'
         
         print(f"✅ Save operation completed: {message}")
         
@@ -7104,14 +7280,22 @@ def delete_auto_assign_config():
             cre_result = supabase.table('cre_users').select('name').in_('id', cre_ids).execute()
             cre_names = [cre['name'] for cre in cre_result.data] if cre_result.data else [f"CRE ID: {id}" for id in cre_ids]
         
+        # Reset auto_assign_count to 0 for all CREs who were in this configuration
+        if cre_ids:
+            try:
+                reset_cre_auto_assign_counts(cre_ids)
+                print(f"🔄 Reset auto_assign_count to 0 for {len(cre_ids)} CREs after deleting config for {source}: {cre_ids}")
+            except Exception as e:
+                print(f"⚠️ Warning: Could not reset auto_assign_count: {e}")
+        
         # Delete auto-assign configs for this source
         supabase.table('auto_assign_config').delete().eq('source', source).execute()
         print(f"✅ Deleted auto-assign configuration for {source}")
         
         if cre_names:
-            message = f'Auto-assign configuration deleted for {source}. Removed CREs: {", ".join(cre_names)}'
+            message = f'Auto-assign configuration deleted for {source}. Removed CREs: {", ".join(cre_names)}. Auto-assign counts have been reset for all affected CREs.'
         else:
-            message = f'Auto-assign configuration deleted for {source}'
+            message = f'Auto-assign configuration deleted for {source}. Auto-assign counts have been reset for all affected CREs.'
         
         return jsonify({
             'success': True,
