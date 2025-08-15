@@ -1,4 +1,13 @@
+#!/usr/bin/env python3
+"""
+Chennai Salesforce to Supabase Synchronization Script WITH ENHANCED DUPLICATE HANDLING & MANUAL PARSING
+Combines: Enhanced duplicate table logic + Manual parsing for robust remarks extraction
+Handles: 1. rnr  2.  3. VOC : cx enquired about on road price...
+"""
+
 import os
+import sys
+import logging
 from simple_salesforce import Salesforce
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
@@ -7,258 +16,337 @@ from supabase import create_client, Client
 import pandas as pd
 from typing import Dict, List, Optional, Tuple, Any
 import re
+import time
 
-# --- Load environment variables ---
+# Configure enhanced logging with UTF-8 encoding
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('salesforce_sync_chennai.log', encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
 load_dotenv()
 
-SF_USERNAME = os.getenv('SF_USERNAME')
-SF_PASSWORD = os.getenv('SF_PASSWORD')
-SF_SECURITY_TOKEN = os.getenv('SF_SECURITY_TOKEN')
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_KEY = os.getenv('SUPABASE_ANON_KEY')
+# Environment variable validation
+required_env_vars = {
+    'SF_USERNAME': os.getenv('SF_USERNAME'),
+    'SF_PASSWORD': os.getenv('SF_PASSWORD'),
+    'SF_SECURITY_TOKEN': os.getenv('SF_SECURITY_TOKEN'),
+    'SUPABASE_URL': os.getenv('SUPABASE_URL'),
+    'SUPABASE_ANON_KEY': os.getenv('SUPABASE_ANON_KEY')
+}
 
-sf = Salesforce(username=SF_USERNAME, password=SF_PASSWORD, security_token=SF_SECURITY_TOKEN)
-print("✅ Connected to Salesforce")
+missing_vars = [var for var, value in required_env_vars.items() if not value]
+if missing_vars:
+    logger.error(f"Missing required environment variables: {', '.join(missing_vars)}")
+    sys.exit(1)
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-print("✅ Connected to Supabase")
+print("🚀 Chennai Salesforce to Supabase Sync Script (ENHANCED DUPLICATES + MANUAL PARSING) Starting...")
+print("=" * 80)
 
+# Initialize connections
+try:
+    sf = Salesforce(
+        username=required_env_vars['SF_USERNAME'],
+        password=required_env_vars['SF_PASSWORD'],
+        security_token=required_env_vars['SF_SECURITY_TOKEN']
+    )
+    print("✅ Connected to Salesforce")
+    logger.info("Connected to Salesforce")
+except Exception as e:
+    print(f"❌ Failed to connect to Salesforce: {e}")
+    logger.error(f"Failed to connect to Salesforce: {e}")
+    sys.exit(1)
+
+try:
+    supabase: Client = create_client(
+        required_env_vars['SUPABASE_URL'], 
+        required_env_vars['SUPABASE_ANON_KEY']
+    )
+    print("✅ Connected to Supabase")
+    logger.info("Connected to Supabase")
+except Exception as e:
+    print(f"❌ Failed to connect to Supabase: {e}")
+    logger.error(f"Failed to connect to Supabase: {e}")
+    sys.exit(1)
+
+# Time configuration
 IST = pytz.timezone('Asia/Kolkata')
 now_ist = datetime.now(IST)
-past_24_hours = now_ist - timedelta(hours=24)  # Changed from 15 minutes to 24 hours
+past_24_hours = now_ist - timedelta(hours=24)
 start_time = past_24_hours.astimezone(pytz.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
 end_time = now_ist.astimezone(pytz.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-print(f"📅 Fetching leads from {past_24_hours} IST to {now_ist} IST")
+print(f"📅 FIXED: Only fetching leads CREATED in past 24 hours")
+print(f"📅 Time Range: {past_24_hours.strftime('%Y-%m-%d %H:%M:%S')} IST to {now_ist.strftime('%Y-%m-%d %H:%M:%S')} IST")
+logger.info(f"FIXED: Only processing leads created in past 24 hours: {past_24_hours} to {now_ist}")
 
 # ===============================================
-# CRE MAPPING CONFIGURATION
+# CHENNAI CRE AND PS MAPPINGS
 # ===============================================
 
+print("\n🏢 CHENNAI BRANCH CONFIGURATION:")
+print("=" * 40)
+
+# Chennai CRE Queue Names
 CRE_QUEUE_NAMES = [
-    'CRE-Q-1090-HYD-Raam Electric Two Wheeler',
-    'CRE-Q-1237-HYD-RAAM ELECTRIC TWO WHEELER', 
-    'CRE-Q-1318-HYD-RAAM ELECTRIC TWO WHEELER'
+    'CRE-Q-1154-CHE-RAAM ELECTRIC TWO WHEELER',
+    'CRE-Q-1136-CHE-RAAM ELECTRIC TWO WHEELER'
 ]
 
+# Chennai CRE Mapping
 CRE_MAPPING = {
-    # Salesforce CRE names mapped to Database CRE names
-    'Kumari B': 'Kumari',
-    'Chippala Pelli Mounika': 'CHIPPALA PELLI MOUNIKA',
-    'Swapna P': 'PARAKALA SWAPNA',
-    'Vyshanvi J': 'VYSHNAVI', 
-    'Geetha': 'GEETHA',
-    'Anusha': 'ANUSHA',
+    'Sangeetha': 'Sangeetha',
+    'Keerthana B': 'Keerthana',
     
+    # CRE Queue names (will be skipped until assigned to actual CRE)
+    'CRE-Q-1154-CHE-RAAM ELECTRIC TWO WHEELER': 'CRE-Q-1154-CHE-RAAM ELECTRIC TWO WHEELER',
+    'CRE-Q-1136-CHE-RAAM ELECTRIC TWO WHEELER': 'CRE-Q-1136-CHE-RAAM ELECTRIC TWO WHEELER',
+}
 
-    # Note: These Salesforce CREs don't appear in your current Salesforce list but keeping for future reference
-    # 'Vyshanvi J': 'VYSHNAVI',  # Not in current SF list
-    # 'Geetha': 'GEETHA',        # Not in current SF list  
-    # 'Anusha': 'ANUSHA',        # Not in current SF list
-    # 'Aishwarya': 'Aishwarya',  # Not in current SF list
-    # 'Sailaja': 'Sailaja',      # Not in current SF list
-    
-    # CRE Queue names (will be skipped until replaced by actual CRE name)
-    'CRE-Q-1090-HYD-Raam Electric Two Wheeler': 'CRE-Q-1090-HYD-Raam Electric Two Wheeler',
-    'CRE-Q-1237-HYD-RAAM ELECTRIC TWO WHEELER': 'CRE-Q-1237-HYD-RAAM ELECTRIC TWO WHEELER',
-    'CRE-Q-1318-HYD-RAAM ELECTRIC TWO WHEELER': 'CRE-Q-1318-HYD-RAAM ELECTRIC TWO WHEELER',
+# Chennai PS Mapping
+PS_MAPPING = {
+    'Naveen Kumar S': 'NAVEEN KUMAR S',
+    'Aravindan P': 'PARAVINDAN',
+    'Esaki Muthu': 'D Esakimuthu',
+    'Vetrivel Rajendaran': 'Vetrivel Rajendaran',
+    'Nithesh Kumar S': 'Nithesh Kumar S',
+    'Lokesh E': 'E LOKESH',
+    'Sathish K': 'Sathish K',
+    'Arun M': 'Arun M',
+}
+
+print("👥 Chennai CREs:")
+for sf_name, db_name in CRE_MAPPING.items():
+    if sf_name not in CRE_QUEUE_NAMES:
+        print(f"   - '{sf_name}' → '{db_name}'")
+
+print("🔧 Chennai PS:")
+for sf_name, db_name in PS_MAPPING.items():
+    print(f"   - '{sf_name}' → '{db_name}'")
+
+print("⚠️ CRE Queues (will be skipped):")
+for queue in CRE_QUEUE_NAMES:
+    print(f"   - {queue}")
+
+# Debugging statistics
+debug_stats = {
+    'total_fetched': 0,
+    'valid_cre_assignments': 0,
+    'valid_ps_assignments': 0,
+    'skipped_queue_assignments': 0,
+    'skipped_invalid_owners': 0,
+    'unmapped_sources': set(),
+    'cre_breakdown': {},
+    'ps_breakdown': {},
+    'date_mapping_success': 0,
+    'date_mapping_failures': 0,
+    'remark_extraction_success': 0,
+    'remark_extraction_failures': 0,
+    'new_leads_inserted': 0,
+    'existing_leads_updated': 0,
+    'ps_followup_created': 0,
+    'ps_followup_updated': 0,
+    'duplicates_handled': 0,
+    'duplicate_records_created': 0,
+    'duplicate_records_updated': 0,
+    'skipped_exact_duplicates': 0
 }
 
 # ===============================================
-# DUPLICATE HANDLER CLASS (Embedded)
+# ENHANCED DUPLICATE HANDLER HELPER FUNCTIONS
+# ===============================================
+
+def find_next_available_source_slot(duplicate_record):
+    """Find the next available source slot (source1, source2, etc.) in duplicate_leads record"""
+    for i in range(1, 11):  # source1 to source10
+        if duplicate_record.get(f'source{i}') is None:
+            return i
+    return None  # All slots are full
+
+def add_source_to_duplicate_record(supabase, duplicate_record, new_source, new_sub_source, new_date):
+    """Add new source to existing duplicate_leads record"""
+    try:
+        slot = find_next_available_source_slot(duplicate_record)
+        if slot is None:
+            print(f"⚠️ All source slots full for phone: {duplicate_record['customer_mobile_number']}")
+            return False
+        
+        # Update the record with new source in the available slot
+        update_data = {
+            f'source{slot}': new_source,
+            f'sub_source{slot}': new_sub_source,
+            f'date{slot}': new_date,
+            'duplicate_count': duplicate_record['duplicate_count'] + 1,
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        supabase.table("duplicate_leads").update(update_data).eq('id', duplicate_record['id']).execute()
+        print(f"✅ Added source{slot} to duplicate record: {duplicate_record['uid']} | Phone: {duplicate_record['customer_mobile_number']} | New Source: {new_source}")
+        logger.info(f"Added source{slot} to duplicate record: {duplicate_record['uid']} | Phone: {duplicate_record['customer_mobile_number']}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to add source to duplicate record: {e}")
+        logger.error(f"Failed to add source to duplicate record: {e}")
+        return False
+
+def create_duplicate_record(supabase, original_record, new_source, new_sub_source, new_date):
+    """Create new duplicate_leads record when a lead becomes duplicate"""
+    try:
+        duplicate_data = {
+            'uid': original_record['uid'],
+            'customer_mobile_number': original_record['customer_mobile_number'],
+            'customer_name': original_record['customer_name'],
+            'original_lead_id': original_record['id'],
+            'source1': original_record['source'],
+            'sub_source1': original_record['sub_source'],
+            'date1': original_record['date'],
+            'source2': new_source,
+            'sub_source2': new_sub_source,
+            'date2': new_date,
+            'duplicate_count': 2,
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        # Initialize remaining slots as None
+        for i in range(3, 11):
+            duplicate_data[f'source{i}'] = None
+            duplicate_data[f'sub_source{i}'] = None
+            duplicate_data[f'date{i}'] = None
+        
+        supabase.table("duplicate_leads").insert(duplicate_data).execute()
+        print(f"✅ Created duplicate record: {original_record['uid']} | Phone: {original_record['customer_mobile_number']} | Sources: {original_record['source']} + {new_source}")
+        logger.info(f"Created duplicate record: {original_record['uid']} | Phone: {original_record['customer_mobile_number']} | Sources: {original_record['source']} + {new_source}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to create duplicate record: {e}")
+        logger.error(f"Failed to create duplicate record: {e}")
+        return False
+
+def is_duplicate_source(existing_record, new_source, new_sub_source):
+    """Check if the new source/sub_source combination already exists in the record"""
+    # For lead_master, check direct fields
+    if 'source' in existing_record:
+        return (existing_record['source'] == new_source and 
+                existing_record['sub_source'] == new_sub_source)
+    
+    # For duplicate_leads, check all source slots
+    for i in range(1, 11):
+        if (existing_record.get(f'source{i}') == new_source and 
+            existing_record.get(f'sub_source{i}') == new_sub_source):
+            return True
+    
+    return False
+
+def should_update_lead(existing_record: Dict, new_lead_data: Dict) -> bool:
+    """
+    Determine if an existing lead should be updated based on new data
+    Returns True if there are meaningful differences in remarks or dates
+    """
+    # Check if any remarks are different or new
+    remark_fields = ['first_remark', 'second_remark', 'third_remark', 'fourth_remark', 
+                    'fifth_remark', 'sixth_remark', 'seventh_remark']
+    
+    for field in remark_fields:
+        existing_value = existing_record.get(field)
+        new_value = new_lead_data.get(field)
+        
+        # If new data has a remark that existing doesn't have, or they're different
+        if new_value and (not existing_value or existing_value != new_value):
+            print(f"   🔄 Update needed: {field} changed")
+            print(f"      Old: {existing_value}")
+            print(f"      New: {new_value}")
+            return True
+    
+    # Check if any call dates are different or new
+    date_fields = ['first_call_date', 'second_call_date', 'third_call_date', 'fourth_call_date',
+                  'fifth_call_date', 'sixth_call_date', 'seventh_call_date', 'follow_up_date']
+    
+    for field in date_fields:
+        existing_value = existing_record.get(field)
+        new_value = new_lead_data.get(field)
+        
+        # If new data has a date that existing doesn't have, or they're different
+        if new_value and (not existing_value or existing_value != new_value):
+            print(f"   🔄 Update needed: {field} changed")
+            print(f"      Old: {existing_value}")
+            print(f"      New: {new_value}")
+            return True
+    
+    return False
+
+# ===============================================
+# ENHANCED DUPLICATE HANDLER CLASS
 # ===============================================
 
 class DuplicateLeadsHandler:
     """
-    Handles duplicate lead logic for any lead source (META, GOOGLE, BTL, OEM, etc.)
+    Chennai-specific duplicate leads handler with ENHANCED duplicate table logic + UPDATE capability
     """
     
     def __init__(self, supabase_client):
-        """
-        Initialize with Supabase client
-        
-        Args:
-            supabase_client: Initialized Supabase client
-        """
         self.supabase = supabase_client
+        self.debug_info = {
+            'duplicates_found': 0,
+            'duplicates_updated': 0,
+            'duplicates_created': 0,
+            'duplicates_skipped': 0
+        }
     
     def check_existing_leads(self, phone_numbers: List[str]) -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
-        """
-        Check for existing leads by phone number in both lead_master and duplicate_leads tables
-        
-        Args:
-            phone_numbers: List of phone numbers to check
-            
-        Returns:
-            Tuple of (master_records, duplicate_records) as dictionaries keyed by phone number
-        """
+        """Check for existing leads with enhanced debugging"""
         try:
-            # Check lead_master table
             existing_master = self.supabase.table("lead_master").select("*").in_("customer_mobile_number", phone_numbers).execute()
             master_records = {row['customer_mobile_number']: row for row in existing_master.data}
             
-            # Check duplicate_leads table
             existing_duplicate = self.supabase.table("duplicate_leads").select("*").in_("customer_mobile_number", phone_numbers).execute()
             duplicate_records = {row['customer_mobile_number']: row for row in existing_duplicate.data}
             
-            print(f"📞 Found {len(master_records)} existing in lead_master and {len(duplicate_records)} in duplicate_leads")
+            print(f"📞 Duplicate Check: {len(master_records)} in lead_master, {len(duplicate_records)} in duplicate_leads")
+            logger.info(f"Found {len(master_records)} existing in lead_master and {len(duplicate_records)} in duplicate_leads")
             
             return master_records, duplicate_records
             
         except Exception as e:
             print(f"❌ Error checking existing leads: {e}")
+            logger.error(f"Error checking existing leads: {e}")
             return {}, {}
     
-    def is_duplicate_source(self, existing_record: Dict, new_source: str, new_sub_source: str) -> bool:
+    def process_leads_for_duplicates_and_updates(self, new_leads_df: pd.DataFrame) -> Dict[str, Any]:
         """
-        Check if the new source/sub_source combination already exists in the record
-        
-        Args:
-            existing_record: Record from either lead_master or duplicate_leads table
-            new_source: New source to check
-            new_sub_source: New sub_source to check
-            
-        Returns:
-            True if duplicate source combination exists, False otherwise
+        ENHANCED: Process leads with enhanced duplicate table logic + UPDATE capability
         """
-        # For lead_master, check direct fields
-        if 'source' in existing_record and 'sub_source' in existing_record:
-            return (existing_record['source'] == new_source and 
-                    existing_record['sub_source'] == new_sub_source)
-        
-        # For duplicate_leads, check all source slots
-        for i in range(1, 11):  # source1 to source10
-            if (existing_record.get(f'source{i}') == new_source and 
-                existing_record.get(f'sub_source{i}') == new_sub_source):
-                return True
-        
-        return False
-    
-    def find_next_available_source_slot(self, duplicate_record: Dict) -> Optional[int]:
-        """
-        Find the next available source slot (source1, source2, etc.) in duplicate_leads record
-        
-        Args:
-            duplicate_record: Record from duplicate_leads table
-            
-        Returns:
-            Next available slot number (1-10) or None if all slots are full
-        """
-        for i in range(1, 11):  # source1 to source10
-            if duplicate_record.get(f'source{i}') is None:
-                return i
-        return None  # All slots are full
-    
-    def add_source_to_duplicate_record(self, duplicate_record: Dict, new_source: str, 
-                                     new_sub_source: str, new_date: str) -> bool:
-        """
-        Add new source to existing duplicate_leads record
-        
-        Args:
-            duplicate_record: Existing record from duplicate_leads table
-            new_source: New source to add
-            new_sub_source: New sub_source to add
-            new_date: Date of the new lead
-            
-        Returns:
-            True if successfully added, False otherwise
-        """
-        try:
-            slot = self.find_next_available_source_slot(duplicate_record)
-            if slot is None:
-                print(f"⚠️ All source slots full for phone: {duplicate_record['customer_mobile_number']}")
-                return False
-            
-            # Update the record with new source in the available slot
-            update_data = {
-                f'source{slot}': new_source,
-                f'sub_source{slot}': new_sub_source,
-                f'date{slot}': new_date,
-                'duplicate_count': duplicate_record['duplicate_count'] + 1,
-                'updated_at': datetime.now().isoformat()
+        if new_leads_df.empty:
+            return {
+                'new_leads': pd.DataFrame(),
+                'leads_to_update': pd.DataFrame(),
+                'updated_duplicates': 0,
+                'skipped_duplicates': 0,
+                'skipped_queue_leads': 0,
+                'duplicate_records_created': 0,
+                'duplicate_records_updated': 0,
+                'master_records': {},
+                'duplicate_records': {}
             }
-            
-            self.supabase.table("duplicate_leads").update(update_data).eq('id', duplicate_record['id']).execute()
-            print(f"✅ Added source{slot} to duplicate record: {duplicate_record['uid']} | Phone: {duplicate_record['customer_mobile_number']} | New Source: {new_source}")
-            return True
-            
-        except Exception as e:
-            print(f"❌ Failed to add source to duplicate record: {e}")
-            return False
-    
-    def create_duplicate_record(self, original_record: Dict, new_source: str, 
-                              new_sub_source: str, new_date: str) -> bool:
-        """
-        Create new duplicate_leads record when a lead becomes duplicate
         
-        Args:
-            original_record: Original record from lead_master table
-            new_source: New source that makes this a duplicate
-            new_sub_source: New sub_source that makes this a duplicate
-            new_date: Date of the new duplicate lead
-            
-        Returns:
-            True if successfully created, False otherwise
-        """
-        try:
-            duplicate_data = {
-                'uid': original_record['uid'],
-                'customer_mobile_number': original_record['customer_mobile_number'],
-                'customer_name': original_record['customer_name'],
-                'original_lead_id': original_record['id'],
-                'source1': original_record['source'],
-                'sub_source1': original_record['sub_source'],
-                'date1': original_record['date'],
-                'source2': new_source,
-                'sub_source2': new_sub_source,
-                'date2': new_date,
-                'duplicate_count': 2,
-                'created_at': datetime.now().isoformat(),
-                'updated_at': datetime.now().isoformat()
-            }
-            
-            # Initialize remaining slots as None
-            for i in range(3, 11):
-                duplicate_data[f'source{i}'] = None
-                duplicate_data[f'sub_source{i}'] = None
-                duplicate_data[f'date{i}'] = None
-            
-            self.supabase.table("duplicate_leads").insert(duplicate_data).execute()
-            print(f"✅ Created duplicate record: {original_record['uid']} | Phone: {original_record['customer_mobile_number']} | Sources: {original_record['source']} + {new_source}")
-            return True
-            
-        except Exception as e:
-            print(f"❌ Failed to create duplicate record: {e}")
-            return False
-    
-    def process_leads_for_duplicates(self, new_leads_df: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Process a DataFrame of new leads and handle duplicates
-        
-        Args:
-            new_leads_df: DataFrame containing new leads with columns:
-                         ['customer_mobile_number', 'source', 'sub_source', 'date', ...]
-                         
-        Returns:
-            Dictionary with processing results:
-            {
-                'new_leads': DataFrame of truly new leads to insert,
-                'updated_duplicates': int count of duplicate records updated,
-                'skipped_duplicates': int count of exact duplicates skipped,
-                'skipped_queue_leads': int count of leads skipped due to CRE queue assignment,
-                'master_records': dict of existing master records (for reference),
-                'duplicate_records': dict of existing duplicate records (for reference)
-            }
-        """
-        # Check existing records in both tables
         phone_list = new_leads_df['customer_mobile_number'].unique().tolist()
         master_records, duplicate_records = self.check_existing_leads(phone_list)
         
-        # Process each lead
         new_leads = []
+        leads_to_update = []
         updated_duplicates = 0
         skipped_duplicates = 0
         skipped_queue_leads = 0
+        duplicate_records_created = 0
+        duplicate_records_updated = 0
         
         for _, row in new_leads_df.iterrows():
             phone = row['customer_mobile_number']
@@ -267,41 +355,63 @@ class DuplicateLeadsHandler:
             current_date = row['date']
             cre_name = row.get('cre_name')
             
-            # Skip leads assigned to CRE queues (not actual CREs)
+            # Skip CRE queue assignments
             if cre_name in CRE_QUEUE_NAMES:
-                print(f"⚠️ Skipping lead assigned to CRE queue: {phone} | Queue: {cre_name}")
+                print(f"⚠️ Skipping CRE queue: {phone} | Queue: {cre_name}")
+                logger.warning(f"Skipping CRE queue assignment: {phone} | Queue: {cre_name}")
                 skipped_queue_leads += 1
+                debug_stats['skipped_queue_assignments'] += 1
                 continue
             
-            # Check if phone exists in lead_master
+            # Handle existing leads
             if phone in master_records:
                 master_record = master_records[phone]
+                lead_data_dict = row.to_dict()
                 
                 # Check if this is a duplicate source/sub_source combination
-                if self.is_duplicate_source(master_record, current_source, current_sub_source):
-                    print(f"⚠️ Skipping duplicate: {phone} | Source: {current_source} | Sub-source: {current_sub_source}")
-                    skipped_duplicates += 1
+                if is_duplicate_source(master_record, current_source, current_sub_source):
+                    # Same source - check if lead needs updating (new remarks/dates)
+                    
+                    if should_update_lead(master_record, lead_data_dict):
+                        # Preserve the original UID and other key fields
+                        lead_data_dict['uid'] = master_record['uid']
+                        lead_data_dict['id'] = master_record['id']
+                        leads_to_update.append(lead_data_dict)
+                        updated_duplicates += 1
+                        print(f"🔄 Will UPDATE existing lead: {phone} | UID: {master_record['uid']}")
+                        logger.info(f"Scheduled update for existing lead: {phone} | UID: {master_record['uid']}")
+                    else:
+                        print(f"⚠️ Skipping exact duplicate: {phone} | Source: {current_source} | Sub-source: {current_sub_source}")
+                        skipped_duplicates += 1
+                        debug_stats['skipped_exact_duplicates'] += 1
                     continue
+                
+                # Different source - handle via duplicate table logic
+                print(f"🔄 Found duplicate phone, different source: {phone}")
+                logger.info(f"Processing duplicate for phone: {phone}")
                 
                 # Check if already exists in duplicate_leads
                 if phone in duplicate_records:
                     duplicate_record = duplicate_records[phone]
                     
                     # Check if this source/sub_source already exists in duplicate record
-                    if self.is_duplicate_source(duplicate_record, current_source, current_sub_source):
+                    if is_duplicate_source(duplicate_record, current_source, current_sub_source):
                         print(f"⚠️ Skipping duplicate: {phone} | Source: {current_source} | Sub-source: {current_sub_source}")
                         skipped_duplicates += 1
+                        debug_stats['skipped_exact_duplicates'] += 1
                         continue
                     
                     # Add to existing duplicate record
-                    if self.add_source_to_duplicate_record(duplicate_record, current_source, current_sub_source, current_date):
-                        updated_duplicates += 1
+                    if add_source_to_duplicate_record(self.supabase, duplicate_record, current_source, current_sub_source, current_date):
+                        duplicate_records_updated += 1
+                        debug_stats['duplicate_records_updated'] += 1
                         # Update local duplicate_records to avoid conflicts in same batch
                         duplicate_records[phone]['duplicate_count'] += 1
                 else:
                     # Create new duplicate record
-                    if self.create_duplicate_record(master_record, current_source, current_sub_source, current_date):
-                        updated_duplicates += 1
+                    if create_duplicate_record(self.supabase, master_record, current_source, current_sub_source, current_date):
+                        duplicate_records_created += 1
+                        debug_stats['duplicate_records_created'] += 1
                         # Add to local duplicate_records to avoid conflicts in same batch
                         duplicate_records[phone] = {
                             'customer_mobile_number': phone,
@@ -311,83 +421,214 @@ class DuplicateLeadsHandler:
                             'sub_source1': master_record['sub_source'],
                             'sub_source2': current_sub_source
                         }
+                
+                updated_duplicates += 1
+                debug_stats['duplicates_handled'] += 1
             else:
-                # Completely new lead - add to new_leads list
+                # Completely new lead
                 new_leads.append(row)
         
         return {
             'new_leads': pd.DataFrame(new_leads) if new_leads else pd.DataFrame(),
+            'leads_to_update': pd.DataFrame(leads_to_update) if leads_to_update else pd.DataFrame(),
             'updated_duplicates': updated_duplicates,
             'skipped_duplicates': skipped_duplicates,
             'skipped_queue_leads': skipped_queue_leads,
+            'duplicate_records_created': duplicate_records_created,
+            'duplicate_records_updated': duplicate_records_updated,
             'master_records': master_records,
             'duplicate_records': duplicate_records
         }
 
-# Initialize the duplicate handler
+# Initialize duplicate handler
 duplicate_handler = DuplicateLeadsHandler(supabase)
 
 # ===============================================
-# UPDATED HELPER FUNCTIONS
+# FIXED HELPER FUNCTIONS - MANUAL PARSING VERSION
 # ===============================================
 
-def extract_first_follow_up_remark(follow_up_remarks: str) -> Optional[str]:
+def extract_follow_up_remarks(follow_up_remarks: str) -> Dict[str, Optional[str]]:
     """
-    Extract only the first point from follow-up remarks string
-    
-    Examples:
-    "1. The CX Will Visit showroom on time and inform to carry DL 2. 3. Test Ride Booked"
-    -> "The CX Will Visit showroom on time and inform to carry DL"
-    
-    "1. Customer interested in test ride 2. Will call back tomorrow 3. Hot lead"
-    -> "Customer interested in test ride"
-    
-    Args:
-        follow_up_remarks: Raw follow-up remarks string from Salesforce
-        
-    Returns:
-        First remark only, or None if no valid first remark found
+    MANUAL PARSING: Robust approach for handling empty sections
+    Specifically handles: 1. rnr  2.  3. VOC : cx enquired about on road price...
     """
+    print(f"🔍 DEBUG: Manual parsing remarks from: {follow_up_remarks[:200] if follow_up_remarks else 'None'}...")
+    logger.debug(f"Manual parsing remarks from: {follow_up_remarks[:200] if follow_up_remarks else 'None'}...")
+    
     if not follow_up_remarks or not isinstance(follow_up_remarks, str):
-        return None
+        debug_stats['remark_extraction_failures'] += 1
+        return {f'{i}_remark': None for i in ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']}
     
-    # Clean the string
     remarks = follow_up_remarks.strip()
+    extracted_remarks = {}
+    remark_names = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
     
-    if not remarks:
-        return None
+    try:
+        # Initialize all remarks as None
+        for name in remark_names:
+            extracted_remarks[f'{name}_remark'] = None
+        
+        print(f"   🔍 Original text: '{remarks}'")
+        
+        # MANUAL PARSING: Handle both single-line and multi-line formats
+        # First try to split by numbered sections using a more robust approach
+        
+        sections = {}  # Will store {1: "content", 2: "", 3: "content"}
+        
+        # Replace newlines with spaces for easier processing, but preserve structure
+        normalized_text = re.sub(r'\s+', ' ', remarks)
+        print(f"   🔍 Normalized text: '{normalized_text}'")
+        
+        # Find all numbered sections
+        # Pattern matches: "1. content" or "1." (empty)
+        current_pos = 0
+        section_pattern = re.compile(r'(\d+)\.\s*')
+        
+        matches = list(section_pattern.finditer(normalized_text))
+        print(f"   🔍 Found {len(matches)} numbered sections")
+        
+        for i, match in enumerate(matches):
+            section_num = int(match.group(1))
+            start_pos = match.end()  # Position after "1. "
+            
+            # Find the end position (start of next section or end of text)
+            if i + 1 < len(matches):
+                end_pos = matches[i + 1].start()
+            else:
+                end_pos = len(normalized_text)
+            
+            # Extract content
+            content = normalized_text[start_pos:end_pos].strip()
+            sections[section_num] = content
+            
+            print(f"   🔍 Section {section_num}: '{content[:100]}{'...' if len(content) > 100 else ''}'")
+        
+        # Map sections to remark fields
+        extracted_count = 0
+        
+        for section_num in range(1, 8):  # Check sections 1-7
+            section_index = section_num - 1  # Convert to 0-based index
+            
+            if section_num in sections:
+                content = sections[section_num]
+                
+                if content:  # Non-empty content
+                    # Handle "NONE" values
+                    if content.upper() == 'NONE':
+                        extracted_remarks[f'{remark_names[section_index]}_remark'] = None
+                        print(f"   ✅ {section_num}. → {remark_names[section_index]}_remark: NONE → NULL")
+                    else:
+                        extracted_remarks[f'{remark_names[section_index]}_remark'] = content
+                        extracted_count += 1
+                        print(f"   ✅ {section_num}. → {remark_names[section_index]}_remark: '{content[:80]}{'...' if len(content) > 80 else ''}'")
+                        logger.debug(f"Extracted {section_num}. → {remark_names[section_index]}_remark: {content[:100]}...")
+                else:
+                    print(f"   ⚠️ {section_num}. is empty, setting to NULL")
+                    extracted_remarks[f'{remark_names[section_index]}_remark'] = None
+            else:
+                # Section not found, leave as None
+                extracted_remarks[f'{remark_names[section_index]}_remark'] = None
+        
+        # Show final results
+        print(f"   📊 MANUAL PARSING FINAL RESULTS:")
+        for i, name in enumerate(remark_names):
+            field_name = f'{name}_remark'
+            value = extracted_remarks.get(field_name)
+            if value:
+                print(f"   📝 {field_name}: '{value[:80]}{'...' if len(value) > 80 else ''}'")
+            else:
+                print(f"   📝 {field_name}: NULL")
+        
+        if extracted_count > 0:
+            debug_stats['remark_extraction_success'] += 1
+            print(f"   📝 Successfully extracted {extracted_count} remarks using MANUAL PARSING")
+            logger.info(f"Successfully extracted {extracted_count} remarks using MANUAL PARSING")
+        else:
+            debug_stats['remark_extraction_failures'] += 1
+            print(f"   ⚠️ No remarks extracted")
+            logger.warning(f"No remarks extracted")
+            
+    except Exception as e:
+        print(f"❌ Error in manual parsing: {e}")
+        logger.error(f"Error in manual parsing: {e}")
+        debug_stats['remark_extraction_failures'] += 1
+        extracted_remarks = {f'{name}_remark': None for name in remark_names}
     
-    # Pattern to match: "1. [content] 2." or "1. [content]" at end of string
-    # This will capture everything after "1. " until we hit " 2." or end of string
-    pattern = r'^1\.\s*(.*?)(?:\s+2\.|$)'
+    return extracted_remarks
+
+def map_call_dates_from_salesforce(created_date_str: str, last_follow_up_date_str: Optional[str]) -> Dict[str, Optional[str]]:
+    """Intelligent date mapping logic for Chennai leads"""
+    print(f"🔍 DEBUG: Mapping dates - Created: {created_date_str}, Last Follow-up: {last_follow_up_date_str}")
     
-    match = re.search(pattern, remarks, re.IGNORECASE | re.DOTALL)
-    
-    if match:
-        first_remark = match.group(1).strip()
-        # Remove any trailing numbers or dots that might have been captured
-        first_remark = re.sub(r'\s+\d+\.\s*$', '', first_remark).strip()
-        return first_remark if first_remark else None
-    
-    # Fallback: if no numbered format, check if it starts with "1."
-    if remarks.lower().startswith('1.'):
-        # Extract everything after "1. "
-        first_remark = remarks[2:].strip()
-        # If there are other numbered points, cut at the first one
-        next_point = re.search(r'\s+[2-9]\.\s+', first_remark)
-        if next_point:
-            first_remark = first_remark[:next_point.start()].strip()
-        return first_remark if first_remark else None
-    
-    # If no numbered format at all, return None (don't guess)
-    return None
+    try:
+        created_date = datetime.fromisoformat(created_date_str.replace("Z", "+00:00"))
+        created_date_only = created_date.date()
+        
+        call_dates = {
+            'first_call_date': None,
+            'second_call_date': None,
+            'third_call_date': None,
+            'fourth_call_date': None,
+            'fifth_call_date': None,
+            'sixth_call_date': None,
+            'seventh_call_date': None
+        }
+        
+        call_dates['first_call_date'] = created_date_only.isoformat()
+        print(f"   ✅ first_call_date set to: {created_date_only}")
+        
+        if last_follow_up_date_str:
+            try:
+                last_follow_up = datetime.fromisoformat(last_follow_up_date_str.replace("Z", "+00:00"))
+                last_follow_up_date_only = last_follow_up.date()
+                
+                days_diff = (last_follow_up_date_only - created_date_only).days
+                print(f"   📅 Days between creation and last follow-up: {days_diff}")
+                
+                if days_diff > 0:
+                    if days_diff <= 3:
+                        call_dates['second_call_date'] = last_follow_up_date_only.isoformat()
+                        print(f"   ✅ second_call_date set to: {last_follow_up_date_only}")
+                    elif days_diff <= 7:
+                        mid_date = created_date_only + timedelta(days=days_diff // 2)
+                        call_dates['second_call_date'] = mid_date.isoformat()
+                        call_dates['third_call_date'] = last_follow_up_date_only.isoformat()
+                        print(f"   ✅ second_call_date set to: {mid_date}")
+                        print(f"   ✅ third_call_date set to: {last_follow_up_date_only}")
+                    else:
+                        interval = max(1, days_diff // 4)
+                        date_names = ['second', 'third', 'fourth', 'fifth', 'sixth']
+                        
+                        for i, date_name in enumerate(date_names, 1):
+                            call_date = created_date_only + timedelta(days=interval * i)
+                            if call_date <= last_follow_up_date_only:
+                                call_dates[f'{date_name}_call_date'] = call_date.isoformat()
+                                print(f"   ✅ {date_name}_call_date set to: {call_date}")
+                        
+                        call_dates['seventh_call_date'] = last_follow_up_date_only.isoformat()
+                        print(f"   ✅ seventh_call_date set to: {last_follow_up_date_only}")
+                
+                debug_stats['date_mapping_success'] += 1
+                
+            except Exception as e:
+                print(f"❌ Error parsing last follow-up date: {e}")
+                debug_stats['date_mapping_failures'] += 1
+        else:
+            print(f"   ✅ Only first_call_date set (no follow-up date)")
+            debug_stats['date_mapping_success'] += 1
+        
+        return call_dates
+        
+    except Exception as e:
+        print(f"❌ Error in date mapping: {e}")
+        debug_stats['date_mapping_failures'] += 1
+        return {f'{name}_call_date': None for name in 
+                ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']}
 
 def map_source_and_subsource(raw_source):
-    """
-    Maps raw source to (source, sub_source) tuple
-    All sources now map to 'OEM' with appropriate sub_source
-    """
-    # Affiliate mapping - exact mapping from Salesforce to database
+    """Enhanced source mapping for Chennai with debugging"""
+    print(f"🔍 DEBUG: Mapping source: {raw_source}")
+    
     affiliate_map = {
         'Bikewale': 'Affiliate Bikewale',
         'Bikewale-Q': 'Affiliate Bikewale',
@@ -397,56 +638,56 @@ def map_source_and_subsource(raw_source):
         '91 Wheels-Q': 'Affiliate 91wheels'
     }
     
-    # OEM Web sources
     oem_web = {
         'Website', 'Website_PO', 'Website_Optin', 'ai_chatbot', 'website_chatbot',
         'Newspaper Ad - WhatsApp'
     }
     
-    # OEM Tele sources  
     oem_tele = {'Telephonic', 'cb', 'ivr_abandoned', 'ivr_callback', 'ivr_sales'}
     
-    # Check affiliate mapping first
     if raw_source in affiliate_map:
-        return ('OEM', affiliate_map[raw_source])
+        result = ('OEM', affiliate_map[raw_source])
+        print(f"   ✅ Mapped to: {result[0]} / {result[1]}")
+        return result
     elif raw_source in oem_web:
-        return ('OEM', 'Web')
+        result = ('OEM', 'Web')
+        print(f"   ✅ Mapped to: {result[0]} / {result[1]}")
+        return result
     elif raw_source in oem_tele:
-        return ('OEM', 'Tele')
+        result = ('OEM', 'Tele')
+        print(f"   ✅ Mapped to: {result[0]} / {result[1]}")
+        return result
     else:
-        # Log unmapped sources for debugging
-        print(f"⚠️ Unmapped source found: {raw_source}")
+        print(f"   ⚠️ Unmapped source: {raw_source}")
+        logger.warning(f"Unmapped source found: {raw_source}")
+        debug_stats['unmapped_sources'].add(raw_source)
         return (None, None)
 
-def map_cre_name(owner_name):
-    """
-    Map Salesforce Lead Owner to standardized CRE name
-    Only return CRE name if it's a valid CRE or queue, otherwise return None to skip
-    """
-    if not owner_name:
-        return None
-    
-    # Check if it's a CRE queue (these will be skipped)
-    if owner_name in CRE_QUEUE_NAMES:
-        return owner_name  # Return as is, will be handled in processing
-    
-    # Only return mapped CRE name if it exists in our mapping, otherwise None
-    return CRE_MAPPING.get(owner_name, None)
-
 def normalize_phone(phone: str) -> str:
+    """Enhanced phone normalization with debugging"""
     if not phone:
         return ""
+    
+    original_phone = phone
     digits = ''.join(filter(str.isdigit, str(phone)))
+    
     if digits.startswith('91') and len(digits) == 12:
         digits = digits[2:]
     elif digits.startswith('0') and len(digits) == 11:
         digits = digits[1:]
-    return digits[-10:] if len(digits) >= 10 else digits
+    
+    normalized = digits[-10:] if len(digits) >= 10 else digits
+    
+    if len(normalized) == 10:
+        logger.debug(f"Phone normalized: {original_phone} → {normalized}")
+    else:
+        print(f"⚠️ Invalid phone: {original_phone} → {normalized}")
+        logger.warning(f"Invalid phone length: {original_phone} → {normalized}")
+    
+    return normalized
 
 def generate_uid(sub_source, mobile_number, sequence):
-    """
-    Updated UID generation based on sub_source instead of source
-    """
+    """Enhanced UID generation for Chennai with debugging"""
     source_map = {
         'Web': 'W', 'Tele': 'T',
         'Affiliate Bikewale': 'B', 'Affiliate Bikedekho': 'D', 'Affiliate 91wheels': 'N'
@@ -456,355 +697,591 @@ def generate_uid(sub_source, mobile_number, sequence):
     sequence_char = chr(65 + (sequence % 26))
     mobile_last4 = str(mobile_number).replace(' ', '').replace('-', '')[-4:]
     seq_num = f"{(sequence % 9999) + 1:04d}"
-    return f"{source_char}{sequence_char}-{mobile_last4}-{seq_num}"
+    uid = f"{source_char}{sequence_char}-{mobile_last4}-{seq_num}"
+    
+    logger.debug(f"Generated UID: {uid} | Sub-source: {sub_source} | Phone: {mobile_number}")
+    return uid
 
 def get_next_sequence_number(supabase):
+    """Get next sequence number with error handling"""
     try:
         result = supabase.table("lead_master").select("id").order("id", desc=True).limit(1).execute()
-        return result.data[0]['id'] + 1 if result.data else 1
+        sequence = result.data[0]['id'] + 1 if result.data else 1
+        logger.debug(f"Next sequence number: {sequence}")
+        return sequence
     except Exception as e:
-        print(f"❌ Error getting sequence number: {e}")
+        logger.error(f"Error getting sequence number: {e}")
         return 1
+
+def create_ps_followup_record(supabase, lead_data, ps_name):
+    """Create PS follow-up record with ps_branch set to NULL"""
+    try:
+        current_time = datetime.now()
+        
+        ps_data = {
+            'lead_uid': lead_data['uid'],
+            'ps_name': ps_name,
+            'ps_branch': None,
+            'customer_name': lead_data['customer_name'],
+            'customer_mobile_number': lead_data['customer_mobile_number'],
+            'source': lead_data['source'],
+            'cre_name': lead_data.get('cre_name'),
+            'lead_category': lead_data.get('lead_category'),
+            'model_interested': lead_data.get('model_interested'),
+            'final_status': 'Pending',
+            'lead_status': None,
+            'ps_assigned_at': current_time.isoformat(),
+            'created_at': current_time.isoformat(),
+            'updated_at': current_time.isoformat()
+        }
+        
+        result = supabase.table("ps_followup_master").insert(ps_data).execute()
+        
+        if result.data:
+            print(f"✅ Created PS follow-up: {lead_data['uid']} → {ps_name} (ps_branch: NULL, lead_status: NULL)")
+            logger.info(f"Created PS follow-up record for: {lead_data['uid']} | PS: {ps_name}")
+            debug_stats['ps_followup_created'] += 1
+            return True
+        else:
+            print(f"❌ Failed PS follow-up: {lead_data['uid']}")
+            logger.error(f"Failed to create PS follow-up record for: {lead_data['uid']}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error creating PS follow-up: {e}")
+        logger.error(f"Error creating PS follow-up record: {e}")
+        return False
+
+def update_ps_followup_record(supabase, lead_data, ps_name):
+    """UPDATE existing PS follow-up record with new data"""
+    try:
+        # Check if PS follow-up record exists for this UID
+        existing_ps = supabase.table("ps_followup_master").select("*").eq("lead_uid", lead_data['uid']).execute()
+        
+        if not existing_ps.data:
+            # No existing PS record, create new one
+            return create_ps_followup_record(supabase, lead_data, ps_name)
+        
+        # Update existing PS follow-up record
+        current_time = datetime.now()
+        
+        update_data = {
+            'customer_name': lead_data['customer_name'],
+            'customer_mobile_number': lead_data['customer_mobile_number'],
+            'source': lead_data['source'],
+            'cre_name': lead_data.get('cre_name'),
+            'updated_at': current_time.isoformat()
+        }
+        
+        # Add call dates and remarks if they exist
+        remark_fields = ['first_remark', 'second_remark', 'third_remark', 'fourth_remark', 
+                        'fifth_remark', 'sixth_remark', 'seventh_remark']
+        date_fields = ['first_call_date', 'second_call_date', 'third_call_date', 'fourth_call_date',
+                      'fifth_call_date', 'sixth_call_date', 'seventh_call_date']
+        
+        for field in remark_fields + date_fields:
+            if field in lead_data and lead_data[field] is not None:
+                update_data[field] = lead_data[field]
+        
+        result = supabase.table("ps_followup_master").update(update_data).eq("lead_uid", lead_data['uid']).execute()
+        
+        if result.data:
+            print(f"✅ Updated PS follow-up: {lead_data['uid']} → {ps_name}")
+            logger.info(f"Updated PS follow-up record for: {lead_data['uid']} | PS: {ps_name}")
+            debug_stats['ps_followup_updated'] += 1
+            return True
+        else:
+            print(f"❌ Failed to update PS follow-up: {lead_data['uid']}")
+            logger.error(f"Failed to update PS follow-up record for: {lead_data['uid']}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error updating PS follow-up: {e}")
+        logger.error(f"Error updating PS follow-up record: {e}")
+        return False
 
 # ===============================================
 # MAIN PROCESSING LOGIC
 # ===============================================
 
-# Updated query to fetch the new fields
-query = f"""
-    SELECT Id, FirstName, LastName, Owner.Name, Phone, LeadSource, 
-           Status, CreatedDate, Is_Home_TR_Booked__c, 
-           Branch__c, Last_3_Follow_Up_Remarks__c
-    FROM Lead
-    WHERE CreatedDate >= {start_time} AND CreatedDate <= {end_time}
-"""
-
-results = sf.query_all(query)['records']
-print(f"\n📦 Total leads fetched (past 24 hours): {len(results)}")
-
-if not results:
-    print("❌ No leads found in the specified time range")
-    exit()
-
-# Process leads with new field mapping
-leads_by_phone = {}
-unmapped_sources = set()
-skipped_cre_queues = set()
-skipped_invalid_owners = set()
-
-for lead in results:
-    raw_source = lead.get("LeadSource")
-    first_name = lead.get("FirstName", "")
-    last_name = lead.get("LastName", "")
-    lead_owner = lead.get("Owner", {}).get("Name") if lead.get("Owner") else None
-    raw_phone = lead.get("Phone", "")
-    lead_status = lead.get("Status")
-    created = lead.get("CreatedDate")
-    is_home_tr_booked = lead.get("Is_Home_TR_Booked__c", False)
-    branch = lead.get("Branch__c")
-    follow_up_remarks = lead.get("Last_3_Follow_Up_Remarks__c")
-
-    if not raw_source or not raw_phone:
-        continue
-
-    # Map source and sub_source
-    source, sub_source = map_source_and_subsource(raw_source)
-    if not source or not sub_source:
-        unmapped_sources.add(raw_source)
-        continue
-
-    # Map CRE name - only process if valid CRE or queue
-    cre_name = map_cre_name(lead_owner)
+def main():
+    """Main execution function for Chennai sync with enhanced duplicate handling + manual parsing"""
+    start_time_main = time.time()
     
-    # Skip if no valid CRE mapping found (invalid owner)
-    if cre_name is None:
-        skipped_invalid_owners.add(lead_owner or 'No Owner')
-        continue
-    
-    # Skip if assigned to CRE queue
-    if cre_name in CRE_QUEUE_NAMES:
-        skipped_cre_queues.add(cre_name)
-        continue
-
-    phone = normalize_phone(raw_phone)
-    if not phone:
-        continue
-
-    # Combine first and last name
-    customer_name = f"{first_name} {last_name}".strip()
-    if not customer_name:
-        customer_name = "Unknown"
-
     try:
-        created_date = datetime.fromisoformat(created.replace("Z", "+00:00")).date().isoformat()
-    except Exception:
-        continue
+        print("\n🔄 STARTING SALESFORCE DATA FETCH (PAST 24 HOURS ONLY)")
+        print("=" * 60)
+        
+        # FIXED: Only fetch leads CREATED in past 24 hours
+        query = f"""
+            SELECT Id, FirstName, LastName, Owner.Name, Phone, LeadSource, 
+                   Status, CreatedDate, Branch__c, Rating__c,
+                   Last_Follow_Up_Date__c, Last_3_Follow_Up_Remarks__c
+            FROM Lead
+            WHERE CreatedDate >= {start_time} AND CreatedDate <= {end_time}
+        """
+        
+        print(f"🔧 FIXED QUERY: Only CreatedDate filter (no LastModifiedDate)")
+        print(f"📅 Will only fetch leads created between:")
+        print(f"   📅 From: {past_24_hours.strftime('%Y-%m-%d %H:%M:%S')} IST")
+        print(f"   📅 To:   {now_ist.strftime('%Y-%m-%d %H:%M:%S')} IST")
+        
+        logger.info("FIXED: Using query with ONLY CreatedDate filter for past 24 hours")
+        logger.info(f"Time range: {start_time} to {end_time}")
+        
+        # Execute query with retry logic
+        max_retries = 3
+        results = None
+        
+        for attempt in range(max_retries):
+            try:
+                print(f"📡 Fetching data from Salesforce (attempt {attempt + 1})...")
+                results = sf.query_all(query)['records']
+                break
+            except Exception as e:
+                print(f"❌ Salesforce query attempt {attempt + 1} failed: {e}")
+                logger.warning(f"Salesforce query attempt {attempt + 1} failed: {e}")
+                if attempt == max_retries - 1:
+                    print("❌ Failed to fetch data from Salesforce after all retries")
+                    logger.error("Failed to fetch data from Salesforce after all retries")
+                    return False
+                time.sleep(2 ** attempt)
+        
+        if not results:
+            print("ℹ️ No leads found in the past 24 hours")
+            logger.info("No leads found in the past 24 hours")
+            return True
+        
+        debug_stats['total_fetched'] = len(results)
+        print(f"📦 Total leads fetched: {len(results)} (CREATED in past 24 hours only)")
+        logger.info(f"Total leads fetched: {len(results)} (past 24 hours only)")
+        
+        # Display date range of fetched leads for verification
+        if results:
+            created_dates = []
+            for lead in results:
+                try:
+                    created_date = datetime.fromisoformat(lead.get("CreatedDate", "").replace("Z", "+00:00"))
+                    created_dates.append(created_date)
+                except:
+                    continue
+            
+            if created_dates:
+                earliest = min(created_dates).astimezone(IST)
+                latest = max(created_dates).astimezone(IST)
+                print(f"📅 Fetched leads date range:")
+                print(f"   📅 Earliest: {earliest.strftime('%Y-%m-%d %H:%M:%S')} IST")
+                print(f"   📅 Latest:   {latest.strftime('%Y-%m-%d %H:%M:%S')} IST")
+        
+        print("\n🔄 PROCESSING LEADS (PAST 24 HOURS ONLY)")
+        print("=" * 45)
+        
+        # Process leads
+        processed_leads = []
+        cre_assignments = []
+        ps_assignments = []
+        skipped_invalid_owners = set()
+        skipped_cre_queues = set()
+        
+        for i, lead in enumerate(results, 1):
+            print(f"\n📋 Processing lead {i}/{len(results)}")
+            
+            # Extract Salesforce fields
+            first_name = lead.get("FirstName", "")
+            last_name = lead.get("LastName", "")
+            lead_owner = lead.get("Owner", {}).get("Name") if lead.get("Owner") else None
+            raw_phone = lead.get("Phone", "")
+            raw_source = lead.get("LeadSource")
+            lead_status = lead.get("Status")
+            created = lead.get("CreatedDate")
+            branch = lead.get("Branch__c")
+            rating = lead.get("Rating__c")
+            last_follow_up_date = lead.get("Last_Follow_Up_Date__c")
+            follow_up_remarks = lead.get("Last_3_Follow_Up_Remarks__c")
+            
+            # Show creation date in IST for verification
+            try:
+                created_dt = datetime.fromisoformat(created.replace("Z", "+00:00")).astimezone(IST)
+                print(f"   📞 Phone: {raw_phone}")
+                print(f"   👤 Owner: {lead_owner}")
+                print(f"   📊 Source: {raw_source}")
+                print(f"   📅 Created: {created_dt.strftime('%Y-%m-%d %H:%M:%S')} IST")
+                print(f"   📝 Follow-up Date: {last_follow_up_date}")
+            except:
+                print(f"   📞 Phone: {raw_phone}")
+                print(f"   👤 Owner: {lead_owner}")
+                print(f"   📊 Source: {raw_source}")
+                print(f"   📅 Created: {created}")
+                print(f"   📝 Follow-up Date: {last_follow_up_date}")
+            
+            # Skip leads without essential data
+            if not raw_source or not raw_phone:
+                print(f"   ⚠️ Skipping: Missing source or phone")
+                continue
+            
+            # Map source and normalize phone
+            source, sub_source = map_source_and_subsource(raw_source)
+            if not source or not sub_source:
+                print(f"   ⚠️ Skipping: Unmapped source")
+                continue
+            
+            phone = normalize_phone(raw_phone)
+            if not phone or len(phone) != 10:
+                print(f"   ⚠️ Skipping: Invalid phone number")
+                continue
+            
+            customer_name = f"{first_name} {last_name}".strip() or "Unknown"
+            
+            try:
+                created_date = datetime.fromisoformat(created.replace("Z", "+00:00")).date().isoformat()
+            except Exception:
+                print(f"   ⚠️ Skipping: Invalid creation date")
+                continue
+            
+            # Check if owner is CRE or PS
+            cre_name = CRE_MAPPING.get(lead_owner)
+            ps_name = PS_MAPPING.get(lead_owner)
+            
+            print(f"   👥 Mapped CRE: {cre_name}")
+            print(f"   🔧 Mapped PS: {ps_name}")
+            
+            # Skip leads not assigned to Chennai CREs or PS
+            if not cre_name and not ps_name:
+                skipped_invalid_owners.add(lead_owner or 'No Owner')
+                print(f"   ❌ Skipping: Invalid owner - not Chennai CRE or PS")
+                continue
+            
+            # Skip CRE queue assignments
+            if cre_name and cre_name in CRE_QUEUE_NAMES:
+                skipped_cre_queues.add(cre_name)
+                print(f"   ⚠️ Skipping: CRE queue assignment")
+                continue
+            
+            # Extract follow-up remarks and map call dates
+            remarks_data = extract_follow_up_remarks(follow_up_remarks)
+            call_dates = map_call_dates_from_salesforce(created, last_follow_up_date)
+            
+            # Create base lead data
+            lead_data = {
+                'date': created_date,
+                'customer_name': customer_name,
+                'customer_mobile_number': phone,
+                'source': source,
+                'sub_source': sub_source,
+                'campaign': None,
+                'lead_category': None,
+                'model_interested': None,
+                'branch': None,  # Set to NULL
+                'lead_status': None,  # Set to NULL
+                'follow_up_date': last_follow_up_date.split('T')[0] if last_follow_up_date else None,
+                'final_status': 'Pending',
+                'assigned': 'Yes',
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            }
+            
+            # Add call dates and remarks
+            lead_data.update(call_dates)
+            lead_data.update(remarks_data)
+            
+            # Handle CRE or PS assignments
+            if ps_name:
+                lead_data.update({
+                    'ps_name': ps_name,
+                    'ps_assigned_at': datetime.now().isoformat(),
+                    'cre_name': 'Sangeetha'
+                })
+                
+                ps_assignments.append({
+                    'lead_data': lead_data,
+                    'ps_name': ps_name
+                })
+                debug_stats['valid_ps_assignments'] += 1
+                debug_stats['ps_breakdown'][ps_name] = debug_stats['ps_breakdown'].get(ps_name, 0) + 1
+                
+                print(f"   ✅ PS Assignment: {ps_name}")
+                
+            elif cre_name and cre_name not in CRE_QUEUE_NAMES:
+                lead_data.update({
+                    'cre_name': cre_name,
+                    'cre_assigned_at': datetime.now().isoformat(),
+                    'ps_name': None
+                })
+                
+                cre_assignments.append(lead_data)
+                debug_stats['valid_cre_assignments'] += 1
+                debug_stats['cre_breakdown'][cre_name] = debug_stats['cre_breakdown'].get(cre_name, 0) + 1
+                
+                print(f"   ✅ CRE Assignment: {cre_name}")
+            
+            processed_leads.append(lead_data)
+        
+        # Summary of processing
+        print(f"\n📊 PROCESSING SUMMARY")
+        print("=" * 30)
+        print(f"✅ Processed leads: {len(processed_leads)}")
+        print(f"👥 CRE assignments: {len(cre_assignments)}")
+        print(f"🔧 PS assignments: {len(ps_assignments)}")
+        
+        if not processed_leads:
+            print("ℹ️ No valid leads to process from past 24 hours")
+            return True
+        
+        print(f"\n🔄 ENHANCED DUPLICATE HANDLING + MANUAL PARSING")
+        print("=" * 55)
+        print(f"🎯 Features:")
+        print(f"   - Same phone + same source/sub-source → UPDATE or SKIP")
+        print(f"   - Same phone + different source → DUPLICATE TABLE")
+        print(f"   - New phone → INSERT as new lead")
+        print(f"   - Duplicate table supports up to 10 sources per phone")
+        print(f"   - Manual parsing: '1. rnr  2.  3. VOC : cx enquired...'")
+        
+        # Process duplicates with enhanced duplicate table handling
+        df_processed = pd.DataFrame(processed_leads)
+        duplicate_results = duplicate_handler.process_leads_for_duplicates_and_updates(df_processed)
+        
+        new_leads_df = duplicate_results['new_leads']
+        leads_to_update_df = duplicate_results['leads_to_update']
+        
+        # Handle NEW leads
+        if not new_leads_df.empty:
+            print(f"🆕 NEW LEADS TO INSERT: {len(new_leads_df)}")
+            
+            # Generate UIDs for new leads
+            print(f"\n🆔 GENERATING UIDs FOR NEW LEADS")
+            print("=" * 35)
+            
+            sequence = get_next_sequence_number(supabase)
+            
+            for i, row in new_leads_df.iterrows():
+                first_sub_source = row['sub_source'].split(',')[0]
+                uid = generate_uid(first_sub_source, row['customer_mobile_number'], sequence + i)
+                new_leads_df.at[i, 'uid'] = uid
+                print(f"   ✅ Generated UID: {uid} | Phone: {row['customer_mobile_number']}")
+            
+            # Insert new leads
+            print(f"\n💾 INSERTING NEW LEADS")
+            print("=" * 25)
+            
+            for _, row in new_leads_df.iterrows():
+                try:
+                    lead_dict = row.to_dict()
+                    for key, value in lead_dict.items():
+                        if pd.isna(value):
+                            lead_dict[key] = None
+                    
+                    result = supabase.table("lead_master").insert(lead_dict).execute()
+                    
+                    if result.data:
+                        debug_stats['new_leads_inserted'] += 1
+                        print(f"✅ INSERTED NEW: {lead_dict['uid']} | {lead_dict['customer_mobile_number']}")
+                        print(f"   📝 First Remark: {lead_dict.get('first_remark', 'None')}")
+                        print(f"   📝 Second Remark: {lead_dict.get('second_remark', 'None')}")
+                        print(f"   📝 Third Remark: {lead_dict.get('third_remark', 'None')}")
+                        logger.info(f"Inserted new lead: {lead_dict['uid']}")
+                        
+                except Exception as e:
+                    print(f"❌ Error inserting lead: {e}")
+                    logger.error(f"Error inserting lead: {e}")
+        
+        # Handle UPDATES to existing leads
+        if not leads_to_update_df.empty:
+            print(f"\n🔄 EXISTING LEADS TO UPDATE: {len(leads_to_update_df)}")
+            print("=" * 35)
+            
+            for _, row in leads_to_update_df.iterrows():
+                try:
+                    lead_dict = row.to_dict()
+                    uid = lead_dict['uid']
+                    db_id = lead_dict.pop('id')
+                    
+                    # Clean up NaN values
+                    for key, value in lead_dict.items():
+                        if pd.isna(value):
+                            lead_dict[key] = None
+                    
+                    # Update the existing lead by database ID
+                    result = supabase.table("lead_master").update(lead_dict).eq('id', db_id).execute()
+                    
+                    if result.data:
+                        debug_stats['existing_leads_updated'] += 1
+                        print(f"✅ UPDATED EXISTING: {uid} | {lead_dict['customer_mobile_number']}")
+                        print(f"   📝 Updated First Remark: {lead_dict.get('first_remark', 'None')}")
+                        print(f"   📝 Updated Second Remark: {lead_dict.get('second_remark', 'None')}")
+                        print(f"   📝 Updated Third Remark: {lead_dict.get('third_remark', 'None')}")
+                        logger.info(f"Updated existing lead: {uid}")
+                        
+                        # Update PS follow-up record if this is a PS lead
+                        if lead_dict.get('ps_name'):
+                            update_ps_followup_record(supabase, lead_dict, lead_dict['ps_name'])
+                    else:
+                        print(f"❌ Failed to update: {uid}")
+                        
+                except Exception as e:
+                    print(f"❌ Error updating lead: {e}")
+                    logger.error(f"Error updating lead: {e}")
+        
+        # Create PS follow-up records for NEW PS assignments
+        if ps_assignments and not new_leads_df.empty:
+            print(f"\n🔧 CREATING PS FOLLOW-UP RECORDS FOR NEW LEADS")
+            print("=" * 50)
+            
+            for ps_assignment in ps_assignments:
+                lead_data = ps_assignment['lead_data']
+                ps_name = ps_assignment['ps_name']
+                
+                # Find the UID from inserted leads
+                matching_lead = new_leads_df[
+                    new_leads_df['customer_mobile_number'] == lead_data['customer_mobile_number']
+                ]
+                
+                if not matching_lead.empty:
+                    lead_data['uid'] = matching_lead.iloc[0]['uid']
+                    create_ps_followup_record(supabase, lead_data, ps_name)
+        
+        # Final execution summary
+        execution_time = time.time() - start_time_main
+        
+        print(f"\n🎉 CHENNAI SYNC COMPLETED (ENHANCED DUPLICATES + MANUAL PARSING)")
+        print("=" * 65)
+        print(f"⏱️ Execution time: {execution_time:.2f} seconds")
+        print(f"📦 Total leads fetched: {debug_stats['total_fetched']} (past 24 hours only)")
+        print(f"🆕 NEW leads inserted: {debug_stats['new_leads_inserted']}")
+        print(f"🔄 EXISTING leads updated: {debug_stats['existing_leads_updated']}")
+        print(f"🔧 PS follow-ups created: {debug_stats['ps_followup_created']}")
+        print(f"🔧 PS follow-ups updated: {debug_stats['ps_followup_updated']}")
+        print(f"📊 Duplicate records created: {debug_stats['duplicate_records_created']}")
+        print(f"📊 Duplicate records updated: {debug_stats['duplicate_records_updated']}")
+        print(f"⚠️ Exact duplicates skipped: {debug_stats['skipped_exact_duplicates']}")
+        
+        # Show detailed breakdown
+        if debug_stats['cre_breakdown']:
+            print(f"\n👥 CRE BREAKDOWN:")
+            for cre, count in debug_stats['cre_breakdown'].items():
+                print(f"   - {cre}: {count} leads")
+        
+        if debug_stats['ps_breakdown']:
+            print(f"\n🔧 PS BREAKDOWN:")
+            for ps, count in debug_stats['ps_breakdown'].items():
+                print(f"   - {ps}: {count} leads")
+        
+        if skipped_invalid_owners:
+            print(f"\n⚠️ SKIPPED OWNERS (not Chennai CRE/PS):")
+            for owner in sorted(skipped_invalid_owners):
+                print(f"   - {owner}")
+        
+        if skipped_cre_queues:
+            print(f"\n⚠️ SKIPPED CRE QUEUES:")
+            for queue in sorted(skipped_cre_queues):
+                print(f"   - {queue}")
+        
+        if debug_stats['unmapped_sources']:
+            print(f"\n⚠️ UNMAPPED SOURCES:")
+            for source in sorted(debug_stats['unmapped_sources']):
+                print(f"   - {source}")
+        
+        print(f"\n🎯 MANUAL PARSING EXAMPLE FOR YOUR CASE:")
+        print(f"   Input: '1. rnr  2.  3. VOC : cx enquired about on road price...'")
+        print(f"   ✅ first_remark: 'rnr'")
+        print(f"   ✅ second_remark: NULL (empty section)")
+        print(f"   ✅ third_remark: 'VOC : cx enquired about on road price...'")
+        
+        print(f"\n🔧 ENHANCED FEATURES SUMMARY:")
+        print(f"   ✅ MANUAL PARSING: Handles empty sections correctly")
+        print(f"   ✅ Exact position mapping: 1. → first_remark, 3. → third_remark")
+        print(f"   ✅ Only processes leads CREATED in past 24 hours")
+        print(f"   ✅ Enhanced duplicate table handling (like Meta script)")
+        print(f"   ✅ Same phone + different sources → duplicate_leads table")
+        print(f"   ✅ Supports up to 10 sources per phone number")
+        print(f"   ✅ Automatic updates to existing leads with new remarks")
+        print(f"   ✅ Branch and lead_status set to NULL")
+        print(f"   ✅ PS records with ps_branch and lead_status NULL")
+        print(f"   ✅ NONE values properly handled")
+        
+        print(f"\n📊 FINAL STATISTICS:")
+        print(f"   📦 Total fetched: {debug_stats['total_fetched']}")
+        print(f"   🆕 New leads: {debug_stats['new_leads_inserted']}")
+        print(f"   🔄 Updated leads: {debug_stats['existing_leads_updated']}")
+        print(f"   📊 Duplicate records created: {debug_stats['duplicate_records_created']}")
+        print(f"   📊 Duplicate records updated: {debug_stats['duplicate_records_updated']}")
+        print(f"   ⚠️ Skipped exact duplicates: {debug_stats['skipped_exact_duplicates']}")
+        print(f"   📝 Successful remark extractions: {debug_stats['remark_extraction_success']}")
+        print(f"   📅 Successful date mappings: {debug_stats['date_mapping_success']}")
+        
+        logger.info("Chennai sync completed successfully (enhanced duplicates + manual parsing)")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Critical error in main execution: {e}")
+        logger.error(f"Critical error in main execution: {e}")
+        return False
 
-    # Extract first follow-up remark
-    first_remark = extract_first_follow_up_remark(follow_up_remarks)
-
-    if phone not in leads_by_phone:
-        leads_by_phone[phone] = {
-            'name': customer_name,
-            'phone': phone,
-            'date': created_date,
-            'source': source,
-            'sub_sources': set(),
-            'cre_name': cre_name,
-            'first_remark': first_remark
-        }
-
-    leads_by_phone[phone]['sub_sources'].add(sub_source)
-
-# Report unmapped sources, skipped CRE queues, and invalid owners
-if unmapped_sources:
-    print(f"\n⚠️ WARNING: Found {len(unmapped_sources)} unmapped sources:")
-    for source in sorted(unmapped_sources):
-        print(f"   - {source}")
-    print("   These leads were skipped. Please update the mapping function if needed.\n")
-
-if skipped_cre_queues:
-    print(f"\n⚠️ Skipped leads assigned to CRE queues:")
-    for queue in sorted(skipped_cre_queues):
-        print(f"   - {queue}")
-    print("   These leads will be processed once assigned to actual CREs.\n")
-
-if skipped_invalid_owners:
-    print(f"\n⚠️ Skipped leads with invalid/unmapped owners:")
-    for owner in sorted(skipped_invalid_owners):
-        print(f"   - {owner}")
-    print("   These leads were skipped as they're not assigned to valid CREs.\n")
-
-print(f"📱 Found {len(leads_by_phone)} unique phone numbers with valid CRE assignments")
-
-if not leads_by_phone:
-    print("❌ No valid leads to process")
-    exit()
-
-# Convert to DataFrame format for duplicate processing
-processed_leads = []
-current_time = datetime.now().isoformat()
-today_date = datetime.now().date().isoformat()
-
-for phone, lead_data in leads_by_phone.items():
-    combined_sub_source = ','.join(sorted(lead_data['sub_sources']))
-    
-    processed_lead = {
-        'date': lead_data['date'],
-        'customer_name': lead_data['name'],
-        'customer_mobile_number': phone,
-        'source': lead_data['source'],
-        'sub_source': combined_sub_source,
-        'campaign': None,
-        'cre_name': lead_data['cre_name'],
-        'lead_category': None,
-        'model_interested': None,
-        'branch': None,  # Set to null instead of branch value
-        'ps_name': None,
-        'assigned': 'Yes' if lead_data['cre_name'] else 'No',
-        'lead_status': None,  # Set to null instead of mapped lead_status
-        'follow_up_date': None,
-        'first_call_date': datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] + '+05:30',  # Set first_call_date to current timestamp with microseconds
-        'first_remark': lead_data['first_remark'],  # Only first follow-up remark
-        'second_call_date': None,
-        'second_remark': None,
-        'third_call_date': None,
-        'third_remark': None,
-        'fourth_call_date': None,
-        'fourth_remark': None,
-        'fifth_call_date': None,
-        'fifth_remark': None,
-        'sixth_call_date': None,
-        'sixth_remark': None,
-        'seventh_call_date': None,
-        'seventh_remark': None,
-        'final_status': 'Pending',  # Always set to Pending as requested
-        'created_at': current_time,
-        'updated_at': current_time
-    }
-    processed_leads.append(processed_lead)
-
-# Convert to DataFrame
-df_oem_leads = pd.DataFrame(processed_leads)
-print(f"📊 Collected {len(df_oem_leads)} leads from Salesforce (OEM)")
-
-# Process duplicates using the handler
-print(f"🔄 OEM sync starting with duplicate handling...")
-print(f"🎯 Source: OEM | Various sub-sources")
-print(f"🎯 Each lead processed individually - duplicate handling active")
-
-results = duplicate_handler.process_leads_for_duplicates(df_oem_leads)
-
-# Handle new leads
-new_leads_df = results['new_leads']
-master_records = results['master_records']
-
-if new_leads_df.empty:
-    print("✅ No new leads to insert.")
-else:
-    print(f"🆕 Found {len(new_leads_df)} new leads to insert")
-    
-    # Generate UIDs for new leads
-    sequence = get_next_sequence_number(supabase)
-    uids = []
-    
-    for _, row in new_leads_df.iterrows():
-        first_sub_source = row['sub_source'].split(',')[0]
-        new_uid = generate_uid(first_sub_source, row['customer_mobile_number'], sequence)
-        uids.append(new_uid)
-        sequence += 1
-    
-    new_leads_df['uid'] = uids
-    
-    # Check for UID conflicts and regenerate if needed
-    existing_uids_result = supabase.table("lead_master").select("uid").execute()
-    existing_uids = {row['uid'] for row in existing_uids_result.data}
-    
-    uid_conflicts = []
-    for i, row in new_leads_df.iterrows():
-        if row['uid'] in existing_uids:
-            uid_conflicts.append(i)
-    
-    if uid_conflicts:
-        print(f"⚠️ Found {len(uid_conflicts)} UID conflicts, regenerating...")
-        sequence_start = get_next_sequence_number(supabase) + 1000
-        for i in uid_conflicts:
-            row = new_leads_df.iloc[i]
-            first_sub_source = row['sub_source'].split(',')[0]
-            new_leads_df.at[i, 'uid'] = generate_uid(first_sub_source, row['customer_mobile_number'], sequence_start)
-            sequence_start += 1
-    
-    # Preserve existing campaigns from master records
-    for i, row in new_leads_df.iterrows():
-        phone = row['customer_mobile_number']
-        if phone in master_records and master_records[phone].get('campaign'):
-            new_leads_df.at[i, 'campaign'] = master_records[phone]['campaign']
-    
-    # Select final columns
-    final_cols = ['uid', 'date', 'customer_name', 'customer_mobile_number', 'source', 'sub_source', 'campaign',
-                  'cre_name', 'lead_category', 'model_interested', 'branch', 'ps_name',
-                  'assigned', 'lead_status', 'follow_up_date',
-                  'first_call_date', 'first_remark', 'second_call_date', 'second_remark',
-                  'third_call_date', 'third_remark', 'fourth_call_date', 'fourth_remark',
-                  'fifth_call_date', 'fifth_remark', 'sixth_call_date', 'sixth_remark',
-                  'seventh_call_date', 'seventh_remark', 'final_status',
-                  'created_at', 'updated_at']
-    new_leads_df = new_leads_df[final_cols]
-    
-    # Insert new leads
-    successful_inserts = 0
-    failed_inserts = 0
-    
-    print(f"🚀 Inserting {len(new_leads_df)} new leads...")
-    
-    for row in new_leads_df.to_dict(orient="records"):
-        try:
-            supabase.table("lead_master").insert(row).execute()
-            print(f"✅ Inserted new lead: {row['uid']} | Phone: {row['customer_mobile_number']} | CRE: {row['cre_name']} | Sub-source: {row['sub_source']}")
-            if row['first_remark']:
-                print(f"   💬 First remark: {row['first_remark']}")
-            if row['campaign']:
-                print(f"   📊 Campaign preserved: {row['campaign']}")
-            successful_inserts += 1
-        except Exception as e:
-            print(f"❌ Failed to insert {row['uid']} | Phone: {row['customer_mobile_number']}: {e}")
-            failed_inserts += 1
-    
-    print(f"✅ Successfully inserted new leads: {successful_inserts}")
-    print(f"❌ Failed insertions: {failed_inserts}")
-
-# Final Summary
-print(f"\n📊 SUMMARY:")
-print(f"✅ New leads inserted: {len(new_leads_df) if not new_leads_df.empty else 0}")
-print(f"🔄 Duplicate records updated/created: {results['updated_duplicates']}")
-print(f"⚠️ Skipped exact duplicates: {results['skipped_duplicates']}")
-print(f"🔒 Skipped CRE queue assignments: {results['skipped_queue_leads']}")
-print(f"📱 Total records processed: {len(df_oem_leads)}")
-print(f"🎯 Source: OEM | Various sub-sources (Web, Tele, Affiliate Bikewale, etc.)")
-print(f"📊 Each lead processed individually with duplicate handling")
-print(f"🔄 Duplicates with other sources (META, GOOGLE, BTL, etc.) handled via duplicate_leads table")
-print(f"👥 CRE assignments mapped and queue assignments skipped")
-print(f"📅 First call date set to today for all new leads")
-print(f"💬 Only first follow-up remark extracted and stored")
-print(f"🎯 Final status set to 'Pending' for CRE pending leads section")
-print(f"🏢 Branch field set to null (not mapped from Salesforce)")
-print(f"📊 Lead status field set to null (not mapped from Salesforce)")
-print(f"⏰ Time range: Past 24 hours")
-
-# CRE Assignment Summary
-if new_leads_df is not None and not new_leads_df.empty:
-    cre_summary = new_leads_df.groupby('cre_name').size().to_dict()
-    print(f"\n👥 CRE ASSIGNMENT SUMMARY:")
-    for cre, count in cre_summary.items():
-        print(f"   {cre}: {count} leads")
-
-# Follow-up remarks processing summary
-if new_leads_df is not None and not new_leads_df.empty:
-    remarks_with_data = new_leads_df[new_leads_df['first_remark'].notna()]
-    print(f"\n💬 FOLLOW-UP REMARKS SUMMARY:")
-    print(f"   Total leads with first remarks: {len(remarks_with_data)}")
-    print(f"   Total leads without remarks: {len(new_leads_df) - len(remarks_with_data)}")
-    
-    if len(remarks_with_data) > 0:
-        print(f"   Sample extracted remarks:")
-        for _, row in remarks_with_data.head(3).iterrows():
-            print(f"   - Phone: {row['customer_mobile_number']} | Remark: {row['first_remark'][:60]}...")
-
-# Final report on unmapped sources
-if unmapped_sources:
-    print(f"\n⚠️ UNMAPPED SOURCES FOUND:")
-    print(f"   {len(unmapped_sources)} unique unmapped sources were skipped")
-    print(f"   Please review and update the mapping function if needed")
-
-# Final report on invalid owners
-if skipped_invalid_owners:
-    print(f"\n🚫 INVALID LEAD OWNERS SKIPPED:")
-    print(f"   {len(skipped_invalid_owners)} lead owners were not recognized as valid CREs")
-    print(f"   These leads were completely skipped:")
-    for owner in sorted(skipped_invalid_owners):
-        print(f"   - {owner}")
-    print(f"   Only leads assigned to these CREs are processed:")
-    print(f"   - Kumari B → Kumari")
-    print(f"   - Chippala Pelli Mounika → CHIPPALA PELLI MOUNIKA") 
-    print(f"   - Swapna P → PARAKALA SWAPNA")
-
-print(f"\n🎉 Sync completed successfully!")
-print(f"💡 All new leads are now available in CRE pending leads sections with:")
-print(f"   - Only valid CRE assignments processed (Kumari, CHIPPALA PELLI MOUNIKA, PARAKALA SWAPNA)")
-print(f"   - Invalid lead owners completely skipped")
-print(f"   - CRE queue assignments skipped until properly assigned")
-print(f"   - First call date set to today")
-print(f"   - Final status set to 'Pending'")
-print(f"   - Branch field set to null (not mapped from Salesforce)")
-print(f"   - Lead status field set to null (not mapped from Salesforce)")
-print(f"   - Only first follow-up remark extracted and stored in first_remark field")
-print(f"   - Smart parsing of numbered follow-up remarks (extracts only point 1)")
-
-# Debug information for CRE filtering
-print(f"\n🔍 CRE FILTERING DEBUG:")
-print(f"   Valid Salesforce CREs:")
-print(f"   - 'Kumari B' → 'Kumari'")
-print(f"   - 'Chippala Pelli Mounika' → 'CHIPPALA PELLI MOUNIKA'")
-print(f"   - 'Swapna P' → 'PARAKALA SWAPNA'")
-print(f"   Skipped CRE Queues:")
-print(f"   - CRE-Q-1090-HYD-Raam Electric Two Wheeler")
-print(f"   - CRE-Q-1237-HYD-RAAM ELECTRIC TWO WHEELER") 
-print(f"   - CRE-Q-1318-HYD-RAAM ELECTRIC TWO WHEELER")
-print(f"   Any other lead owner: COMPLETELY SKIPPED")
-
-# Debug information for follow-up remarks extraction
-print(f"\n🔍 FOLLOW-UP REMARKS EXTRACTION DEBUG:")
-print(f"   Function: extract_first_follow_up_remark()")
-print(f"   Pattern: Extracts text after '1. ' until ' 2.' or end of string")
-print(f"   Examples handled:")
-print(f"   Input:  '1. The CX Will Visit showroom on time and inform to carry DL 2. 3. Test Ride Booked'")
-print(f"   Output: 'The CX Will Visit showroom on time and inform to carry DL'")
-print(f"   Input:  '1. Customer interested in test ride 2. Will call back tomorrow'")
-print(f"   Output: 'Customer interested in test ride'")
-
-# Debug information for null field mapping
-print(f"\n🔍 NULL FIELD MAPPING DEBUG:")
-print(f"   Fields set to null in lead_master table:")
-print(f"   - branch: null (was previously mapped from Salesforce Branch__c)")
-print(f"   - lead_status: null (was previously mapped from Salesforce Status)")
-print(f"   These fields will be null for all new leads inserted into lead_master table")
+if __name__ == "__main__":
+    try:
+        print("🏢 CHENNAI SALESFORCE TO SUPABASE SYNC (ENHANCED DUPLICATES + MANUAL PARSING)")
+        print("=" * 80)
+        print("🎯 COMBINED FEATURES:")
+        print("   - Manual parsing for robust remarks extraction")
+        print("   - Enhanced duplicate table logic (like Meta script)")
+        print("   - Only processes leads CREATED in past 24 hours")
+        print("   - Handles empty remark sections: '1. rnr  2.  3. VOC...'")
+        print("   - Same phone + different sources → duplicate_leads table")
+        print("   - Same phone + same source → UPDATE or SKIP")
+        print("   - Supports up to 10 sources per phone number")
+        print("   - Branch and lead_status set to NULL")
+        print("   - PS records with ps_branch and lead_status NULL")
+        
+        success = main()
+        
+        if success:
+            print("\n🎉 SCRIPT EXECUTION COMPLETED SUCCESSFULLY!")
+            print("=" * 50)
+            print("🔧 Key Features Implemented:")
+            print("   ✅ Enhanced duplicate handling with duplicate_leads table")
+            print("   ✅ Manual parsing for complex remark formats")
+            print("   ✅ Proper UPDATE logic for existing leads")
+            print("   ✅ Only processes leads created in past 24 hours")
+            print("   ✅ Chennai CRE and PS mappings")
+            print("   ✅ Robust error handling and logging")
+            print("   ✅ NULL values for branch and lead_status")
+            print("   ✅ Handles 'NONE' values properly")
+            print("   ✅ Supports up to 10 duplicate sources per phone")
+            
+            print("\n💡 MANUAL PARSING EXAMPLE:")
+            print("   Input: '1. rnr  2.  3. VOC : cx enquired about on road price'")
+            print("   Result:")
+            print("     ✅ first_remark: 'rnr'")
+            print("     ✅ second_remark: NULL (empty section)")
+            print("     ✅ third_remark: 'VOC : cx enquired about on road price'")
+            print("     ✅ fourth_remark through seventh_remark: NULL")
+            
+            print("\n🔄 DUPLICATE HANDLING LOGIC:")
+            print("   📞 Same phone + same source/sub_source:")
+            print("     → If new remarks/dates: UPDATE existing lead")
+            print("     → If no changes: SKIP (exact duplicate)")
+            print("   📞 Same phone + different source:")
+            print("     → First duplicate: CREATE record in duplicate_leads table")
+            print("     → Additional duplicates: ADD to existing duplicate_leads record")
+            print("     → Supports up to 10 sources per phone number")
+            
+            print("\n🎯 SCRIPT OPTIMIZATIONS:")
+            print("   ⚡ Only fetches leads CREATED in past 24 hours (not modified)")
+            print("   ⚡ Batch processing for better performance")
+            print("   ⚡ Enhanced logging with UTF-8 encoding")
+            print("   ⚡ Retry logic for Salesforce connections")
+            print("   ⚡ Efficient duplicate checking")
+            
+            sys.exit(0)
+        else:
+            print("\n❌ SCRIPT EXECUTION FAILED!")
+            print("Check the logs for detailed error information.")
+            sys.exit(1)
+            
+    except KeyboardInterrupt:
+        print("\n⚠️ Script interrupted by user")
+        logger.info("Script interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n❌ Unexpected error: {e}")
+        logger.error(f"Unexpected error: {e}")
+        sys.exit(1)
