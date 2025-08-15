@@ -429,19 +429,18 @@
                 {% endif %}
             </div>
 
-            <!-- Won/Lost Leads Toggle Tab -->
+            <!-- Won/Lost/Approval Leads Toggle Tab -->
             <div class="tab-pane fade" id="won-lost" role="tabpanel" aria-labelledby="won-lost-tab">
                 <div class="d-flex align-items-center mb-3 justify-content-between">
                     <div class="d-flex align-items-center">
-                        <h5 class="mb-0 me-3">{{ 'Won' if status == 'won' else 'Lost' }} Leads ({{ (won_leads if status == 'won' else lost_leads)|length }})</h5>
-                        <!-- Modern Slider Toggle -->
-                        <div class="toggle-container">
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="wonLostToggle" {% if status == 'won' %}checked{% endif %}>
-                                <span class="slider"></span>
-                                <span class="toggle-label-left">Lost</span>
-                                <span class="toggle-label-right">Won</span>
-                            </label>
+                        <h5 class="mb-0 me-3" id="wonLostHeader">{{ 'Won' if status == 'won' else 'Lost' if status == 'lost' else 'Waiting for Approval' }} Leads ({{ (won_leads if status == 'won' else lost_leads if status == 'lost' else approval_leads)|length }})</h5>
+                        <!-- Three-State Toggle -->
+                        <div class="three-state-toggle">
+                            <div class="toggle-options">
+                                <button type="button" class="toggle-option" data-status="lost" id="toggle-lost">Lost</button>
+                                <button type="button" class="toggle-option" data-status="approval" id="toggle-approval">Waiting for Approval</button>
+                                <button type="button" class="toggle-option" data-status="won" id="toggle-won">Won</button>
+                            </div>
                         </div>
                     </div>
                     <div class="d-flex gap-2">
@@ -758,6 +757,63 @@
     background-color: white;
     transition: 0.4s ease;
     border-radius: 50%;
+}
+
+/* Three-State Toggle Styles */
+.three-state-toggle {
+    margin-left: 20px;
+}
+
+.toggle-options {
+    display: flex;
+    background-color: #f8f9fa;
+    border-radius: 25px;
+    padding: 4px;
+    border: 2px solid #e9ecef;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.toggle-option {
+    background: none;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: #6c757d;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    min-width: 80px;
+    text-align: center;
+}
+
+.toggle-option:hover {
+    color: #495057;
+    background-color: #e9ecef;
+}
+
+.toggle-option.active {
+    background-color: #007bff;
+    color: white;
+    box-shadow: 0 2px 4px rgba(0, 123, 255, 0.3);
+    transform: translateY(-1px);
+}
+
+.toggle-option[data-status="lost"].active {
+    background-color: #dc3545;
+    box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);
+}
+
+.toggle-option[data-status="approval"].active {
+    background-color: #ffc107;
+    color: #212529;
+    box-shadow: 0 2px 4px rgba(255, 193, 7, 0.3);
+}
+
+.toggle-option[data-status="won"].active {
+    background-color: #28a745;
+    box-shadow: 0 2px 4px rgba(40, 167, 69, 0.3);
+}
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
@@ -1539,13 +1595,22 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    // Won/Lost Leads Toggle Functionality - AJAX Version
-    const wonLostToggle = document.getElementById('wonLostToggle');
+    // Three-State Toggle Functionality for Won/Lost/Approval Leads
     const wonLostTabContent = document.getElementById('won-lost');
+    const toggleLost = document.getElementById('toggle-lost');
+    const toggleApproval = document.getElementById('toggle-approval');
+    const toggleWon = document.getElementById('toggle-won');
 
-    if (wonLostToggle && wonLostTabContent) {
-        wonLostToggle.addEventListener('change', function() {
-            const status = this.checked ? 'won' : 'lost';
+    if (wonLostTabContent && toggleLost && toggleApproval && toggleWon) {
+        // Function to handle toggle clicks
+        function handleToggleClick(clickedToggle, status) {
+            // Remove active class from all toggles
+            [toggleLost, toggleApproval, toggleWon].forEach(toggle => {
+                toggle.classList.remove('active');
+            });
+            
+            // Add active class to clicked toggle
+            clickedToggle.classList.add('active');
             
             // Show loading state
             const tableContainer = wonLostTabContent.querySelector('.table-responsive') || wonLostTabContent.querySelector('.text-center');
@@ -1554,9 +1619,10 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             // Update the header text
-            const headerText = wonLostTabContent.querySelector('h5');
+            const headerText = wonLostTabContent.querySelector('#wonLostHeader');
             if (headerText) {
-                headerText.textContent = `${status === 'won' ? 'Won' : 'Lost'} Leads (Loading...)`;
+                const statusText = status === 'won' ? 'Won' : status === 'lost' ? 'Lost' : 'Waiting for Approval';
+                headerText.textContent = `${statusText} Leads (Loading...)`;
             }
             
             // Fetch new data via AJAX
@@ -1575,7 +1641,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     const count = newTable ? newTable.querySelectorAll('tbody tr').length : 0;
                     
                     if (headerText) {
-                        headerText.textContent = `${status === 'won' ? 'Won' : 'Lost'} Leads (${count})`;
+                        const statusText = status === 'won' ? 'Won' : status === 'lost' ? 'Lost' : 'Waiting for Approval';
+                        headerText.textContent = `${statusText} Leads (${count})`;
                     }
                     
                     // Re-initialize search functionality for the new table
@@ -1594,11 +1661,25 @@ document.addEventListener('DOMContentLoaded', function() {
                         tableContainer.innerHTML = '<div class="alert alert-danger">Error loading leads. Please try again.</div>';
                     }
                 });
-        });
+        }
 
-        // Set initial toggle state
-        const currentStatus = window.location.search.includes('status=won') ? 'won' : 'lost';
-        wonLostToggle.checked = currentStatus === 'won';
+        // Add click event listeners
+        toggleLost.addEventListener('click', () => handleToggleClick(toggleLost, 'lost'));
+        toggleApproval.addEventListener('click', () => handleToggleClick(toggleApproval, 'approval'));
+        toggleWon.addEventListener('click', () => handleToggleClick(toggleWon, 'won'));
+
+        // Set initial active state based on URL or default to 'lost'
+        const urlParams = new URLSearchParams(window.location.search);
+        const currentStatus = urlParams.get('status') || 'lost';
+        
+        // Activate the appropriate toggle
+        if (currentStatus === 'won') {
+            toggleWon.classList.add('active');
+        } else if (currentStatus === 'approval') {
+            toggleApproval.classList.add('active');
+        } else {
+            toggleLost.classList.add('active');
+        }
     }
 
     // Handle tab parameter from URL to set active tab

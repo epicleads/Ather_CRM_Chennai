@@ -192,9 +192,22 @@
                         <label for="final_status" class="form-label">Final Status</label>
                         <select class="form-select" id="final_status" name="final_status" required>
                             <option value="Pending" {% if lead.final_status == 'Pending' or not lead.final_status %}selected{% endif %}>Pending</option>
+                            <option value="Waiting for Approval" {% if lead.final_status == 'Waiting for Approval' %}selected{% endif %}>Waiting for Approval</option>
                             <option value="Won" {% if lead.final_status == 'Won' %}selected{% endif %}>Won</option>
                             <option value="Lost" {% if lead.final_status == 'Lost' %}selected{% endif %}>Lost</option>
                         </select>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="order_id" class="form-label">Order ID <span class="text-muted">(8 digits)</span></label>
+                        <input type="text" class="form-control" id="order_id" name="order_id" 
+                               value="{{ lead.order_id or '' }}" 
+                               pattern="[0-9]{8}" 
+                               maxlength="8" 
+                               placeholder="Enter 8-digit order ID"
+                               title="Please enter exactly 8 digits">
+                        <div class="form-text">Required when status is Booked or Retailed</div>
                     </div>
                 </div>
             </div>
@@ -298,9 +311,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const finalStatus = document.getElementById('final_status');
     function handleLeadStatusChange() {
         if (!leadStatus || !finalStatus) return;
-        // Lock Final Status for Booked, Dropped, Retailed
+        
+        const orderIdField = document.getElementById('order_id');
+        
+        // Lock Final Status for Booked, Retailed - now sets to "Waiting for Approval"
         if (leadStatus.value === 'Booked' || leadStatus.value === 'Retailed') {
-            finalStatus.value = 'Won';
+            finalStatus.value = 'Waiting for Approval';
             finalStatus.setAttribute('readonly', 'readonly');
             // Add hidden input to always submit value
             let hiddenFinalStatus = document.getElementById('hidden_final_status');
@@ -311,7 +327,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 hiddenFinalStatus.name = 'final_status';
                 finalStatus.parentNode.appendChild(hiddenFinalStatus);
             }
-            hiddenFinalStatus.value = 'Won';
+            hiddenFinalStatus.value = 'Waiting for Approval';
+            
+            // Make Order ID required and visible
+            if (orderIdField) {
+                orderIdField.required = true;
+                orderIdField.style.display = 'block';
+                orderIdField.parentNode.style.display = 'block';
+            }
         } else if (
             leadStatus.value === 'Dropped' ||
             leadStatus.value === 'Lost to Competition' ||
@@ -328,13 +351,30 @@ document.addEventListener('DOMContentLoaded', function() {
                 finalStatus.parentNode.appendChild(hiddenFinalStatus);
             }
             hiddenFinalStatus.value = 'Lost';
+            
+            // Hide Order ID field for lost leads
+            if (orderIdField) {
+                orderIdField.required = false;
+                orderIdField.style.display = 'none';
+                orderIdField.parentNode.style.display = 'none';
+            }
         } else {
             finalStatus.removeAttribute('readonly');
             let hiddenFinalStatus = document.getElementById('hidden_final_status');
             if (hiddenFinalStatus) hiddenFinalStatus.remove();
+            
+            // Hide Order ID field for other statuses
+            if (orderIdField) {
+                orderIdField.required = false;
+                orderIdField.style.display = 'none';
+                orderIdField.parentNode.style.display = 'none';
+            }
         }
-        // Lock follow-up date for Won, Lost, Retailed, Lost to Competition, Lost to codealer
-        if (["Won", "Lost", "Retailed", "Lost to Competition", "Lost to codealer"].includes(leadStatus.value) || finalStatus.value === 'Won' || finalStatus.value === 'Lost') {
+        // Lock follow-up date for Won, Lost, Retailed, Lost to Competition, Lost to codealer, Waiting for Approval
+        if (["Won", "Lost", "Retailed", "Lost to Competition", "Lost to codealer"].includes(leadStatus.value) || 
+            finalStatus.value === 'Won' || 
+            finalStatus.value === 'Lost' || 
+            finalStatus.value === 'Waiting for Approval') {
             if (followUpDate) {
                 followUpDate.setAttribute('disabled', 'disabled');
             }
@@ -369,6 +409,18 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Form validation
     document.getElementById('psLeadUpdateForm').addEventListener('submit', function(e) {
+        // Validate Order ID when status is Booked or Retailed
+        const leadStatus = document.getElementById('lead_status');
+        const orderId = document.getElementById('order_id');
+        
+        if ((leadStatus.value === 'Booked' || leadStatus.value === 'Retailed') && 
+            (!orderId.value || !/^[0-9]{8}$/.test(orderId.value))) {
+            e.preventDefault();
+            alert('Please enter a valid 8-digit Order ID for Booked or Retailed leads.');
+            orderId.focus();
+            return;
+        }
+        
         // Show loading state
         const submitBtn = this.querySelector('button[type="submit"]');
         const originalText = submitBtn.innerHTML;

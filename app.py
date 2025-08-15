@@ -933,12 +933,17 @@ def unified_login() -> Response:
                 print(f"DEBUG: Updated password hash for Branch Head {username}")
             except Exception as update_error:
                 print(f"DEBUG: Failed to update password hash for Branch Head {username}: {str(update_error)}")
-        session.clear()
+        # Create proper session
+        session_id = auth_manager.create_session(bh_user['id'], 'bh', bh_user)
+        if not session_id:
+            flash('Session creation failed. Please try again.', 'error')
+            return redirect(url_for('index'))
+        
+        # Set additional Branch Head specific session data
         session['bh_user_id'] = bh_user['id']
         session['bh_branch'] = bh_user['branch']
         session['bh_name'] = bh_user.get('name', username)
-        session['user_type'] = 'bh'
-        session['username'] = username
+        
         flash('Welcome! Logged in as Branch Head', 'success')
         return redirect(url_for('bh_dashboard'))
     elif user_type == 'rec':
@@ -3785,6 +3790,7 @@ def ps_dashboard():
         attended_leads = []
         won_leads = []
         lost_leads = []
+        approval_leads = []  # New list for leads waiting for approval
         event_leads = []  # Separate list for event leads
 
         # Define statuses that should be excluded from Today's Follow-up and Pending Leads
@@ -3870,6 +3876,11 @@ def ps_dashboard():
                 final_status not in ['Won', 'Lost'] and
                 (not lead_status or lead_status not in excluded_statuses)):
                 todays_followups_regular.append(lead_dict)
+            
+            # Check for leads waiting for approval
+            if final_status == 'Waiting for Approval':
+                approval_leads.append(lead_dict)
+                print(f"[DEBUG] Added to approval_leads (Waiting for Approval): {lead.get('lead_uid')}")
 
 
 
@@ -3939,6 +3950,9 @@ def ps_dashboard():
             elif final_status == 'Lost':
                 lost_leads.append(lead_dict)
                 print(f"[DEBUG] Event lead {lead_dict['lead_uid']} also added to lost_leads")
+            elif final_status == 'Waiting for Approval':
+                approval_leads.append(lead_dict)
+                print(f"[DEBUG] Event lead {lead_dict['lead_uid']} also added to approval_leads")
             elif final_status == 'Pending':
                 # Check if event lead has been called (has ps_first_call_date)
                 if ps_first_call_date:
@@ -4033,6 +4047,9 @@ def ps_dashboard():
                 lead_dict['lost_timestamp'] = lead.get('updated_at') or datetime.now().isoformat()
                 lost_leads.append(lead_dict)
                 print(f"[DEBUG] Walk-in lead {lead_dict['lead_uid']} added to lost_leads")
+            elif final_status == 'Waiting for Approval':
+                approval_leads.append(lead_dict)
+                print(f"[DEBUG] Walk-in lead {lead_dict['lead_uid']} added to approval_leads")
             elif final_status == 'Pending' or not final_status:
                 # Add to today's followups if next_followup_date is today
                 if next_followup_date and str(next_followup_date)[:10] == today_str:
@@ -4131,6 +4148,7 @@ def ps_dashboard():
                                attended_leads=attended_leads,
                                won_leads=won_leads,
                                lost_leads=lost_leads,
+                               approval_leads=approval_leads,  # Add approval leads
                                event_leads=event_leads,
                                walkin_leads=walkin_leads,
                                filter_type=filter_type,
@@ -4140,11 +4158,12 @@ def ps_dashboard():
                                status=status)  # <-- Add status here
 
         print(f"[PERF] ps_dashboard: render_template took {time.time() - t6:.3f} seconds")
-        print(f"[DEBUG] FINAL COUNTS - Fresh: {len(fresh_leads)}, Pending: {len(pending_leads)}, Attended: {len(attended_leads)}, Won: {len(won_leads)}, Lost: {len(lost_leads)}, Event: {len(event_leads)}")
+        print(f"[DEBUG] FINAL COUNTS - Fresh: {len(fresh_leads)}, Pending: {len(pending_leads)}, Attended: {len(attended_leads)}, Won: {len(won_leads)}, Lost: {len(lost_leads)}, Approval: {len(approval_leads)}, Event: {len(event_leads)}")
         print(f"[DEBUG] Fresh leads being sent to template: {[lead.get('lead_uid') for lead in fresh_leads]}")
         print(f"[DEBUG] Pending leads being sent to template: {[lead.get('lead_uid') for lead in pending_leads]}")
         print(f"[DEBUG] Won leads being sent to template: {[lead.get('lead_uid') for lead in won_leads]}")
         print(f"[DEBUG] Lost leads being sent to template: {[lead.get('lead_uid') for lead in lost_leads]}")
+        print(f"[DEBUG] Approval leads being sent to template: {[lead.get('lead_uid') for lead in approval_leads]}")
         print(f"[DEBUG] Event leads being sent to template: {[lead.get('lead_uid') for lead in event_leads]}")
         print(f"[DEBUG] Walk-in leads count: {len(walkin_leads) if walkin_leads else 0}")
         print(f"[DEBUG] Today's followups count: {len(todays_followups)}")
@@ -4159,6 +4178,7 @@ def ps_dashboard():
             'attended_leads': attended_leads,
             'won_leads': won_leads,
             'lost_leads': lost_leads,
+            'approval_leads': approval_leads,  # Add approval leads
             'event_leads': event_leads,
             'walkin_leads': walkin_leads,
             'filter_type': filter_type,
@@ -4190,6 +4210,7 @@ def ps_dashboard():
                              attended_leads=[],
                              won_leads=[],
                              lost_leads=[],
+                             approval_leads=[],  # Add approval leads
                              event_leads=[],
                              walkin_leads=[],
                              filter_type=filter_type,
@@ -4481,10 +4502,40 @@ def update_ps_lead(uid):
                                 updated_ps_data = updated_ps_result.data[0]
                                 sync_test_drive_to_alltest_drive('ps_followup_master', uid, updated_ps_data)
                         
-                        # Also update the main lead table final status
-                        if request.form.get('final_status'):
-                            final_status = request.form['final_status']
-                            main_update_data = {'final_status': final_status}
+                        # Handle approval workflow for Booked/Retailed leads
+                        if lead_status in ['Booked', 'Retailed']:
+                            # Set approval status to "Waiting for Approval"
+                            update_data['approval_status'] = 'Waiting for Approval'
+                            update_data['approval_requested_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            
+                            # Store order_id if provided
+                            if request.form.get('order_id'):
+                                update_data['order_id'] = request.form['order_id']
+                            
+                            # Set final status to "Waiting for Approval"
+                            update_data['final_status'] = 'Waiting for Approval'
+                            
+                            # Also update the main lead table
+                            main_update_data = {
+                                'final_status': 'Waiting for Approval',
+                                'approval_status': 'Waiting for Approval',
+                                'approval_requested_at': update_data['approval_requested_at']
+                            }
+                            if request.form.get('order_id'):
+                                main_update_data['order_id'] = request.form['order_id']
+                            
+                            supabase.table('lead_master').update(main_update_data).eq('uid', uid).execute()
+                            supabase.table('ps_followup_master').update({
+                                'approval_status': update_data['approval_status'],
+                                'approval_requested_at': update_data['approval_requested_at'],
+                                'order_id': update_data.get('order_id'),
+                                'final_status': update_data['final_status']
+                            }).eq('lead_uid', uid).execute()
+                        else:
+                            # Handle other statuses normally
+                            if request.form.get('final_status'):
+                                final_status = request.form['final_status']
+                                main_update_data = {'final_status': final_status}
                             if final_status == 'Won':
                                 main_update_data['won_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             elif final_status == 'Lost':
@@ -9331,7 +9382,40 @@ def ps_dashboard_leads():
                 lost_leads.append(lead_dict)
         
         # Select the appropriate list based on status
-        leads_list = won_leads if status == 'won' else lost_leads
+        if status == 'won':
+            leads_list = won_leads
+        elif status == 'approval':
+            # Get leads waiting for approval
+            approval_leads = []
+            for lead in assigned_leads:
+                lead_dict = dict(lead)
+                lead_dict['lead_uid'] = lead.get('lead_uid')
+                if lead.get('final_status') == 'Waiting for Approval':
+                    approval_leads.append(lead_dict)
+            
+            # Process event leads for approval
+            for lead in event_leads:
+                lead_dict = dict(lead)
+                lead_dict['lead_uid'] = lead.get('activity_uid', '') or lead.get('uid', '')
+                lead_dict['customer_mobile_number'] = lead.get('customer_phone_number', '')
+                if lead.get('final_status') == 'Waiting for Approval':
+                    approval_leads.append(lead_dict)
+            
+            # Process walk-in leads for approval
+            for lead in walkin_leads:
+                lead_dict = dict(lead)
+                lead_dict['lead_uid'] = lead.get('uid', f"W{lead.get('id')}")
+                lead_dict['customer_mobile_number'] = lead.get('mobile_number', '')
+                lead_dict['customer_name'] = lead.get('customer_name', '')
+                lead_dict['is_walkin'] = True
+                lead_dict['walkin_id'] = lead.get('id')
+                lead_dict['cre_name'] = ''
+                if lead.get('status') == 'Waiting for Approval':
+                    approval_leads.append(lead_dict)
+            
+            leads_list = approval_leads
+        else:  # lost
+            leads_list = lost_leads
         
         # Render only the table HTML
         return render_template('ps_dashboard_leads_table.html', 
@@ -10387,6 +10471,410 @@ def api_bh_ps_performance():
     except Exception as e:
         print(f"Error in api_bh_ps_performance: {str(e)}")
         return jsonify({'success': False, 'message': 'Error fetching PS performance data'})
+
+@app.route('/api/bh_approval_leads')
+@require_auth(['bh'])
+def api_bh_approval_leads():
+    """API to get leads waiting for approval for Branch Head"""
+    try:
+        # Check if user is logged in as Branch Head
+        if session.get('user_type') != 'bh':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        branch = session.get('bh_branch')
+        if not branch:
+            return jsonify({'success': False, 'message': 'Branch information not found'})
+        
+        # Get leads waiting for approval from all tables
+        approval_leads = []
+        
+        # 1. PS Followup leads waiting for approval
+        try:
+            ps_leads = supabase.table('ps_followup_master').select('*').eq('ps_branch', branch).eq('approval_status', 'Waiting for Approval').execute()
+            if ps_leads.data:
+                for lead in ps_leads.data:
+                    approval_leads.append({
+                        'source_table': 'ps_followup',
+                        'lead_id': lead['lead_uid'],
+                        'customer_name': lead.get('customer_name'),
+                        'customer_mobile_number': lead.get('customer_mobile_number'),
+                        'source': lead.get('source'),
+                        'lead_status': lead.get('lead_status'),
+                        'final_status': lead.get('final_status'),
+                        'order_id': lead.get('order_id'),
+                        'approval_status': lead.get('approval_status'),
+                        'approval_requested_at': lead.get('approval_requested_at'),
+                        'ps_name': lead.get('ps_name'),
+                        'ps_branch': lead.get('ps_branch')
+                    })
+        except Exception as e:
+            print(f"[bh_approval_leads] ps_followup_master query error: {e}")
+
+        # 2. Activity leads waiting for approval (optional table)
+        try:
+            activity_leads = supabase.table('activity_leads').select('*').eq('location', branch).eq('approval_status', 'Waiting for Approval').execute()
+            if activity_leads.data:
+                for lead in activity_leads.data:
+                    approval_leads.append({
+                        'source_table': 'activity_leads',
+                        'lead_id': lead['activity_uid'],
+                        'customer_name': lead.get('customer_name'),
+                        'customer_mobile_number': lead.get('customer_mobile_number'),
+                        'source': lead.get('source'),
+                        'lead_status': lead.get('lead_status'),
+                        'final_status': lead.get('final_status'),
+                        'order_id': lead.get('order_id'),
+                        'approval_status': lead.get('approval_status'),
+                        'approval_requested_at': lead.get('approval_requested_at'),
+                        'ps_name': lead.get('ps_name'),
+                        'ps_branch': lead.get('location')
+                    })
+        except Exception as e:
+            print(f"[bh_approval_leads] activity_leads query error: {e}")
+
+        # 3. Walk-in leads waiting for approval (optional table)
+        try:
+            walkin_leads = supabase.table('walkin_table').select('*').eq('branch', branch).eq('approval_status', 'Waiting for Approval').execute()
+            if walkin_leads.data:
+                for lead in walkin_leads.data:
+                    approval_leads.append({
+                        'source_table': 'walkin_table',
+                        'lead_id': lead['uid'],
+                        'customer_name': lead.get('customer_name'),
+                        'customer_mobile_number': lead.get('customer_mobile_number'),
+                        'source': lead.get('source'),
+                        'lead_status': lead.get('status'),
+                        'final_status': lead.get('status'),
+                        'order_id': lead.get('order_id'),
+                        'approval_status': lead.get('approval_status'),
+                        'approval_requested_at': lead.get('approval_requested_at'),
+                        'ps_name': lead.get('ps_assigned'),
+                        'ps_branch': lead.get('branch')
+                    })
+        except Exception as e:
+            print(f"[bh_approval_leads] walkin_table query error: {e}")
+
+        # 4. Fallback: pick directly from lead_master in case ps_followup_master wasn't updated
+        try:
+            lm_leads = supabase.table('lead_master').select('*').eq('branch', branch).eq('final_status', 'Waiting for Approval').execute()
+            if lm_leads.data:
+                for lead in lm_leads.data:
+                    # Check if this lead is already in the list (to avoid duplicates)
+                    lead_already_exists = any(
+                        existing_lead['lead_id'] == lead['uid'] or 
+                        (existing_lead.get('order_id') and existing_lead['order_id'] == lead.get('order_id'))
+                        for existing_lead in approval_leads
+                    )
+                    
+                    if not lead_already_exists:
+                        approval_leads.append({
+                            'source_table': 'lead_master',
+                            'lead_id': lead['uid'],
+                            'customer_name': lead.get('customer_name'),
+                            'customer_mobile_number': lead.get('customer_mobile_number'),
+                            'source': lead.get('source'),
+                            'lead_status': lead.get('lead_status'),
+                            'final_status': lead.get('final_status'),
+                            'order_id': lead.get('order_id'),
+                            'approval_status': lead.get('approval_status'),
+                            'approval_requested_at': lead.get('approval_requested_at'),
+                            'ps_name': lead.get('ps_name'),
+                            'ps_branch': lead.get('branch')
+                        })
+        except Exception as e:
+            print(f"[bh_approval_leads] lead_master fallback query error: {e}")
+        
+        # Remove duplicates based on order_id (keep the most recent one)
+        unique_leads = {}
+        for lead in approval_leads:
+            order_id = lead.get('order_id')
+            if order_id:
+                if order_id not in unique_leads:
+                    unique_leads[order_id] = lead
+                else:
+                    # Keep the one with the most recent approval_requested_at
+                    existing_time = unique_leads[order_id].get('approval_requested_at', '')
+                    current_time = lead.get('approval_requested_at', '')
+                    if current_time > existing_time:
+                        unique_leads[order_id] = lead
+        
+        # Convert back to list
+        approval_leads = list(unique_leads.values())
+        
+        # Sort by approval requested date (newest first)
+        approval_leads.sort(key=lambda x: x['approval_requested_at'] or '', reverse=True)
+        
+        return jsonify({
+            'success': True,
+            'leads': approval_leads,
+            'count': len(approval_leads)
+        })
+        
+    except Exception as e:
+        print(f"Error in api_bh_approval_leads: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error fetching approval leads'})
+
+@app.route('/api/bh_approve_lead', methods=['POST'])
+@require_auth(['bh'])
+def api_bh_approve_lead():
+    """API for Branch Head to approve a lead"""
+    try:
+        # Check if user is logged in as Branch Head
+        if session.get('user_type') != 'bh':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        data = request.get_json()
+        source_table = data.get('source_table')
+        lead_id = data.get('lead_id')
+        remarks = data.get('remarks', '')
+        
+        if not source_table or not lead_id:
+            return jsonify({'success': False, 'message': 'Missing required parameters'})
+        
+        branch = session.get('bh_branch')
+        bh_name = session.get('bh_name', 'Branch Head')
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Update the lead based on source table
+        if source_table == 'ps_followup':
+            # Update ps_followup_master
+            update_data = {
+                'approval_status': 'Approved',
+                'approved_by': bh_name,
+                'approved_at': current_time,
+                'approval_remarks': remarks,
+                'final_status': 'Won',
+                'won_timestamp': current_time
+            }
+            result = supabase.table('ps_followup_master').update(update_data).eq('lead_uid', lead_id).eq('ps_branch', branch).execute()
+            
+            # Also update lead_master for consistency
+            supabase.table('lead_master').update({
+                'approval_status': 'Approved',
+                'approved_by': bh_name,
+                'approved_at': current_time,
+                'approval_remarks': remarks,
+                'final_status': 'Won',
+                'won_timestamp': current_time
+            }).eq('uid', lead_id).execute()
+            
+        elif source_table == 'activity_leads':
+            # Update activity_leads
+            update_data = {
+                'approval_status': 'Approved',
+                'approved_by': bh_name,
+                'approved_at': current_time,
+                'approval_remarks': remarks,
+                'final_status': 'Won',
+                'won_timestamp': current_time
+            }
+            result = supabase.table('activity_leads').update(update_data).eq('activity_uid', lead_id).eq('location', branch).execute()
+            
+        elif source_table == 'walkin_table':
+            # Update walkin_table
+            update_data = {
+                'approval_status': 'Approved',
+                'approved_by': bh_name,
+                'approved_at': current_time,
+                'approval_remarks': remarks,
+                'status': 'Won'
+            }
+            result = supabase.table('walkin_table').update(update_data).eq('uid', lead_id).eq('branch', branch).execute()
+
+        elif source_table == 'lead_master':
+            # Approve directly from lead_master fallback
+            update_data = {
+                'approval_status': 'Approved',
+                'approved_by': bh_name,
+                'approved_at': current_time,
+                'approval_remarks': remarks,
+                'final_status': 'Won',
+                'won_timestamp': current_time
+            }
+            result = supabase.table('lead_master').update(update_data).eq('uid', lead_id).eq('branch', branch).execute()
+            # Keep ps_followup_master in sync when possible
+            try:
+                supabase.table('ps_followup_master').update({
+                    'approval_status': 'Approved',
+                    'approved_by': bh_name,
+                    'approved_at': current_time,
+                    'approval_remarks': remarks,
+                    'final_status': 'Won',
+                    'won_timestamp': current_time
+                }).eq('lead_uid', lead_id).execute()
+            except Exception as _:
+                pass
+            
+        else:
+            return jsonify({'success': False, 'message': 'Invalid source table'})
+        
+        # Log the approval action
+        auth_manager.log_audit_event(
+            user_id=session.get('bh_user_id'),
+            user_type='bh',
+            action='LEAD_APPROVED',
+            resource=source_table,
+            resource_id=lead_id,
+            details={
+                'approved_by': bh_name,
+                'branch': branch,
+                'remarks': remarks,
+                'timestamp': current_time
+            }
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Lead approved successfully',
+            'approved_at': current_time
+        })
+        
+    except Exception as e:
+        print(f"Error in api_bh_approve_lead: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error approving lead'})
+
+@app.route('/api/bh_approval_lead_details')
+@require_auth(['bh'])
+def api_bh_approval_lead_details():
+    """API to get detailed lead information for Branch Head (approval flow)"""
+    try:
+        # Check if user is logged in as Branch Head
+        if session.get('user_type') != 'bh':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        source_table = request.args.get('source_table')
+        lead_id = request.args.get('lead_id')
+        
+        if not source_table or not lead_id:
+            return jsonify({'success': False, 'message': 'Missing parameters'})
+        
+        branch = session.get('bh_branch')
+        
+        # Get lead details based on source table
+        if source_table == 'ps_followup':
+            result = supabase.table('ps_followup_master').select('*').eq('lead_uid', lead_id).eq('ps_branch', branch).execute()
+        elif source_table == 'activity_leads':
+            result = supabase.table('activity_leads').select('*').eq('activity_uid', lead_id).eq('location', branch).execute()
+        elif source_table == 'walkin_table':
+            result = supabase.table('walkin_table').select('*').eq('uid', lead_id).eq('branch', branch).execute()
+        else:
+            return jsonify({'success': False, 'message': 'Invalid source table'})
+        
+        if not result.data:
+            return jsonify({'success': False, 'message': 'Lead not found'})
+        
+        lead = result.data[0]
+        
+        return jsonify({
+            'success': True,
+            'lead': lead
+        })
+        
+    except Exception as e:
+        print(f"Error in api_bh_approval_lead_details: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error fetching lead details'})
+
+@app.route('/api/bh_approved_leads')
+@require_auth(['bh'])
+def api_bh_approved_leads():
+    """API to get all approved leads for Branch Head"""
+    try:
+        # Check if user is logged in as Branch Head
+        if session.get('user_type') != 'bh':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        branch = session.get('bh_branch')
+        
+        # Get approved leads from all sources with deduplication
+        approved_leads = []
+        seen_order_ids = set()
+        seen_lead_ids = set()
+        
+        # Get approved leads from ps_followup_master (PRIORITY 1)
+        ps_approved = supabase.table('ps_followup_master').select('*').eq('ps_branch', branch).eq('approval_status', 'Approved').execute().data or []
+        for lead in ps_approved:
+            lead_dict = dict(lead)
+            lead_dict['source_table'] = 'ps_followup'
+            lead_dict['lead_id'] = lead.get('lead_uid')
+            
+            # Check for duplicates using order_id or lead_uid
+            order_id = lead.get('order_id')
+            lead_uid = lead.get('lead_uid')
+            
+            if order_id and order_id not in seen_order_ids:
+                approved_leads.append(lead_dict)
+                seen_order_ids.add(order_id)
+                if lead_uid:
+                    seen_lead_ids.add(lead_uid)
+            elif lead_uid and lead_uid not in seen_lead_ids:
+                approved_leads.append(lead_dict)
+                seen_lead_ids.add(lead_uid)
+        
+        # Get approved leads from activity_leads (PRIORITY 2)
+        activity_approved = supabase.table('activity_leads').select('*').eq('location', branch).eq('approval_status', 'Approved').execute().data or []
+        for lead in activity_approved:
+            lead_dict = dict(lead)
+            lead_dict['source_table'] = 'activity_leads'
+            lead_dict['lead_id'] = lead.get('activity_uid')
+            
+            # Check for duplicates
+            order_id = lead.get('order_id')
+            activity_uid = lead.get('activity_uid')
+            
+            if order_id and order_id not in seen_order_ids:
+                approved_leads.append(lead_dict)
+                seen_order_ids.add(order_id)
+            elif activity_uid and activity_uid not in seen_lead_ids:
+                approved_leads.append(lead_dict)
+                seen_lead_ids.add(activity_uid)
+        
+        # Get approved leads from walkin_table (PRIORITY 3)
+        walkin_approved = supabase.table('walkin_table').select('*').eq('branch', branch).eq('approval_status', 'Approved').execute().data or []
+        for lead in walkin_approved:
+            lead_dict = dict(lead)
+            lead_dict['source_table'] = 'walkin_table'
+            lead_dict['lead_id'] = lead.get('uid')
+            
+            # Check for duplicates
+            order_id = lead.get('order_id')
+            walkin_uid = lead.get('uid')
+            
+            if order_id and order_id not in seen_order_ids:
+                approved_leads.append(lead_dict)
+                seen_order_ids.add(order_id)
+            elif walkin_uid and walkin_uid not in seen_lead_ids:
+                approved_leads.append(lead_dict)
+                seen_lead_ids.add(walkin_uid)
+        
+        # Get approved leads from lead_master (PRIORITY 4 - only if not already seen)
+        lead_master_approved = supabase.table('lead_master').select('*').eq('branch', branch).eq('approval_status', 'Approved').execute().data or []
+        for lead in lead_master_approved:
+            lead_dict = dict(lead)
+            lead_dict['source_table'] = 'lead_master'
+            lead_dict['lead_id'] = lead.get('uid')
+            
+            # Only add if not already seen in higher priority tables
+            order_id = lead.get('order_id')
+            lead_uid = lead.get('uid')
+            
+            if order_id and order_id not in seen_order_ids:
+                approved_leads.append(lead_dict)
+                seen_order_ids.add(order_id)
+            elif lead_uid and lead_uid not in seen_lead_ids:
+                approved_leads.append(lead_dict)
+                seen_lead_ids.add(lead_uid)
+        
+        # Sort by approval date (most recent first)
+        approved_leads.sort(key=lambda x: x.get('approved_at', x.get('updated_at', '')), reverse=True)
+        
+        return jsonify({
+            'success': True,
+            'leads': approved_leads
+        })
+        
+    except Exception as e:
+        print(f"Error in api_bh_approved_leads: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error fetching approved leads'})
 
 @app.route('/api/bh_leads_list')
 def api_bh_leads_list():
