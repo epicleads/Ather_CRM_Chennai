@@ -69,6 +69,245 @@ def get_ist_timestamp():
     # Format with explicit timezone offset
     return ist_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] + '+05:30'
 
+# WhatsApp Helper Functions
+def is_qualified_lead(message_content, button_payload):
+    """Check if a WhatsApp message indicates a qualified lead"""
+    if not message_content and not button_payload:
+        return False
+    
+    # Convert to lowercase for case-insensitive matching
+    message_lower = (message_content or "").lower()
+    button_lower = (button_payload or "").lower()
+    
+    # HIGH-INTENT BUTTON OPTIONS - These are the most qualified leads
+    high_intent_buttons = [
+        'know more',
+        'i need a call back', 
+        'share brochure',
+        'book test ride',
+        'book now'
+    ]
+    
+    # Check for high-intent button clicks first (highest priority)
+    if button_payload:
+        for button in high_intent_buttons:
+            if button.lower() in button_lower:
+                print(f"🎯 HIGH-INTENT BUTTON CLICKED: '{button}' - QUALIFIED LEAD!")
+                return True
+    
+    # Check message content for interest indicators
+    interest_keywords = [
+        'interested', 'interest', 'want', 'need', 'looking for', 'searching for',
+        'price', 'cost', 'quote', 'quotation', 'details', 'information',
+        'test drive', 'testdrive', 'book', 'booking', 'reserve', 'reservation',
+        'buy', 'purchase', 'buying', 'purchasing', 'compare', 'comparison',
+        'specifications', 'specs', 'features', 'benefits', 'advantages',
+        'delivery', 'availability', 'stock', 'in stock', 'ready stock',
+        'discount', 'offer', 'deal', 'best price', 'best deal',
+        'when', 'where', 'how', 'what', 'which', 'tell me', 'show me',
+        'contact', 'call me', 'call back', 'callback', 'reach out',
+        'yes', 'okay', 'ok', 'sure', 'definitely', 'absolutely'
+    ]
+    
+    # Check message content
+    for keyword in interest_keywords:
+        if keyword in message_lower:
+            return True
+    
+    # Check button payload for other action words
+    if button_payload:
+        action_keywords = ['yes', 'interested', 'book', 'call', 'info', 'details', 'price']
+        for keyword in action_keywords:
+            if keyword in button_lower:
+                return True
+    
+    return False
+
+def normalize_phone_number(phone):
+    """Normalize phone number to standard format"""
+    if not phone:
+        return None
+    
+    # Remove all non-digit characters
+    digits_only = ''.join(filter(str.isdigit, str(phone)))
+    
+    # Handle Indian numbers
+    if len(digits_only) == 10:
+        # 10 digits - add 91 prefix
+        return f"91{digits_only}"
+    elif len(digits_only) == 12 and digits_only.startswith('91'):
+        # 12 digits with 91 prefix - return as is
+        return digits_only
+    elif len(digits_only) == 11 and digits_only.startswith('0'):
+        # 11 digits starting with 0 - remove 0 and add 91
+        return f"91{digits_only[1:]}"
+    elif len(digits_only) >= 10 and len(digits_only) <= 15:
+        # Other valid lengths - return as is
+        return digits_only
+    
+    return None
+
+def check_existing_leads(phone_number):
+    """Check if phone number exists in lead_master or duplicate_leads tables"""
+    try:
+        # Check lead_master table
+        master_result = supabase.table("lead_master")\
+            .select("*")\
+            .eq("customer_mobile_number", phone_number)\
+            .execute()
+        
+        master_record = master_result.data[0] if master_result.data else None
+        
+        # Check duplicate_leads table - use customer_mobile_number instead of phone_number
+        try:
+            duplicate_result = supabase.table("duplicate_leads")\
+                .select("*")\
+                .eq("customer_mobile_number", phone_number)\
+                .execute()
+            
+            duplicate_record = duplicate_result.data[0] if duplicate_result.data else None
+        except Exception as e:
+            print(f"Warning: Error checking duplicate_leads table: {e}")
+            duplicate_record = None
+        
+        return master_record, duplicate_record
+        
+    except Exception as e:
+        print(f"Error checking existing leads: {e}")
+        raise e
+
+def is_duplicate_source(record, source, sub_source):
+    """Check if source/sub_source combination already exists in a record"""
+    try:
+        # Check all source fields in the record
+        for i in range(1, 11):  # Check source1 through source10
+            existing_source = record.get(f'source{i}')
+            existing_sub_source = record.get(f'sub_source{i}')
+            
+            if existing_source == source and existing_sub_source == sub_source:
+                return True
+        
+        return False
+        
+    except Exception as e:
+        print(f"Error checking duplicate source: {e}")
+        return False
+
+def find_next_available_source_slot(record):
+    """Find the next available slot for adding a new source"""
+    try:
+        for i in range(1, 11):  # Check source1 through source10
+            if not record.get(f'source{i}'):
+                return i
+        return None  # All slots are full
+        
+    except Exception as e:
+        print(f"Error finding next available slot: {e}")
+        return None
+
+def add_source_to_duplicate_record(record, source, sub_source, date, campaign_id):
+    """Add a new source to an existing duplicate record"""
+    try:
+        slot = find_next_available_source_slot(record)
+        if not slot:
+            print(f"No available slots for {record['uid']}")
+            return False
+        
+        update_data = {
+            f'source{slot}': source,
+            f'sub_source{slot}': sub_source,
+            f'date{slot}': date,
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        if slot == 1:
+            update_data['duplicate_count'] = record.get('duplicate_count', 0) + 1
+        
+        result = supabase.table("duplicate_leads")\
+            .update(update_data)\
+            .eq("uid", record['uid'])\
+            .execute()
+        
+        return bool(result.data)
+        
+    except Exception as e:
+        print(f"Error adding source to duplicate record: {e}")
+        return False
+
+def create_duplicate_record(master_record, source, sub_source, date, campaign_id):
+    """Create a new duplicate record"""
+    try:
+        sequence = get_next_sequence_number()
+        uid = generate_uid("DUPLICATE", master_record['customer_mobile_number'], sequence)
+        current_time = datetime.now()
+        
+        duplicate_data = {
+            'uid': uid,
+            'customer_mobile_number': master_record['customer_mobile_number'],
+            'customer_name': master_record['customer_name'],
+            'source1': master_record['source'],
+            'sub_source1': master_record['sub_source'],
+            'date1': master_record['date'],
+            'source2': source,
+            'sub_source2': sub_source,
+            'date2': date,
+            'duplicate_count': 2,
+            'created_at': current_time.isoformat(),
+            'updated_at': current_time.isoformat()
+        }
+        
+        result = supabase.table("duplicate_leads").insert(duplicate_data).execute()
+        return bool(result.data)
+        
+    except Exception as e:
+        print(f"Error creating duplicate record: {e}")
+        return False
+
+def get_next_sequence_number():
+    """Get next sequence number for UID generation"""
+    try:
+        # Try to get the highest UID number from lead_master to generate next sequence
+        result = supabase.table("lead_master").select("uid").order("uid", desc=True).limit(1).execute()
+        
+        if result.data and result.data[0]['uid']:
+            # Extract sequence number from existing UID (format: SOURCE_CHAR+SEQ_CHAR-MOBILE_LAST4-SEQ_NUM)
+            uid = result.data[0]['uid']
+            # Example: XB-1850-0002 -> extract 0002 -> return 3
+            if '-' in uid:
+                uid_parts = uid.split('-')
+                if len(uid_parts) >= 3:
+                    try:
+                        last_sequence = int(uid_parts[-1])
+                        return last_sequence + 1
+                    except ValueError:
+                        pass
+        
+        # If no existing UIDs or can't parse, start with 1
+        return 1
+        
+    except Exception as e:
+        print(f"Error getting sequence number: {e}")
+        # Fallback: use timestamp-based sequence
+        return int(datetime.now().timestamp()) % 10000
+
+def generate_uid(source, phone, sequence):
+    """Generate unique UID for leads"""
+    try:
+        # Get current date
+        current_date = datetime.now().strftime("%Y%m%d")
+        
+        # Create UID format: DATE_SOURCE_PHONE_SEQUENCE
+        uid = f"{current_date}_{source}_{phone[-4:]}_{sequence:04d}"
+        return uid
+    except Exception as e:
+        print(f"Error generating UID: {e}")
+        return f"UID_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+def send_whatsapp_message(phone_number, message):
+    """Placeholder function - not needed for lead capture"""
+    print(f"📱 Note: WhatsApp sending not implemented - only receiving leads")
+    return {"success": True, "message": "WhatsApp sending not implemented - only receiving leads"}
+
 def normalize_call_dates(update_data: dict) -> dict:
     """Ensure all *_call_date fields are stored as full IST timestamps.
     If any call date fields are present with any value, overwrite with current IST timestamp.
@@ -432,6 +671,8 @@ def generate_uid(source, mobile_number, sequence):
         'Affiliate': 'A',
         'Know': 'K',
         'Whatsapp': 'W',
+        'WHATSAPP': 'W',  # WhatsApp mapping (all caps)
+        'WhatsApp': 'W',  # WhatsApp mapping (mixed case)
         'Tele': 'T',
         'Activity': 'AC',
         'Walk-in': 'W',  # Walk-in mapping
@@ -11631,6 +11872,516 @@ def debug_ps_users():
         return jsonify(debug_info)
     except Exception as e:
         return jsonify({'error': str(e)})
+
+# WhatsApp Webhook and Related Routes
+@app.route('/webhook/whatsapp', methods=['POST'])
+def whatsapp_webhook():
+    """Webhook to receive qualified WhatsApp leads with advanced duplicate handling"""
+    try:
+        data = request.get_json()
+        if not data:
+            print("❌ No JSON data received in webhook")
+            return jsonify({"error": "No JSON data received"}), 400
+            
+        print(f"📨 Received WhatsApp webhook data: {json.dumps(data, indent=2)}")
+        
+        # Extract information from webhook with better error handling
+        try:
+            # Handle real Mcube WABA webhook format
+            phone_number = ""
+            contact_name = ""
+            message_content = ""
+            button_payload = ""
+            campaign_id = ""
+            
+            # Check if this is a status update (ignore these)
+            if data.get('entry') and isinstance(data['entry'], list):
+                for entry in data['entry']:
+                    if entry.get('changes') and isinstance(entry['changes'], list):
+                        for change in entry['changes']:
+                            if change.get('field') == 'messages':
+                                value = change.get('value', {})
+                                
+                                # Check if this is a status update (ignore)
+                                if value.get('statuses'):
+                                    print("ℹ️ Ignoring status update webhook")
+                                    return jsonify({"status": "ignored", "reason": "Status update webhook"}), 200
+                                
+                                # Check if this is a message (process this)
+                                if value.get('messages'):
+                                    messages = value['messages']
+                                    if isinstance(messages, list) and len(messages) > 0:
+                                        message = messages[0]
+                                        
+                                        # Extract phone number
+                                        phone_number = message.get('from', '')
+                                        if phone_number:
+                                            phone_number = phone_number.replace('+', '')
+                                        
+                                        # Extract contact name (if available)
+                                        if message.get('contacts') and isinstance(message['contacts'], list):
+                                            contact = message['contacts'][0]
+                                            contact_name = contact.get('profile', {}).get('name', '')
+                                        # Also check if contacts are in the value object
+                                        elif value.get('contacts') and isinstance(value['contacts'], list):
+                                            contact = value['contacts'][0]
+                                            contact_name = contact.get('profile', {}).get('name', '')
+                                        
+                                        # Extract message content
+                                        if message.get('text'):
+                                            message_content = message['text'].get('body', '')
+                                        
+                                        # Extract button payload (interactive messages)
+                                        if message.get('interactive'):
+                                            interactive = message['interactive']
+                                            if interactive.get('type') == 'button_reply':
+                                                button_payload = interactive['button_reply'].get('title', '')
+                                            elif interactive.get('type') == 'list_reply':
+                                                button_payload = interactive['list_reply'].get('title', '')
+                                        # Extract button payload from button type messages
+                                        elif message.get('type') == 'button' and message.get('button'):
+                                            button_payload = message['button'].get('text', '') or message['button'].get('payload', '')
+                                        
+                                        # Campaign column should remain empty - no mapping needed
+                                        campaign_id = None
+                                        break
+            
+            # Fallback to old format for testing
+            if not phone_number:
+                phone_number = data.get('from', '') or data.get('sender', '')
+                if phone_number:
+                    phone_number = phone_number.replace('+', '')
+                
+                if isinstance(data.get('text'), dict):
+                    message_content = data.get('text', {}).get('body', '')
+                elif isinstance(data.get('text'), str):
+                    message_content = data.get('text', '')
+                
+                if isinstance(data.get('profile'), dict):
+                    contact_name = data.get('profile', {}).get('name', '')
+                elif isinstance(data.get('contact'), dict):
+                    contact_name = data.get('contact', {}).get('name', '')
+                elif isinstance(data.get('contact_name'), str):
+                    contact_name = data.get('contact_name', '')
+                
+                if isinstance(data.get('button'), dict):
+                    button_payload = data.get('button', {}).get('payload', '')
+                elif isinstance(data.get('button'), str):
+                    button_payload = data.get('button', '')
+                elif isinstance(data.get('payload'), str):
+                    button_payload = data.get('payload', '')
+                elif isinstance(data.get('interactive'), dict):
+                    interactive = data.get('interactive', {})
+                    if 'button_reply' in interactive:
+                        button_payload = interactive['button_reply'].get('title', '')
+                    elif 'list_reply' in interactive:
+                        button_payload = interactive['list_reply'].get('title', '')
+                elif isinstance(data.get('button_text'), str):
+                    button_payload = data.get('button_text', '')
+                elif isinstance(data.get('message'), dict) and isinstance(data.get('message', {}).get('button'), dict):
+                    button_payload = data.get('message', {}).get('button', {}).get('text', '')
+                
+                # Campaign column should remain empty - no mapping needed
+                campaign_id = None
+            
+            if not phone_number:
+                print("❌ No phone number found in webhook data")
+                return jsonify({"error": "Missing phone number"}), 400
+                
+        except Exception as e:
+            print(f"❌ Error extracting webhook data: {e}")
+            return jsonify({"error": f"Error extracting webhook data: {str(e)}"}), 400
+        
+        print(f"📊 Extracted data:")
+        print(f"   📞 Phone: {phone_number}")
+        print(f"   👤 Name: {contact_name}")
+        print(f"   💬 Message: {message_content}")
+        print(f"   🔘 Button: {button_payload}")
+        print(f"   📋 Campaign: {campaign_id}")
+        
+        # Normalize phone number
+        normalized_phone = normalize_phone_number(phone_number)
+        if not normalized_phone:
+            print(f"❌ Invalid phone number: {phone_number}")
+            return jsonify({"error": "Invalid phone number"}), 400
+        
+        print(f"📱 Normalized phone: {normalized_phone}")
+        
+        # Check if this is a qualified lead
+        if not is_qualified_lead(message_content, button_payload):
+            print(f"🚫 Non-qualified message from {normalized_phone}")
+            return jsonify({
+                "status": "ignored", 
+                "reason": "Not a qualified lead - no interest indicators found"
+            }), 200
+        
+        print(f"🎯 QUALIFIED LEAD detected for {normalized_phone}")
+        
+        # Check existing records in both tables (same as Meta script logic)
+        try:
+            master_record, duplicate_record = check_existing_leads(normalized_phone)
+        except Exception as e:
+            print(f"❌ Error checking existing leads: {e}")
+            return jsonify({"error": f"Database error: {str(e)}"}), 500
+        
+        current_source = "WHATSAPP"
+        current_sub_source = "Whatsapp Blast"
+        current_date = datetime.now().date().isoformat()
+        
+        # Process lead based on existing records (same logic as Meta script)
+        if master_record:
+            print(f"📞 Phone exists in lead_master: {master_record['uid']}")
+            
+            # Check if this is a duplicate source/sub_source combination
+            if is_duplicate_source(master_record, current_source, current_sub_source):
+                print(f"⚠️ Skipping exact duplicate: {normalized_phone} | {current_source}/{current_sub_source}")
+                print(f"⚠️ SKIPPED EXACT DUPLICATE!")
+                print(f"   📱 Phone: {normalized_phone}")
+                print(f"   📊 Source: {current_source}/{current_sub_source}")
+                print(f"   🚫 Reason: Same source already exists")
+                
+                return jsonify({
+                    "status": "skipped_duplicate",
+                    "reason": f"Exact duplicate source: {current_source}/{current_sub_source}",
+                    "existing_uid": master_record['uid']
+                }), 200
+            
+            # Check if already exists in duplicate_leads
+            if duplicate_record:
+                print(f"📞 Phone exists in duplicate_leads: {duplicate_record['uid']}")
+                
+                # Check if this source/sub_source already exists in duplicate record
+                if is_duplicate_source(duplicate_record, current_source, current_sub_source):
+                    print(f"⚠️ Skipping duplicate in duplicate_leads: {normalized_phone}")
+                    return jsonify({
+                        "status": "skipped_duplicate",
+                        "reason": f"Source already exists in duplicate_leads: {current_source}/{current_sub_source}",
+                        "existing_uid": duplicate_record['uid']
+                    }), 200
+                
+                # Add to existing duplicate record
+                if add_source_to_duplicate_record(duplicate_record, current_source, current_sub_source, current_date, campaign_id):
+                    return jsonify({
+                        "status": "duplicate_updated",
+                        "uid": duplicate_record['uid'],
+                        "phone": normalized_phone,
+                        "new_source": f"{current_source}/{current_sub_source}",
+                        "message": "Added new source to existing duplicate record"
+                    }), 200
+                else:
+                    return jsonify({"error": "Failed to update duplicate record"}), 500
+            else:
+                # Create new duplicate record
+                if create_duplicate_record(master_record, current_source, current_sub_source, current_date, campaign_id):
+                    return jsonify({
+                        "status": "duplicate_created",
+                        "uid": master_record['uid'],
+                        "phone": normalized_phone,
+                        "sources": f"{master_record['source']}/{master_record['sub_source']} + {current_source}/{current_sub_source}",
+                        "message": "Created new duplicate record"
+                    }), 200
+                else:
+                    return jsonify({"error": "Failed to create duplicate record"}), 500
+        else:
+            # Completely new lead - create in lead_master
+            print(f"🆕 Creating new lead in lead_master for {normalized_phone}")
+            
+            try:
+                # Use the correct UID generation function (same as Meta script)
+                sequence = get_next_sequence_number()
+                uid = generate_uid(current_source, normalized_phone, sequence)
+                current_time = datetime.now()
+                
+                # Create minimal lead record - no remarks, no call dates filled
+                lead_data = {
+                    'uid': uid,
+                    'date': current_date,
+                    'customer_name': contact_name or "WhatsApp User",
+                    'customer_mobile_number': normalized_phone,
+                    'source': current_source,
+                    'sub_source': current_sub_source,
+                    'campaign': None,  # Campaign column should remain empty
+                    
+                    # All other fields as NULL (new lead)
+                    'lead_category': None,
+                    'model_interested': None,
+                    'branch': None,
+                    'cre_name': None,
+                    'cre_assigned_at': None,
+                    'ps_name': None,
+                    'ps_assigned_at': None,
+                    'lead_status': None,
+                    'follow_up_date': None,
+                    'final_status': 'Pending',
+                    'assigned': 'No',
+                    
+                    # No call dates filled
+                    'first_call_date': None,
+                    'second_call_date': None,
+                    'third_call_date': None,
+                    'fourth_call_date': None,
+                    'fifth_call_date': None,
+                    'sixth_call_date': None,
+                    'seventh_call_date': None,
+                    
+                    # No remarks filled
+                    'first_remark': None,
+                    'second_remark': None,
+                    'third_remark': None,
+                    'fourth_remark': None,
+                    'fifth_remark': None,
+                    'sixth_remark': None,
+                    'seventh_remark': None,
+                    
+                    # Timestamps
+                    'created_at': current_time.isoformat(),
+                    'updated_at': current_time.isoformat()
+                }
+                
+                # Insert new qualified lead
+                result = supabase.table("lead_master").insert(lead_data).execute()
+                
+                if result.data:
+                    print(f"✅ NEW QUALIFIED WhatsApp Lead created: {uid} | {normalized_phone}")
+                    print(f"🎯 NEW QUALIFIED LEAD CREATED!")
+                    print(f"   📱 UID: {uid}")
+                    print(f"   📞 Phone: {normalized_phone}")
+                    print(f"   👤 Name: {contact_name}")
+                    print(f"   💬 Qualifying Message: {message_content}")
+                    print(f"   🔘 Button Clicked: {button_payload}")
+                    print(f"   📊 Source: {current_source} / {current_sub_source}")
+                    print(f"   📋 Campaign: {campaign_id}")
+                    print(f"   ⏰ Time: {current_time}")
+                    
+                    return jsonify({
+                        "status": "qualified_lead_created",
+                        "uid": uid,
+                        "phone": normalized_phone,
+                        "source": f"{current_source}/{current_sub_source}",
+                        "message": "New qualified WhatsApp lead captured successfully"
+                    }), 200
+                else:
+                    print(f"❌ Failed to create qualified lead for: {normalized_phone}")
+                    return jsonify({"error": "Failed to create qualified lead"}), 500
+                    
+            except Exception as e:
+                print(f"❌ Error creating new lead: {e}")
+                return jsonify({"error": f"Error creating new lead: {str(e)}"}), 500
+        
+    except Exception as e:
+        print(f"❌ WhatsApp webhook error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/leads/qualified', methods=['GET'])
+def get_qualified_leads():
+    """Get all qualified WhatsApp leads"""
+    try:
+        result = supabase.table("lead_master")\
+            .select("uid, customer_name, customer_mobile_number, source, sub_source, created_at, assigned, cre_name")\
+            .eq("sub_source", "Whatsapp Blast")\
+            .eq("assigned", "No")\
+            .order("created_at", desc=True)\
+            .execute()
+        
+        print(f"📊 Retrieved {len(result.data)} qualified WhatsApp leads")
+        
+        return jsonify({
+            "qualified_leads": result.data,
+            "count": len(result.data)
+        }), 200
+    except Exception as e:
+        print(f"❌ Error fetching qualified leads: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/leads/duplicates', methods=['GET'])
+def get_duplicate_leads():
+    """Get all duplicate WhatsApp leads"""
+    try:
+        result = supabase.table("duplicate_leads")\
+            .select("*")\
+            .or_("sub_source1.eq.Whatsapp Blast,sub_source2.eq.Whatsapp Blast,sub_source3.eq.Whatsapp Blast,sub_source4.eq.Whatsapp Blast,sub_source5.eq.Whatsapp Blast")\
+            .order("created_at", desc=True)\
+            .execute()
+        
+        print(f"📊 Retrieved {len(result.data)} WhatsApp duplicate records")
+        
+        return jsonify({
+            "duplicate_leads": result.data,
+            "count": len(result.data)
+        }), 200
+    except Exception as e:
+        print(f"❌ Error fetching duplicate leads: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/leads/stats', methods=['GET'])
+def get_lead_stats():
+    """Get detailed lead statistics with debugging info"""
+    try:
+        print("📊 Fetching lead statistics...")
+        
+        # Count qualified leads
+        qualified_result = supabase.table("lead_master")\
+            .select("uid", count="exact")\
+            .eq("sub_source", "Whatsapp Blast")\
+            .execute()
+        
+        # Count duplicate leads with WhatsApp
+        try:
+            duplicate_result = supabase.table("duplicate_leads")\
+                .select("uid", count="exact")\
+                .or_("sub_source1.eq.Whatsapp Blast,sub_source2.eq.Whatsapp Blast,sub_source3.eq.Whatsapp Blast,sub_source4.eq.Whatsapp Blast,sub_source5.eq.Whatsapp Blast")\
+                .execute()
+        except Exception as e:
+            print(f"⚠️ Error counting duplicate leads: {e}")
+            duplicate_result = type('obj', (object,), {'count': 0})()
+        
+        # Count unassigned leads
+        unassigned_result = supabase.table("lead_master")\
+            .select("uid", count="exact")\
+            .eq("sub_source", "Whatsapp Blast")\
+            .eq("assigned", "No")\
+            .execute()
+        
+        # Get recent leads (last 24 hours)
+        yesterday = (datetime.now() - pd.Timedelta(days=1)).isoformat()
+        recent_result = supabase.table("lead_master")\
+            .select("uid", count="exact")\
+            .eq("sub_source", "Whatsapp Blast")\
+            .gte("created_at", yesterday)\
+            .execute()
+        
+        stats = {
+            "total_qualified_leads": qualified_result.count or 0,
+            "total_duplicate_records": duplicate_result.count or 0,
+            "unassigned_leads": unassigned_result.count or 0,
+            "recent_leads_24h": recent_result.count or 0,
+            "total_processed": (qualified_result.count or 0) + (duplicate_result.count or 0)
+        }
+        
+        print(f"📊 Statistics: {stats}")
+        
+        return jsonify({"stats": stats}), 200
+    except Exception as e:
+        print(f"❌ Error fetching lead stats: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/test-qualification', methods=['POST'])
+def test_qualification():
+    """Test endpoint to check if a message would qualify as a lead"""
+    try:
+        data = request.get_json()
+        message = data.get('message', '')
+        button_payload = data.get('button_payload', '')
+        phone = data.get('phone', '1234567890')
+        
+        is_qualified = is_qualified_lead(message, button_payload)
+        normalized_phone = normalize_phone_number(phone)
+        
+        # Check what would happen with this lead
+        master_record, duplicate_record = check_existing_leads(normalized_phone)
+        
+        status_info = {
+            "message": message,
+            "button_payload": button_payload,
+            "phone": phone,
+            "normalized_phone": normalized_phone,
+            "is_qualified": is_qualified,
+            "would_create_lead": is_qualified and not master_record,
+            "existing_in_master": bool(master_record),
+            "existing_in_duplicates": bool(duplicate_record),
+            "action": "Would ignore - not qualified" if not is_qualified else
+                     "Would create new lead" if not master_record else
+                     "Would handle as duplicate"
+        }
+        
+        if master_record:
+            status_info["existing_uid"] = master_record['uid']
+            status_info["existing_source"] = f"{master_record['source']}/{master_record['sub_source']}"
+        
+        return jsonify(status_info), 200
+        
+    except Exception as e:
+        print(f"❌ Error in test qualification: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/debug/phone/<phone_number>', methods=['GET'])
+def debug_phone_status(phone_number):
+    """Debug endpoint to check detailed status of a phone number"""
+    try:
+        normalized_phone = normalize_phone_number(phone_number)
+        
+        if not normalized_phone:
+            return jsonify({"error": "Invalid phone number"}), 400
+        
+        master_record, duplicate_record = check_existing_leads(normalized_phone)
+        
+        debug_info = {
+            "original_phone": phone_number,
+            "normalized_phone": normalized_phone,
+            "exists_in_master": bool(master_record),
+            "exists_in_duplicates": bool(duplicate_record),
+            "master_record": master_record,
+            "duplicate_record": duplicate_record
+        }
+        
+        if duplicate_record:
+            # Count actual sources
+            source_count = 0
+            sources = []
+            for i in range(1, 11):
+                if duplicate_record.get(f'source{i}'):
+                    source_count += 1
+                    sources.append({
+                        f"source{i}": duplicate_record.get(f'source{i}'),
+                        f"sub_source{i}": duplicate_record.get(f'sub_source{i}'),
+                        f"date{i}": duplicate_record.get(f'date{i}')
+                    })
+            
+            debug_info["duplicate_analysis"] = {
+                "actual_source_count": source_count,
+                "recorded_duplicate_count": duplicate_record.get('duplicate_count', 0),
+                "sources": sources,
+                "next_available_slot": find_next_available_source_slot(duplicate_record)
+            }
+        
+        return jsonify(debug_info), 200
+        
+    except Exception as e:
+        print(f"❌ Error in phone debug: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Enhanced health check with system status"""
+    try:
+        # Test database connection
+        test_result = supabase.table("lead_master").select("id").limit(1).execute()
+        db_status = "connected" if test_result else "error"
+        
+        return jsonify({
+            "status": "healthy",
+            "service": "WhatsApp Qualified Leads with Advanced Duplicate Handling",
+            "database_status": db_status,
+            "features": [
+                "Qualification filtering",
+                "Advanced duplicate handling",
+                "Real-time processing",
+                "Multi-source tracking",
+                "Detailed debugging",
+                "Lead capture only"
+            ],
+            "timestamp": datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
+# WhatsApp sending endpoint removed - not needed for lead capture
 
 if __name__ == '__main__':
     # socketio.run(app, debug=True)
