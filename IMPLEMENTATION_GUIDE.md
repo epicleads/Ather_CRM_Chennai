@@ -18,12 +18,17 @@ This system implements a double verification workflow for leads where Product Sp
 ### 2. Branch Head Approval Process
 1. **Branch Head sees leads in approval dashboard**
 2. **Reviews lead details including Order ID**
-3. **Clicks "Approve" button**
-4. **System automatically:**
+3. **Clicks "Approve" or "Reject" button**
+4. **For Approval - System automatically:**
    - Changes final status to "Won"
    - Records approval timestamp
    - Records who approved it
    - Updates all related tables
+5. **For Rejection - System automatically:**
+   - Sets lead_status to "rejected by BH"
+   - Sets final_status to "pending"
+   - Records rejection timestamp and remarks
+   - Returns lead to PS for follow-up
 
 ## Database Changes
 
@@ -32,9 +37,9 @@ All lead tables now include these fields:
 - `order_id` VARCHAR(8) - 8-digit order number
 - `approval_status` VARCHAR(50) - Pending, Waiting for Approval, Approved, Rejected
 - `approval_requested_at` TIMESTAMP - When approval was requested
-- `approved_by` VARCHAR(100) - Branch Head who approved
-- `approved_at` TIMESTAMP - When approved
-- `approval_remarks` TEXT - Optional approval notes
+- `approved_by` VARCHAR(100) - Branch Head who approved/rejected
+- `approved_at` TIMESTAMP - When approved/rejected
+- `approval_remarks` TEXT - Optional approval/rejection notes
 
 ### Tables Modified
 - `ps_followup_master`
@@ -83,8 +88,9 @@ psql -d your_database -f approval_system_sql.sql
 2. Check approval dashboard
 3. Verify lead appears in approval list
 4. Click "View" to see details
-5. Click "Approve" to approve lead
-6. Verify status changes to "Won"
+5. Click "Approve" to approve lead or "Reject" to reject lead
+6. For approval: Verify status changes to "Won"
+7. For rejection: Verify lead_status becomes "rejected by BH" and final_status becomes "pending"
 
 ## API Endpoints
 
@@ -104,7 +110,17 @@ Body: {
 }
 ```
 
-### 3. Get Lead Details
+### 3. Reject Lead
+```
+POST /api/bh_reject_lead
+Body: {
+    "source_table": "ps_followup",
+    "lead_id": "lead_uid",
+    "remarks": "Required rejection notes"
+}
+```
+
+### 4. Get Lead Details
 ```
 GET /api/bh_lead_details?source_table=ps_followup&lead_id=lead_uid
 ```
@@ -127,6 +143,7 @@ GET /api/bh_lead_details?source_table=ps_followup&lead_id=lead_uid
 ### Status Transitions
 - **Booked/Retailed** → **Waiting for Approval** (requires Order ID)
 - **Waiting for Approval** → **Won** (after Branch Head approval)
+- **Waiting for Approval** → **rejected by BH** (after Branch Head rejection, final_status becomes "pending")
 - **Other statuses** → **Normal workflow** (no approval required)
 
 ## Error Handling

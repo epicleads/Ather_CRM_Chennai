@@ -1,5 +1,7 @@
 -- SQL Script for Lead Approval System
 -- This script adds the necessary fields to implement double verification for leads
+-- Includes functionality for Branch Head to approve or reject leads
+-- When rejected, leads are returned to PS with status "rejected by BH" and final_status "pending"
 
 -- 1. Add approval fields to ps_followup_master table
 ALTER TABLE ps_followup_master 

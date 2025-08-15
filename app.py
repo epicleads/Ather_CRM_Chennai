@@ -3791,6 +3791,7 @@ def ps_dashboard():
         won_leads = []
         lost_leads = []
         approval_leads = []  # New list for leads waiting for approval
+        rejected_leads = []  # New list for leads rejected by Branch Head
         event_leads = []  # Separate list for event leads
 
         # Define statuses that should be excluded from Today's Follow-up and Pending Leads
@@ -3881,6 +3882,12 @@ def ps_dashboard():
             if final_status == 'Waiting for Approval':
                 approval_leads.append(lead_dict)
                 print(f"[DEBUG] Added to approval_leads (Waiting for Approval): {lead.get('lead_uid')}")
+            
+            # Check for leads rejected by Branch Head
+            if lead_status == 'rejected by BH':
+                lead_dict['source_table'] = 'ps_followup'
+                rejected_leads.append(lead_dict)
+                print(f"[DEBUG] Added to rejected_leads (rejected by BH): {lead.get('lead_uid')}")
 
 
 
@@ -3953,6 +3960,10 @@ def ps_dashboard():
             elif final_status == 'Waiting for Approval':
                 approval_leads.append(lead_dict)
                 print(f"[DEBUG] Event lead {lead_dict['lead_uid']} also added to approval_leads")
+            elif lead_status == 'rejected by BH':
+                lead_dict['source_table'] = 'activity_leads'
+                rejected_leads.append(lead_dict)
+                print(f"[DEBUG] Event lead {lead_dict['lead_uid']} also added to rejected_leads (rejected by BH)")
             elif final_status == 'Pending':
                 # Check if event lead has been called (has ps_first_call_date)
                 if ps_first_call_date:
@@ -4050,6 +4061,11 @@ def ps_dashboard():
             elif final_status == 'Waiting for Approval':
                 approval_leads.append(lead_dict)
                 print(f"[DEBUG] Walk-in lead {lead_dict['lead_uid']} added to approval_leads")
+            elif lead_status == 'rejected by BH':
+                lead_dict['source_table'] = 'walkin_table'
+                lead_dict['walkin_id'] = lead.get('id')
+                rejected_leads.append(lead_dict)
+                print(f"[DEBUG] Walk-in lead {lead_dict['lead_uid']} added to rejected_leads (rejected by BH)")
             elif final_status == 'Pending' or not final_status:
                 # Add to today's followups if next_followup_date is today
                 if next_followup_date and str(next_followup_date)[:10] == today_str:
@@ -4149,6 +4165,7 @@ def ps_dashboard():
                                won_leads=won_leads,
                                lost_leads=lost_leads,
                                approval_leads=approval_leads,  # Add approval leads
+                               rejected_leads=rejected_leads,  # Add rejected leads
                                event_leads=event_leads,
                                walkin_leads=walkin_leads,
                                filter_type=filter_type,
@@ -4158,12 +4175,13 @@ def ps_dashboard():
                                status=status)  # <-- Add status here
 
         print(f"[PERF] ps_dashboard: render_template took {time.time() - t6:.3f} seconds")
-        print(f"[DEBUG] FINAL COUNTS - Fresh: {len(fresh_leads)}, Pending: {len(pending_leads)}, Attended: {len(attended_leads)}, Won: {len(won_leads)}, Lost: {len(lost_leads)}, Approval: {len(approval_leads)}, Event: {len(event_leads)}")
+        print(f"[DEBUG] FINAL COUNTS - Fresh: {len(fresh_leads)}, Pending: {len(pending_leads)}, Attended: {len(attended_leads)}, Won: {len(won_leads)}, Lost: {len(lost_leads)}, Approval: {len(approval_leads)}, Rejected: {len(rejected_leads)}, Event: {len(event_leads)}")
         print(f"[DEBUG] Fresh leads being sent to template: {[lead.get('lead_uid') for lead in fresh_leads]}")
         print(f"[DEBUG] Pending leads being sent to template: {[lead.get('lead_uid') for lead in pending_leads]}")
         print(f"[DEBUG] Won leads being sent to template: {[lead.get('lead_uid') for lead in won_leads]}")
         print(f"[DEBUG] Lost leads being sent to template: {[lead.get('lead_uid') for lead in lost_leads]}")
         print(f"[DEBUG] Approval leads being sent to template: {[lead.get('lead_uid') for lead in approval_leads]}")
+        print(f"[DEBUG] Rejected leads being sent to template: {[lead.get('lead_uid') for lead in rejected_leads]}")
         print(f"[DEBUG] Event leads being sent to template: {[lead.get('lead_uid') for lead in event_leads]}")
         print(f"[DEBUG] Walk-in leads count: {len(walkin_leads) if walkin_leads else 0}")
         print(f"[DEBUG] Today's followups count: {len(todays_followups)}")
@@ -4179,6 +4197,7 @@ def ps_dashboard():
             'won_leads': won_leads,
             'lost_leads': lost_leads,
             'approval_leads': approval_leads,  # Add approval leads
+            'rejected_leads': rejected_leads,  # Add rejected leads
             'event_leads': event_leads,
             'walkin_leads': walkin_leads,
             'filter_type': filter_type,
@@ -10732,6 +10751,123 @@ def api_bh_approve_lead():
     except Exception as e:
         print(f"Error in api_bh_approve_lead: {str(e)}")
         return jsonify({'success': False, 'message': 'Error approving lead'})
+
+@app.route('/api/bh_reject_lead', methods=['POST'])
+@require_auth(['bh'])
+def api_bh_reject_lead():
+    """API for Branch Head to reject a lead"""
+    try:
+        # Check if user is logged in as Branch Head
+        if session.get('user_type') != 'bh':
+            return jsonify({'success': False, 'message': 'Access denied'})
+        
+        data = request.get_json()
+        source_table = data.get('source_table')
+        lead_id = data.get('lead_id')
+        remarks = data.get('remarks', '')
+        
+        if not source_table or not lead_id:
+            return jsonify({'success': False, 'message': 'Missing required parameters'})
+        
+        branch = session.get('bh_branch')
+        bh_name = session.get('bh_name', 'Branch Head')
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Update the lead based on source table
+        if source_table == 'ps_followup':
+            # Update ps_followup_master - set lead_status to "rejected by BH" and final_status to "pending"
+            update_data = {
+                'approval_status': 'Rejected',
+                'approved_by': bh_name,
+                'approved_at': current_time,
+                'approval_remarks': remarks,
+                'lead_status': 'rejected by BH',
+                'final_status': 'pending'
+            }
+            result = supabase.table('ps_followup_master').update(update_data).eq('lead_uid', lead_id).eq('ps_branch', branch).execute()
+            
+            # Also update lead_master for consistency
+            supabase.table('lead_master').update({
+                'approval_status': 'Rejected',
+                'approved_by': bh_name,
+                'approved_at': current_time,
+                'approval_remarks': remarks,
+                'final_status': 'pending'
+            }).eq('uid', lead_id).execute()
+            
+        elif source_table == 'activity_leads':
+            # Update activity_leads
+            update_data = {
+                'approval_status': 'Rejected',
+                'approved_by': bh_name,
+                'approved_at': current_time,
+                'approval_remarks': remarks,
+                'lead_status': 'rejected by BH',
+                'final_status': 'pending'
+            }
+            result = supabase.table('activity_leads').update(update_data).eq('activity_uid', lead_id).eq('location', branch).execute()
+            
+        elif source_table == 'walkin_table':
+            # Update walkin_table
+            update_data = {
+                'approval_status': 'Rejected',
+                'approved_by': bh_name,
+                'approved_at': current_time,
+                'approval_remarks': remarks,
+                'status': 'pending'
+            }
+            result = supabase.table('walkin_table').update(update_data).eq('uid', lead_id).eq('branch', branch).execute()
+
+        elif source_table == 'lead_master':
+            # Reject directly from lead_master fallback
+            update_data = {
+                'approval_status': 'Rejected',
+                'approved_by': bh_name,
+                'approved_at': current_time,
+                'approval_remarks': remarks,
+                'final_status': 'pending'
+            }
+            result = supabase.table('lead_master').update(update_data).eq('uid', lead_id).eq('branch', branch).execute()
+            # Keep ps_followup_master in sync when possible
+            try:
+                supabase.table('ps_followup_master').update({
+                    'approval_status': 'Rejected',
+                    'approved_by': bh_name,
+                    'approved_at': current_time,
+                    'approval_remarks': remarks,
+                    'lead_status': 'rejected by BH',
+                    'final_status': 'pending'
+                }).eq('lead_uid', lead_id).execute()
+            except Exception as _:
+                pass
+            
+        else:
+            return jsonify({'success': False, 'message': 'Invalid source table'})
+        
+        # Log the rejection action
+        auth_manager.log_audit_event(
+            user_id=session.get('bh_user_id'),
+            user_type='bh',
+            action='LEAD_REJECTED',
+            resource=source_table,
+            resource_id=lead_id,
+            details={
+                'rejected_by': bh_name,
+                'branch': branch,
+                'remarks': remarks,
+                'timestamp': current_time
+            }
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Lead rejected successfully',
+            'rejected_at': current_time
+        })
+        
+    except Exception as e:
+        print(f"Error in api_bh_reject_lead: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error rejecting lead'})
 
 @app.route('/api/bh_approval_lead_details')
 @require_auth(['bh'])

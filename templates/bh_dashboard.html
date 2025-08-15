@@ -284,6 +284,76 @@
     </div>
 </div>
 
+<!-- Reject Modal -->
+<div class="modal fade" id="rejectModal" tabindex="-1" aria-labelledby="rejectModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title" id="rejectModalLabel">
+                    <i class="fas fa-times-circle me-2"></i>Reject Lead
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    You are about to reject a lead. Please provide rejection remarks below. The lead will be returned to the PS for follow-up.
+                </div>
+                
+                <div class="mb-3">
+                    <label for="rejectRemarks" class="form-label fw-bold">Rejection Remarks <span class="text-danger">*</span></label>
+                    <textarea class="form-control" id="rejectRemarks" rows="4" 
+                              placeholder="Enter detailed rejection remarks (e.g., Customer not ready, documents incomplete, payment issues, etc.)"
+                              required></textarea>
+                    <div class="form-text">Please provide comprehensive remarks explaining why this lead is being rejected.</div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card bg-light">
+                            <div class="card-body">
+                                <h6 class="card-title text-warning">Quick Remarks Templates</h6>
+                                <div class="d-grid gap-2">
+                                    <button type="button" class="btn btn-outline-warning btn-sm" onclick="useRejectRemarkTemplate('Customer not ready for purchase at this time')">
+                                        <i class="fas fa-clock me-1"></i>Not Ready
+                                    </button>
+                                    <button type="button" class="btn btn-outline-warning btn-sm" onclick="useRejectRemarkTemplate('Documents incomplete or verification pending')">
+                                        <i class="fas fa-file-excel me-1"></i>Documents Incomplete
+                                    </button>
+                                    <button type="button" class="btn btn-outline-warning btn-sm" onclick="useRejectRemarkTemplate('Payment issues or financial verification required')">
+                                        <i class="fas fa-money-bill-wave me-1"></i>Payment Issues
+                                    </button>
+                                    <button type="button" class="btn btn-outline-warning btn-sm" onclick="useRejectRemarkTemplate('Customer has concerns that need to be addressed')">
+                                        <i class="fas fa-exclamation-triangle me-1"></i>Customer Concerns
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card bg-light">
+                            <div class="card-body">
+                                <h6 class="card-title text-danger">Lead Information</h6>
+                                <p class="mb-1"><strong>Customer:</strong> <span id="rejectCustomerName">-</span></p>
+                                <p class="mb-1"><strong>Status:</strong> <span class="badge bg-warning">Pending Approval</span></p>
+                                <p class="mb-0"><strong>Action:</strong> <span class="badge bg-danger">Will be rejected and returned to PS</span></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="fas fa-times me-1"></i>Cancel
+                </button>
+                <button type="button" class="btn btn-danger" id="rejectSubmitBtn" onclick="submitRejection()">
+                    <i class="fas fa-times me-1"></i>Reject Lead
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block head %}
@@ -1017,6 +1087,9 @@ function displayApprovalLeads(leads) {
                         <button class="btn btn-success" onclick="approveLead('${lead.source_table}', '${lead.lead_id}', '${lead.customer_name}')" title="Approve Lead">
                             <i class="fas fa-check"></i> Approve
                         </button>
+                        <button class="btn btn-danger" onclick="rejectLead('${lead.source_table}', '${lead.lead_id}', '${lead.customer_name}')" title="Reject Lead">
+                            <i class="fas fa-times"></i> Reject
+                        </button>
                         <button class="btn btn-outline-secondary" onclick="viewLeadDetails('${lead.source_table}', '${lead.lead_id}')" title="View Details">
                             <i class="fas fa-eye"></i> View
                         </button>
@@ -1318,6 +1391,88 @@ function getStatusBadgeColor(status) {
         case 'Waiting for Approval': return 'warning';
         default: return 'info';
     }
+}
+
+// Reject Lead Functions
+function rejectLead(sourceTable, leadId, customerName) {
+    // Store the rejection data for the modal
+    window.pendingRejection = { sourceTable, leadId, customerName };
+    
+    // Update the customer name in the modal
+    document.getElementById('rejectCustomerName').textContent = customerName;
+    
+    // Show the rejection modal
+    const modal = new bootstrap.Modal(document.getElementById('rejectModal'));
+    modal.show();
+}
+
+function useRejectRemarkTemplate(template) {
+    document.getElementById('rejectRemarks').value = template;
+}
+
+function submitRejection() {
+    const remarks = document.getElementById('rejectRemarks').value;
+    const { sourceTable, leadId, customerName } = window.pendingRejection;
+    
+    if (!remarks.trim()) {
+        alert('Please enter rejection remarks before proceeding.');
+        return;
+    }
+    
+    // Show loading state
+    document.getElementById('rejectSubmitBtn').disabled = true;
+    document.getElementById('rejectSubmitBtn').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Rejecting...';
+    
+    fetch('/api/bh_reject_lead', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            source_table: sourceTable,
+            lead_id: leadId,
+            remarks: remarks
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Show success message
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-warning alert-dismissible fade show';
+            alertDiv.innerHTML = `
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                Lead rejected successfully! Status changed to "rejected by BH" and returned to PS for follow-up.
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            
+            // Insert alert at the top of the card body
+            const cardBody = document.querySelector('#approval-leads-container').closest('.card-body');
+            cardBody.insertBefore(alertDiv, cardBody.firstChild);
+            
+            // Close modal and reset
+            const modal = bootstrap.Modal.getInstance(document.getElementById('rejectModal'));
+            modal.hide();
+            document.getElementById('rejectRemarks').value = '';
+            document.getElementById('rejectSubmitBtn').disabled = false;
+            document.getElementById('rejectSubmitBtn').innerHTML = '<i class="fas fa-times me-1"></i>Reject Lead';
+            
+            // Reload approval leads
+            setTimeout(() => {
+                loadApprovalLeads();
+            }, 1000);
+        } else {
+            alert('Error rejecting lead: ' + data.message);
+            document.getElementById('rejectSubmitBtn').disabled = false;
+            document.getElementById('rejectSubmitBtn').innerHTML = '<i class="fas fa-times me-1"></i>Reject Lead';
+        }
+    })
+    .catch(error => {
+        console.error('Error rejecting lead:', error);
+        alert('Error rejecting lead. Please try again.');
+        document.getElementById('rejectSubmitBtn').disabled = false;
+        document.getElementById('rejectSubmitBtn').innerHTML = '<i class="fas fa-times me-1"></i>Reject Lead';
+    });
 }
 </script>
 {% endblock %}
