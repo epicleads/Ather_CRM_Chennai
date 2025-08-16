@@ -62,12 +62,30 @@ log.setLevel(logging.WARNING)
 # Add custom Jinja2 filters
 # Note: Using Flask's built-in tojson filter instead of custom one
 
+# Import centralized IST timestamp utilities
+try:
+    from ist_timestamp_utils import get_ist_timestamp as get_ist_timestamp_util
+except ImportError:
+    # Fallback if module not found
+    def get_ist_timestamp_util() -> str:
+        ist_time = datetime.now() + timedelta(hours=5, minutes=30)
+        return ist_time.isoformat()
+
 # Utility functions
 def get_ist_timestamp():
     """Get current timestamp in Indian Standard Time with explicit timezone"""
-    ist_time = datetime.now(pytz.timezone('Asia/Kolkata'))
-    # Format with explicit timezone offset
-    return ist_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] + '+05:30'
+    try:
+        # Use centralized utility first
+        return get_ist_timestamp_util()
+    except:
+        # Fallback to pytz method
+        try:
+            ist_time = datetime.now(pytz.timezone('Asia/Kolkata'))
+            return ist_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] + '+05:30'
+        except:
+            # Final fallback to manual calculation
+            ist_time = datetime.now() + timedelta(hours=5, minutes=30)
+            return ist_time.isoformat()
 
 # WhatsApp Helper Functions
 def is_qualified_lead(message_content, button_payload):
@@ -1826,6 +1844,20 @@ def assign_leads():
         source_unassigned_counts = {}
         for source in leads_by_source.keys():
             source_unassigned_counts[source] = get_accurate_count('lead_master', {'assigned': 'No', 'source': source})
+
+        # Also include sources that have auto-assign configurations, even if they have 0 unassigned leads
+        try:
+            auto_assign_configs = supabase.table('auto_assign_config').select('source').execute()
+            if auto_assign_configs.data:
+                for config in auto_assign_configs.data:
+                    source = config.get('source')
+                    if source and source not in source_unassigned_counts:
+                        # Add source with 0 unassigned leads if it has auto-assign config
+                        source_unassigned_counts[source] = 0
+                        # Also add to leads_by_source to ensure the template can render it
+                        leads_by_source[source] = []
+        except Exception as e:
+            print(f"Warning: Could not fetch auto-assign configs: {e}")
 
         return render_template('assign_leads.html',
                                unassigned_leads=all_unassigned_leads,
@@ -7048,13 +7080,19 @@ def export_leads_csv():
             details={'filter_type': filter_type, 'filter_value': filter_value, 'exported_count': len(filtered_leads)}
         )
 
-        # Create response
+        # Create response with IST timestamp
         output.seek(0)
+        
+        # Get IST timestamp for filename
+        from datetime import timedelta
+        ist_time = datetime.now() + timedelta(hours=5, minutes=30)
+        ist_timestamp = ist_time.strftime("%Y%m%d_%H%M%S")
+        
         response = app.response_class(
             output.getvalue(),
             mimetype='text/csv',
             headers={
-                'Content-Disposition': f'attachment; filename=leads_{filter_type}_{filter_value}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+                'Content-Disposition': f'attachment; filename=leads_{filter_type}_{filter_value}_{ist_timestamp}.csv'
             }
         )
 
@@ -7259,13 +7297,19 @@ def export_leads_by_date_csv():
             }
         )
 
-        # Create response
+        # Create response with IST timestamp
         output.seek(0)
+        
+        # Get IST timestamp for filename
+        from datetime import timedelta
+        ist_time = datetime.now() + timedelta(hours=5, minutes=30)
+        ist_timestamp = ist_time.strftime("%Y%m%d_%H%M%S")
+        
         response = app.response_class(
             output.getvalue(),
             mimetype='text/csv',
             headers={
-                'Content-Disposition': f'attachment; filename=leads_date_range_{start_date}_to_{end_date}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+                'Content-Disposition': f'attachment; filename=leads_date_range_{start_date}_to_{end_date}_{ist_timestamp}.csv'
             }
         )
 
@@ -7380,13 +7424,19 @@ def export_test_drive_csv():
             details={'filter_type': filter_type, 'exported_count': len(filtered_leads)}
         )
         
-        # Create response
+        # Create response with IST timestamp
         output.seek(0)
+        
+        # Get IST timestamp for filename
+        from datetime import timedelta
+        ist_time = datetime.now() + timedelta(hours=5, minutes=30)
+        ist_timestamp = ist_time.strftime("%Y%m%d_%H%M%S")
+        
         response = app.response_class(
             output.getvalue(),
             mimetype='text/csv',
             headers={
-                'Content-Disposition': f'attachment; filename=test_drive_leads_{filter_type}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+                'Content-Disposition': f'attachment; filename=test_drive_leads_{filter_type}_{ist_timestamp}.csv'
             }
         )
         
@@ -8152,7 +8202,12 @@ def export_filtered_leads():
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
-        filename = f"leads_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        # Get IST timestamp for filename
+        from datetime import timedelta
+        ist_time = datetime.now() + timedelta(hours=5, minutes=30)
+        ist_timestamp = ist_time.strftime("%Y%m%d_%H%M%S")
+        
+        filename = f"leads_export_{ist_timestamp}.xlsx"
         return send_file(output, as_attachment=True, download_name=filename, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     else:
         output = io.StringIO()
@@ -8161,7 +8216,7 @@ def export_filtered_leads():
         for lead in leads:
             writer.writerow([lead.get(col[0], '') for col in export_columns])
         output.seek(0)
-        filename = f"leads_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        filename = f"leads_export_{ist_timestamp}.csv"
         return send_file(io.BytesIO(output.getvalue().encode('utf-8')), as_attachment=True, download_name=filename, mimetype='text/csv')
 
 @app.route('/export_all_cre_leads')
@@ -12476,6 +12531,314 @@ def health_check():
             "timestamp": datetime.now().isoformat()
         }), 500
 
+# =============================================================================
+# AUTO-ASSIGN SYSTEM INTEGRATION
+# =============================================================================
+
+# Import auto-assign module
+try:
+    from auto_assign_module import AutoAssignSystem, AutoAssignAPI
+    auto_assign_system = AutoAssignSystem(supabase)
+    auto_assign_api = AutoAssignAPI(auto_assign_system)
+    print("✅ Auto-assign system initialized successfully")
+except Exception as e:
+    print(f"❌ Error initializing auto-assign system: {e}")
+    auto_assign_system = None
+    auto_assign_api = None
+
+# Auto-assign routes
+@app.route('/get_auto_assign_configs')
+def get_auto_assign_configs():
+    """Get all auto-assign configurations"""
+    try:
+        if not auto_assign_system:
+            return jsonify({'success': False, 'message': 'Auto-assign system not available'})
+        
+        configs = auto_assign_system.get_auto_assign_configs()
+        return jsonify({'success': True, 'data': configs})
+    except Exception as e:
+        print(f"Error getting auto-assign configs: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/save_auto_assign_config', methods=['POST'])
+def save_auto_assign_config():
+    """Save auto-assign configuration"""
+    try:
+        print("🚀 ========================================")
+        print("🚀 SAVING AUTO-ASSIGN CONFIGURATION")
+        print("🚀 ========================================")
+        
+        if not auto_assign_system:
+            print("❌ Auto-assign system not available")
+            return jsonify({'success': False, 'message': 'Auto-assign system not available'})
+        
+        data = request.get_json()
+        source = data.get('source')
+        cre_ids = data.get('cre_ids', [])
+        
+        print(f"📋 Configuration Data:")
+        print(f"   📍 Source: {source}")
+        print(f"   👥 CRE IDs: {cre_ids}")
+        
+        if not source or not cre_ids:
+            print("❌ Missing required data")
+            return jsonify({'success': False, 'message': 'Source and CRE IDs are required'})
+        
+        print(f"🔄 Step 1: Deleting existing configs for {source}")
+        # Delete existing configs for this source
+        delete_result = supabase.table('auto_assign_config').delete().eq('source', source).execute()
+        print(f"   ✅ Deleted existing configs: {delete_result.data if delete_result.data else 'No existing configs'}")
+        
+        print(f"🔄 Step 2: Inserting new configs")
+        # Insert new configs
+        configs_to_insert = []
+        for cre_id in cre_ids:
+            configs_to_insert.append({
+                'source': source,
+                'cre_id': cre_id,
+                'is_active': True,
+                'priority': 1,
+                'created_at': get_ist_timestamp(),
+                'updated_at': get_ist_timestamp()
+            })
+        
+        if configs_to_insert:
+            insert_result = supabase.table('auto_assign_config').insert(configs_to_insert).execute()
+            print(f"   ✅ Inserted {len(configs_to_insert)} new configs")
+            print(f"   📊 Configs: {[f'{c['source']}->CRE{c['cre_id']}' for c in configs_to_insert]}")
+        else:
+            print("   ⚠️ No configs to insert")
+        
+        print(f"🔄 Step 3: Resetting CRE auto-assign counts for fair distribution")
+        # Reset CRE auto-assign counts for fair distribution
+        reset_result = auto_assign_system.reset_cre_auto_assign_counts(cre_ids)
+        if reset_result:
+            print(f"   ✅ Successfully reset counts for {len(cre_ids)} CREs")
+        else:
+            print(f"   ⚠️ Warning: Count reset may have failed")
+        
+        print(f"🔄 Step 4: Triggering immediate auto-assign for {source}")
+        # Trigger immediate auto-assign for this source
+        result = auto_assign_system.auto_assign_new_leads_for_source(source)
+        assigned_count = result.get('assigned_count', 0) if result.get('success') else 0
+        
+        print(f"   📊 Auto-assign result:")
+        print(f"      ✅ Success: {result.get('success', False)}")
+        print(f"      🎯 Leads assigned: {assigned_count}")
+        print(f"      📝 Message: {result.get('message', 'N/A')}")
+        
+        if result.get('failed_count', 0) > 0:
+            print(f"      ❌ Failed assignments: {result.get('failed_count', 0)}")
+            print(f"      🚨 Failed leads: {result.get('failed_leads', [])}")
+        
+        print(f"🎉 Configuration saved successfully!")
+        print(f"   📊 Total leads auto-assigned: {assigned_count}")
+        print(f"   👥 CREs configured: {cre_ids}")
+        print(f"   📍 Source: {source}")
+        print(f"🚀 ========================================")
+        
+        return jsonify({
+            'success': True, 
+            'message': f'Configuration saved successfully. {assigned_count} leads were auto-assigned.',
+            'auto_assigned_count': assigned_count,
+            'total_processed': result.get('total_processed', 0),
+            'failed_count': result.get('failed_count', 0),
+            'failed_leads': result.get('failed_leads', [])
+        })
+        
+    except Exception as e:
+        print(f"❌ CRITICAL ERROR in save_auto_assign_config:")
+        print(f"   🚨 Exception: {str(e)}")
+        print(f"   📍 Type: {type(e).__name__}")
+        print(f"🚀 ========================================")
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/delete_auto_assign_config', methods=['POST'])
+def delete_auto_assign_config():
+    """Delete auto-assign configuration"""
+    try:
+        print("🗑️ ========================================")
+        print("🗑️ DELETING AUTO-ASSIGN CONFIGURATION")
+        print("🗑️ ========================================")
+        
+        if not auto_assign_system:
+            print("❌ Auto-assign system not available")
+            return jsonify({'success': False, 'message': 'Auto-assign system not available'})
+        
+        data = request.get_json()
+        source = data.get('source')
+        
+        print(f"📋 Delete Request:")
+        print(f"   📍 Source: {source}")
+        
+        if not source:
+            print("❌ Source is required")
+            return jsonify({'success': False, 'message': 'Source is required'})
+        
+        print(f"🔄 Deleting configs for source: {source}")
+        # Delete configs for this source
+        delete_result = supabase.table('auto_assign_config').delete().eq('source', source).execute()
+        print(f"   ✅ Deleted configs: {delete_result.data if delete_result.data else 'No configs found'}")
+        
+        print(f"🎉 Configuration deleted successfully for {source}")
+        print(f"🗑️ ========================================")
+        
+        return jsonify({'success': True, 'message': f'Configuration deleted for {source}'})
+        
+    except Exception as e:
+        print(f"❌ CRITICAL ERROR in delete_auto_assign_config:")
+        print(f"   🚨 Exception: {str(e)}")
+        print(f"   📍 Type: {type(e).__name__}")
+        print(f"🗑️ ========================================")
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/get_auto_assign_history')
+def get_auto_assign_history():
+    """Get auto-assign history"""
+    try:
+        print("📚 ========================================")
+        print("📚 GETTING AUTO-ASSIGN HISTORY")
+        print("📚 ========================================")
+        
+        if not auto_assign_system:
+            print("❌ Auto-assign system not available")
+            return jsonify({'success': False, 'message': 'Auto-assign system not available'})
+        
+        print(f"🔄 Fetching auto-assign history...")
+        result = supabase.table('auto_assign_history').select('*').order('created_at', desc=True).limit(100).execute()
+        history = result.data if result.data else []
+        
+        print(f"   📊 Found {len(history)} history records")
+        if history:
+            print(f"   📅 Latest record: {history[0].get('created_at', 'N/A')}")
+            print(f"   🎯 Latest lead: {history[0].get('lead_uid', 'N/A')}")
+            print(f"   👥 Latest CRE: {history[0].get('assigned_cre_name', 'N/A')}")
+        
+        print(f"📚 ========================================")
+        return jsonify({'success': True, 'data': history})
+    except Exception as e:
+        print(f"❌ ERROR getting auto-assign history: {e}")
+        print(f"   🚨 Exception type: {type(e).__name__}")
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/trigger_auto_assign/<source>', methods=['POST'])
+def trigger_auto_assign(source):
+    """Trigger auto-assign for a specific source"""
+    try:
+        print("🎯 ========================================")
+        print("🎯 TRIGGERING AUTO-ASSIGN")
+        print("🎯 ========================================")
+        
+        if not auto_assign_system:
+            print("❌ Auto-assign system not available")
+            return jsonify({'success': False, 'message': 'Auto-assign system not available'})
+        
+        print(f"📋 Trigger Request:")
+        print(f"   📍 Source: {source}")
+        print(f"   ⏰ Time: {get_ist_timestamp()}")
+        
+        result = auto_assign_system.auto_assign_new_leads_for_source(source)
+        
+        print(f"📊 Auto-assign result:")
+        print(f"   ✅ Success: {result.get('success', False)}")
+        print(f"   🎯 Leads assigned: {result.get('assigned_count', 0)}")
+        print(f"   📝 Message: {result.get('message', 'N/A')}")
+        
+        if result.get('failed_count', 0) > 0:
+            print(f"   ❌ Failed assignments: {result.get('failed_count', 0)}")
+            print(f"   🚨 Failed leads: {result.get('failed_leads', [])}")
+        
+        if result.get('success'):
+            print(f"🎉 Auto-assign completed successfully for {source}")
+            print(f"🎯 ========================================")
+            return jsonify({
+                'success': True,
+                'message': f'Auto-assign completed for {source}',
+                'assigned_count': result.get('assigned_count', 0),
+                'total_processed': result.get('total_processed', 0),
+                'failed_count': result.get('failed_count', 0),
+                'failed_leads': result.get('failed_leads', [])
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': result.get('message', 'Auto-assign failed')
+            })
+        
+    except Exception as e:
+        print(f"Error triggering auto-assign: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/api/auto_assign_status')
+def api_auto_assign_status():
+    """Get auto-assign system status"""
+    try:
+        print("📊 ========================================")
+        print("📊 GETTING AUTO-ASSIGN STATUS")
+        print("📊 ========================================")
+        
+        if not auto_assign_system:
+            print("❌ Auto-assign system not available")
+            return jsonify({'success': False, 'message': 'Auto-assign system not available'})
+        
+        print(f"🔄 Fetching auto-assign system status...")
+        status = auto_assign_system.get_auto_assign_status()
+        
+        print(f"   📊 System Status:")
+        print(f"      🟢 Running: {status.get('is_running', False)}")
+        print(f"      🔄 Total Runs: {status.get('total_runs', 0)}")
+        print(f"      🎯 Total Leads: {status.get('total_leads_assigned', 0)}")
+        print(f"      ⏰ Started At: {status.get('started_at', 'N/A')}")
+        print(f"      🧵 Thread Alive: {status.get('thread_alive', False)}")
+        
+        print(f"📊 ========================================")
+        return jsonify({'success': True, 'status': status})
+        
+    except Exception as e:
+        print(f"❌ ERROR getting auto-assign status: {e}")
+        print(f"   🚨 Exception type: {type(e).__name__}")
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/auto_assign_history_page')
+def auto_assign_history_page():
+    """Auto-assign history page"""
+    try:
+        if not auto_assign_system:
+            flash('Auto-assign system not available', 'error')
+            return redirect(url_for('assign_leads'))
+        
+        # Get history data
+        result = supabase.table('auto_assign_history').select('*').order('created_at', desc=True).limit(1000).execute()
+        history = result.data if result.data else []
+        
+        return render_template('auto_assign_history.html', history=history)
+        
+    except Exception as e:
+        print(f"Error loading auto-assign history page: {e}")
+        flash(f'Error loading history: {str(e)}', 'error')
+        return redirect(url_for('assign_leads'))
+
+# Start auto-assign system when app starts
+def start_auto_assign_system():
+    """Start the auto-assign system in background"""
+    try:
+        if auto_assign_system:
+            # Start the system in a separate thread
+            import threading
+            def start_system():
+                try:
+                    auto_assign_system.start_robust_auto_assign_system()
+                except Exception as e:
+                    print(f"Error starting auto-assign system: {e}")
+            
+            auto_assign_thread = threading.Thread(target=start_system, daemon=True)
+            auto_assign_thread.start()
+            print("🚀 Auto-assign system started in background")
+        else:
+            print("⚠️ Auto-assign system not available")
+    except Exception as e:
+        print(f"❌ Error starting auto-assign system: {e}")
+
 # WhatsApp sending endpoint removed - not needed for lead capture
 
 if __name__ == '__main__':
@@ -12483,5 +12846,12 @@ if __name__ == '__main__':
     print(" Starting Ather CRM System...")
     print("📱 Server will be available at: http://127.0.0.1:5000")
     print("🌐 You can also try: http://localhost:5000")
+    
+    # Start auto-assign system
+    try:
+        start_auto_assign_system()
+    except Exception as e:
+        print(f"⚠️ Could not start auto-assign system: {e}")
+    
     # socketio.run(app, host='127.0.0.1', port=5000, debug=True)
     socketio.run(app, host='0.0.0.0', port=5000, debug=True, use_reloader=False)
