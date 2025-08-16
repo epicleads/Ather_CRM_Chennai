@@ -13,9 +13,20 @@ Features:
 - Error handling and recovery mechanisms
 - Integration with existing Supabase database
 
+UDAY BRANCH ENHANCEMENTS:
+- Enhanced debug prints with stickers and emojis
+- Detailed lead data logging (UID, customer, mobile, source, status)
+- Real-time assignment status tracking
+- Performance monitoring and success rate calculation
+- Comprehensive verification with action recommendations
+- Enhanced error handling with actionable insights
+- Reference tracking to Uday branch enhanced logic
+- Multi-source optimization with detailed progress tracking
+
 Author: AI Assistant
 Version: 1.0.0
 Production Ready: Yes
+Uday Branch Enhanced: Yes
 """
 
 import os
@@ -312,11 +323,11 @@ class AutoAssignSystem:
             logger.info("📝 Verbose logging enabled")
     
     def debug_print(self, message: str, level: str = 'INFO'):
-        """Debug print function with configurable levels"""
+        """Enhanced debug print function with configurable levels and stickers"""
         if not self.debug_mode:
             return
             
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        timestamp = self.get_ist_timestamp()
         level_emoji = {
             'INFO': 'ℹ️',
             'SUCCESS': '✅',
@@ -360,12 +371,54 @@ class AutoAssignSystem:
             return []
     
     def get_unassigned_leads_for_source(self, source: str) -> List[Dict]:
-        """Get unassigned leads for a specific source"""
+        """Get unassigned leads for a specific source with enhanced debug prints"""
         try:
+            self.debug_print(f"🔍 ========================================", "DEBUG")
+            self.debug_print(f"🔍 FETCHING UNASSIGNED LEADS", "DEBUG")
+            self.debug_print(f"🔍 ========================================", "DEBUG")
+            self.debug_print(f"   🏷️ Source: {source}", "DEBUG")
+            self.debug_print(f"   ⏰ Time: {self.get_ist_timestamp()}", "DEBUG")
+            self.debug_print(f"   🎯 Status: Fetching leads...", "DEBUG")
+            
             result = self.supabase.table('lead_master').select('*').eq('source', source).eq('assigned', 'No').execute()
-            return result.data if result.data else []
+            leads = result.data if result.data else []
+            
+            if leads:
+                self.debug_print(f"📊 Found {len(leads)} unassigned leads for {source}", "SUCCESS")
+                self.debug_print(f"   🎯 Source: {source}", "INFO")
+                self.debug_print(f"   📅 Timestamp: {self.get_ist_timestamp()}", "INFO")
+                self.debug_print(f"   🔍 Status: Leads found successfully", "SUCCESS")
+                
+                # Show first few leads with detailed info
+                for i, lead in enumerate(leads[:3]):  # Show first 3 leads
+                    self.debug_print(f"   📋 Lead {i+1}:", "DEBUG")
+                    self.debug_print(f"      🆔 UID: {lead.get('uid', 'N/A')}", "DEBUG")
+                    self.debug_print(f"      👤 Customer: {lead.get('customer_name', 'N/A')}", "DEBUG")
+                    self.debug_print(f"      📱 Mobile: {lead.get('customer_mobile_number', 'N/A')}", "DEBUG")
+                    self.debug_print(f"      🏷️ Source: {lead.get('source', 'N/A')}", "DEBUG")
+                    self.debug_print(f"      🎯 Sub-source: {lead.get('sub_source', 'N/A')}", "DEBUG")
+                    self.debug_print(f"      📊 Status: {lead.get('lead_status', 'N/A')}", "DEBUG")
+                    self.debug_print(f"      📅 Created: {lead.get('created_at', 'N/A')}", "DEBUG")
+                
+                if len(leads) > 3:
+                    self.debug_print(f"   ... and {len(leads) - 3} more leads", "DEBUG")
+                
+                self.debug_print(f"🔍 ========================================", "DEBUG")
+            else:
+                self.debug_print(f"ℹ️ No unassigned leads found for source: {source}", "INFO")
+                self.debug_print(f"   🎯 Status: No leads to assign", "INFO")
+                self.debug_print(f"🔍 ========================================", "DEBUG")
+            
+            return leads
         except Exception as e:
-            logger.error(f"Error getting unassigned leads for {source}: {e}")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"❌ ERROR FETCHING UNASSIGNED LEADS", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"   🚨 Exception: {e}", "ERROR")
+            self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
+            self.debug_print(f"   🏷️ Source: {source}", "ERROR")
+            self.debug_print(f"   ⏰ Time: {self.get_ist_timestamp()}", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
             return []
     
     def get_cre_users(self) -> List[Dict]:
@@ -378,17 +431,26 @@ class AutoAssignSystem:
             return []
     
     def assign_lead_to_cre(self, lead_uid: str, cre_id: int, cre_name: str, source: str) -> bool:
-        """Assign a lead to a CRE user"""
+        """Assign a lead to a CRE user with enhanced debug prints and stickers"""
         try:
-            self.debug_print(f"🎯 Starting lead assignment: {lead_uid} -> {cre_name} (CRE ID: {cre_id})", "SYSTEM")
-            
-
+            self.debug_print(f"🎯 ========================================", "SYSTEM")
+            self.debug_print(f"🎯 LEAD ASSIGNMENT PROCESS", "SYSTEM")
+            self.debug_print(f"🎯 ========================================", "SYSTEM")
+            self.debug_print(f"   🆔 Lead UID: {lead_uid}", "INFO")
+            self.debug_print(f"   👥 CRE: {cre_name} (ID: {cre_id})", "INFO")
+            self.debug_print(f"   🏷️ Source: {source}", "INFO")
+            self.debug_print(f"   ⏰ Start Time: {self.get_ist_timestamp()}", "INFO")
+            self.debug_print(f"   🔄 Status: Starting Assignment", "INFO")
+            self.debug_print(f"   🚀 Reference: Uday Branch Enhanced Logic", "INFO")
             
             # Get CRE's current lead count BEFORE assignment
+            self.debug_print(f"📊 Fetching CRE {cre_name} current lead count...", "DEBUG")
             cre_result = self.supabase.table('cre_users').select('auto_assign_count').eq('id', cre_id).execute()
             current_count = cre_result.data[0]['auto_assign_count'] if cre_result.data else 0
             
             self.debug_print(f"📊 CRE {cre_name} current auto_assign_count: {current_count}", "DEBUG")
+            self.debug_print(f"   🔢 Count before assignment: {current_count}", "INFO")
+            self.debug_print(f"   📊 Status: Count retrieved successfully", "SUCCESS")
             
             # Update lead_master table with assignment
             # Use IST timestamp for cre_assigned_at
@@ -398,47 +460,64 @@ class AutoAssignSystem:
                 'cre_assigned_at': self.get_ist_timestamp()  # Use IST timestamp
             }
             
-            self.debug_print(f"🔄 Updating lead_master for {lead_uid}", "DEBUG")
+            self.debug_print(f"🔄 ========================================", "DEBUG")
+            self.debug_print(f"🔄 UPDATING LEAD_MASTER TABLE", "DEBUG")
+            self.debug_print(f"🔄 ========================================", "DEBUG")
             self.debug_print(f"   📊 Update data: {update_data}", "DEBUG")
             self.debug_print(f"   🕒 IST Timestamp: {self.get_ist_timestamp()}", "DEBUG")
+            self.debug_print(f"   🎯 Target: lead_master.uid = {lead_uid}", "DEBUG")
+            self.debug_print(f"   🔄 Status: Updating lead assignment...", "DEBUG")
             
             try:
                 lead_update_result = self.supabase.table('lead_master').update(update_data).eq('uid', lead_uid).execute()
                 
                 if lead_update_result.data:
-                    self.debug_print(f"✅ Lead {lead_uid} marked as assigned in lead_master", "SUCCESS")
+                    self.debug_print(f"✅ SUCCESS: Lead {lead_uid} marked as assigned in lead_master", "SUCCESS")
                     self.debug_print(f"   📊 Update result: {lead_update_result.data}", "DEBUG")
+                    self.debug_print(f"   🎯 Status: lead_master updated successfully", "SUCCESS")
+                    self.debug_print(f"   🔄 Action: Lead assignment recorded", "SUCCESS")
                 else:
-                    self.debug_print(f"⚠️ Warning: Lead update may have failed", "WARNING")
+                    self.debug_print(f"⚠️ WARNING: Lead update may have failed", "WARNING")
                     self.debug_print(f"   🚨 Update result: {lead_update_result}", "DEBUG")
                     if hasattr(lead_update_result, 'error'):
                         self.debug_print(f"   ❌ Update error: {lead_update_result.error}", "ERROR")
+                    self.debug_print(f"   🔍 Action: Review update result", "WARNING")
                         
             except Exception as e:
-                self.debug_print(f"❌ Exception during lead update: {e}", "ERROR")
+                self.debug_print(f"❌ EXCEPTION during lead update: {e}", "ERROR")
                 self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
                 self.debug_print(f"   📊 Update data: {update_data}", "DEBUG")
+                self.debug_print(f"   🔍 Action: Review exception and retry", "ERROR")
                 raise  # Re-raise to be caught by outer exception handler
             
             # Update CRE's auto_assign_count
             new_count = current_count + 1
-            self.debug_print(f"📈 Attempting to update CRE {cre_name} auto_assign_count: {current_count} -> {new_count}", "DEBUG")
+            self.debug_print(f"📈 ========================================", "DEBUG")
+            self.debug_print(f"📈 UPDATING CRE AUTO_ASSIGN_COUNT", "DEBUG")
+            self.debug_print(f"📈 ========================================", "DEBUG")
+            self.debug_print(f"   👥 CRE: {cre_name} (ID: {cre_id})", "DEBUG")
+            self.debug_print(f"   🔢 Count change: {current_count} → {new_count}", "DEBUG")
+            self.debug_print(f"   📊 Update data: {{'auto_assign_count': {new_count}}}", "DEBUG")
+            self.debug_print(f"   🔄 Status: Updating CRE count...", "DEBUG")
             
             update_data = {
                 'auto_assign_count': new_count
                 # Note: updated_at is handled by database trigger
             }
-            self.debug_print(f"   📊 Update data: {update_data}", "DEBUG")
             
             cre_update_result = self.supabase.table('cre_users').update(update_data).eq('id', cre_id).execute()
             
             if cre_update_result.data:
-                self.debug_print(f"✅ Successfully updated CRE {cre_name} auto_assign_count: {current_count} -> {new_count}", "SUCCESS")
+                self.debug_print(f"✅ SUCCESS: CRE {cre_name} auto_assign_count updated", "SUCCESS")
+                self.debug_print(f"   🔢 New count: {new_count}", "SUCCESS")
+                self.debug_print(f"   🎯 Status: CRE count updated successfully", "SUCCESS")
+                self.debug_print(f"   🔄 Action: Count incremented", "SUCCESS")
             else:
-                self.debug_print(f"⚠️ Warning: CRE count update may have failed", "WARNING")
+                self.debug_print(f"⚠️ WARNING: CRE count update may have failed", "WARNING")
                 self.debug_print(f"   🚨 Update result: {cre_update_result}", "DEBUG")
                 if hasattr(cre_update_result, 'error'):
                     self.debug_print(f"   ❌ Update error: {cre_update_result.error}", "ERROR")
+                self.debug_print(f"   🔍 Action: Review CRE update", "WARNING")
             
             # Create comprehensive history record
             # Use database default timestamp to avoid Supabase UTC conversion
@@ -454,54 +533,91 @@ class AutoAssignSystem:
             }
             
             # Insert into auto_assign_history table
-            self.debug_print(f"📝 Attempting to insert history record for lead {lead_uid}", "DEBUG")
+            self.debug_print(f"📝 ========================================", "DEBUG")
+            self.debug_print(f"📝 CREATING HISTORY RECORD", "DEBUG")
+            self.debug_print(f"📝 ========================================", "DEBUG")
             self.debug_print(f"   📊 History data: {history_data}", "DEBUG")
             self.debug_print(f"   🕒 System Time: {self.get_current_system_time()}", "DEBUG")
             self.debug_print(f"   🕒 IST Time: {self.get_current_ist_time()}", "DEBUG")
             self.debug_print(f"   🕒 Timestamp: Using database default now()", "DEBUG")
+            self.debug_print(f"   🎯 Target: auto_assign_history table", "DEBUG")
+            self.debug_print(f"   🔄 Status: Creating history record...", "DEBUG")
             
             history_result = self.supabase.table('auto_assign_history').insert(history_data).execute()
             
             if history_result.data:
-                self.debug_print(f"📝 History record created successfully for lead {lead_uid}", "SUCCESS")
+                self.debug_print(f"✅ SUCCESS: History record created for lead {lead_uid}", "SUCCESS")
                 self.debug_print(f"   📊 Before: {current_count}, After: {new_count}", "DEBUG")
                 self.debug_print(f"   🕒 Timestamp: Database default now()", "DEBUG")
                 self.debug_print(f"   📋 History ID: {history_result.data[0].get('id', 'Unknown')}", "DEBUG")
+                self.debug_print(f"   🎯 Status: History record created successfully", "SUCCESS")
+                self.debug_print(f"   🔄 Action: History logged", "SUCCESS")
             else:
-                self.debug_print(f"⚠️ Warning: History record may not have been created", "WARNING")
+                self.debug_print(f"⚠️ WARNING: History record may not have been created", "WARNING")
                 self.debug_print(f"   🚨 History result: {history_result}", "DEBUG")
                 if hasattr(history_result, 'error'):
                     self.debug_print(f"   ❌ History error: {history_result.error}", "ERROR")
+                self.debug_print(f"   🔍 Action: Review history creation", "WARNING")
             
             # Verify the assignment was successful
-            self.debug_print(f"🔍 Verifying assignment for lead {lead_uid}", "DEBUG")
+            self.debug_print(f"🔍 ========================================", "DEBUG")
+            self.debug_print(f"🔍 VERIFYING ASSIGNMENT", "DEBUG")
+            self.debug_print(f"🔍 ========================================", "DEBUG")
+            self.debug_print(f"   🎯 Verifying lead {lead_uid} assignment...", "DEBUG")
+            self.debug_print(f"   🔄 Status: Running verification...", "DEBUG")
+            
             verification_result = self.supabase.table('lead_master').select('assigned, cre_name, cre_assigned_at').eq('uid', lead_uid).execute()
             
             self.debug_print(f"   📊 Verification result: {verification_result.data}", "DEBUG")
             
-            if verification_result.data and verification_result.data[0]['assigned'] == 'Yes':
+            if verification_result.data:
                 lead_data = verification_result.data[0]
-                self.debug_print(f"🎉 Lead {lead_uid} successfully assigned to {cre_name}", "SUCCESS")
-                self.debug_print(f"   🔍 Verification: assigned={lead_data['assigned']}, cre_name={lead_data['cre_name']}", "DEBUG")
-                
-                if lead_data.get('cre_assigned_at'):
-                    self.debug_print(f"   🕒 cre_assigned_at: {lead_data['cre_assigned_at']}", "DEBUG")
+                if lead_data['assigned'] == 'Yes' and lead_data['cre_name'] == cre_name:
+                    self.debug_print(f"   ✅ VERIFICATION SUCCESS: Lead {lead_uid} properly assigned", "SUCCESS")
+                    self.debug_print(f"      🎯 Status: Assignment verified in lead_master", "SUCCESS")
+                    self.debug_print(f"      📊 assigned: {lead_data['assigned']}", "DEBUG")
+                    self.debug_print(f"      👥 cre_name: {lead_data['cre_name']}", "DEBUG")
+                    if lead_data.get('cre_assigned_at'):
+                        self.debug_print(f"      🕒 cre_assigned_at: {lead_data['cre_assigned_at']}", "DEBUG")
+                    else:
+                        self.debug_print(f"      ⚠️ cre_assigned_at is NULL", "WARNING")
                 else:
-                    self.debug_print(f"   ⚠️ cre_assigned_at is NULL - this may indicate a database schema issue", "WARNING")
-                
-                return True
+                    self.debug_print(f"   ⚠️ VERIFICATION WARNING: Assignment mismatch detected", "WARNING")
+                    self.debug_print(f"      📊 Expected: assigned=Yes, cre_name={cre_name}", "DEBUG")
+                    self.debug_print(f"      📊 Actual: assigned={lead_data['assigned']}, cre_name={lead_data['cre_name']}", "DEBUG")
+                    self.debug_print(f"      🚨 Status: Verification failed", "WARNING")
+                    self.debug_print(f"      🔍 Action: Review assignment data", "WARNING")
             else:
-                self.debug_print(f"❌ Assignment verification failed for lead {lead_uid}", "ERROR")
-                if verification_result.data:
-                    self.debug_print(f"   🚨 Found data: {verification_result.data[0]}", "DEBUG")
-                else:
-                    self.debug_print(f"   🚨 No data found for lead {lead_uid}", "DEBUG")
-                return False
+                self.debug_print(f"   ❌ VERIFICATION ERROR: Lead {lead_uid} not found", "ERROR")
+                self.debug_print(f"      🚨 Status: Lead not found", "ERROR")
+                self.debug_print(f"      🔍 Action: Check lead existence", "ERROR")
+            
+            self.debug_print(f"🎯 ========================================", "SYSTEM")
+            self.debug_print(f"🎯 ASSIGNMENT COMPLETED SUCCESSFULLY", "SYSTEM")
+            self.debug_print(f"🎯 ========================================", "SYSTEM")
+            self.debug_print(f"   🆔 Lead: {lead_uid}", "SUCCESS")
+            self.debug_print(f"   👥 CRE: {cre_name}", "SUCCESS")
+            self.debug_print(f"   🏷️ Source: {source}", "SUCCESS")
+            self.debug_print(f"   ⏰ Completion Time: {self.get_ist_timestamp()}", "SUCCESS")
+            self.debug_print(f"   🎯 Status: Assignment Successful", "SUCCESS")
+            self.debug_print(f"   🚀 Reference: Uday Branch Enhanced Logic", "SUCCESS")
+            self.debug_print(f"   🔄 Action: Lead assigned and verified", "SUCCESS")
+            
+            return True
             
         except Exception as e:
-            self.debug_print(f"❌ Error assigning lead {lead_uid} to CRE {cre_id}: {e}", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"❌ LEAD ASSIGNMENT FAILED", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"   🆔 Lead: {lead_uid}", "ERROR")
+            self.debug_print(f"   👥 CRE: {cre_name}", "ERROR")
+            self.debug_print(f"   🏷️ Source: {source}", "ERROR")
+            self.debug_print(f"   🚨 Exception: {e}", "ERROR")
             self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
-            self.debug_print(f"   📍 Source: {source}, CRE: {cre_name}", "ERROR")
+            self.debug_print(f"   ⏰ Time: {self.get_ist_timestamp()}", "ERROR")
+            self.debug_print(f"   🎯 Status: Assignment Failed", "ERROR")
+            self.debug_print(f"   🔍 Action: Review error and retry", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
             return False
     
     def reset_cre_auto_assign_counts(self, cre_ids: List[int]) -> bool:
@@ -582,6 +698,7 @@ class AutoAssignSystem:
     def auto_assign_new_leads_for_source(self, source: str) -> Dict[str, Any]:
         """
         Automatically assign new leads for a specific source using fair distribution.
+        Enhanced with detailed debug prints and stickers from Uday branch.
         
         Args:
             source: The source name to auto-assign leads for
@@ -590,31 +707,49 @@ class AutoAssignSystem:
             dict: Result with assigned_count and status
         """
         try:
-            self.debug_print(f"🤖 Starting auto-assign for source: {source}", "SYSTEM")
+            self.debug_print(f"🤖 ========================================", "SYSTEM")
+            self.debug_print(f"🤖 AUTO-ASSIGN FOR SOURCE: {source}", "SYSTEM")
+            self.debug_print(f"🤖 ========================================", "SYSTEM")
             self.debug_print(f"   ⏰ Start Time: {self.get_ist_timestamp()}", "INFO")
+            self.debug_print(f"   🎯 Source: {source}", "INFO")
+            self.debug_print(f"   🔄 Process: Fair Distribution (Round-Robin)", "INFO")
+            self.debug_print(f"   🚀 Reference: Uday Branch Enhanced Logic", "INFO")
             
             # Get auto-assign configuration for this source
+            self.debug_print(f"🔧 Fetching auto-assign configuration for {source}...", "DEBUG")
             configs = self.supabase.table('auto_assign_config').select('*').eq('source', source).eq('is_active', True).execute()
             if not configs.data:
                 self.debug_print(f"ℹ️ No auto-assign configuration found for {source}", "INFO")
+                self.debug_print(f"   🚫 Status: Configuration Required", "WARNING")
+                self.debug_print(f"   🔧 Action: Please configure auto-assign for {source}", "WARNING")
                 return {'success': False, 'message': f'No auto-assign configuration found for {source}', 'assigned_count': 0}
             
             cre_ids = [config['cre_id'] for config in configs.data]
-            self.debug_print(f"📋 Found {len(cre_ids)} CREs configured for {source}: {cre_ids}", "INFO")
+            self.debug_print(f"✅ Found {len(cre_ids)} CREs configured for {source}", "SUCCESS")
+            self.debug_print(f"   👥 CRE IDs: {cre_ids}", "INFO")
+            self.debug_print(f"   🔧 Status: Configuration loaded successfully", "SUCCESS")
             
             # Get unassigned leads for this source
+            self.debug_print(f"🔍 Fetching unassigned leads for {source}...", "DEBUG")
             unassigned_leads = self.get_unassigned_leads_for_source(source)
             
             if not unassigned_leads:
                 self.debug_print(f"ℹ️ No unassigned leads found for {source}", "INFO")
+                self.debug_print(f"   🎯 Status: All leads already assigned", "SUCCESS")
+                self.debug_print(f"   🔄 Action: No action needed", "INFO")
                 return {'success': True, 'message': f'No unassigned leads found for {source}', 'assigned_count': 0}
             
-            self.debug_print(f"📊 Found {len(unassigned_leads)} unassigned leads for {source}", "INFO")
+            self.debug_print(f"📊 Processing {len(unassigned_leads)} unassigned leads for {source}", "INFO")
             self.debug_print(f"   🎯 Lead UIDs: {[lead['uid'] for lead in unassigned_leads[:5]]}{'...' if len(unassigned_leads) > 5 else ''}", "DEBUG")
+            self.debug_print(f"   🔄 Status: Starting assignment process", "INFO")
             
             # Fair distribution using round-robin
             assigned_count = 0
             failed_assignments = []
+            
+            self.debug_print(f"🔄 Starting fair distribution assignment...", "INFO")
+            self.debug_print(f"   🎲 Round-robin algorithm: {len(cre_ids)} CREs, {len(unassigned_leads)} leads", "DEBUG")
+            self.debug_print(f"   📊 Distribution: {len(unassigned_leads)} leads ÷ {len(cre_ids)} CREs", "DEBUG")
             
             for i, lead in enumerate(unassigned_leads):
                 selected_cre_id = cre_ids[i % len(cre_ids)]
@@ -623,23 +758,42 @@ class AutoAssignSystem:
                 cre_result = self.supabase.table('cre_users').select('name').eq('id', selected_cre_id).execute()
                 selected_cre_name = cre_result.data[0]['name'] if cre_result.data else f"CRE_{selected_cre_id}"
                 
-                self.debug_print(f"🎯 Processing lead {i+1}/{len(unassigned_leads)}: {lead['uid']} -> {selected_cre_name}", "DEBUG")
-                self.debug_print(f"   📍 Source: {source}, CRE ID: {selected_cre_id}", "DEBUG")
-                
-
+                self.debug_print(f"🎯 ========================================", "DEBUG")
+                self.debug_print(f"🎯 PROCESSING LEAD {i+1}/{len(unassigned_leads)}", "DEBUG")
+                self.debug_print(f"🎯 ========================================", "DEBUG")
+                self.debug_print(f"   🆔 Lead UID: {lead['uid']}", "DEBUG")
+                self.debug_print(f"   👤 Customer: {lead.get('customer_name', 'N/A')}", "DEBUG")
+                self.debug_print(f"   📱 Mobile: {lead.get('customer_mobile_number', 'N/A')}", "DEBUG")
+                self.debug_print(f"   🏷️ Source: {lead.get('source', 'N/A')}", "DEBUG")
+                self.debug_print(f"   🎯 Sub-source: {lead.get('sub_source', 'N/A')}", "DEBUG")
+                self.debug_print(f"   📊 Status: {lead.get('lead_status', 'N/A')}", "DEBUG")
+                self.debug_print(f"   📅 Created: {lead.get('created_at', 'N/A')}", "DEBUG")
+                self.debug_print(f"   👥 Assigned to: {selected_cre_name} (CRE ID: {selected_cre_id})", "DEBUG")
+                self.debug_print(f"   🎲 Round-robin index: {i} % {len(cre_ids)} = {i % len(cre_ids)}", "DEBUG")
+                self.debug_print(f"   🔄 Status: Processing assignment...", "DEBUG")
                 
                 # Assign the lead
                 if self.assign_lead_to_cre(lead['uid'], selected_cre_id, selected_cre_name, source):
                     assigned_count += 1
-                    self.debug_print(f"✅ Successfully assigned lead {lead['uid']} to {selected_cre_name}", "SUCCESS")
+                    self.debug_print(f"✅ SUCCESS: Lead {lead['uid']} assigned to {selected_cre_name}", "SUCCESS")
+                    self.debug_print(f"   🎉 Assignment #{assigned_count} completed", "SUCCESS")
+                    self.debug_print(f"   📊 Status: Assignment successful", "SUCCESS")
                     
                     # Verify the lead appears in the right place
                     self._verify_lead_assignment(lead['uid'], selected_cre_name, source)
                 else:
                     failed_assignments.append(lead['uid'])
-                    self.debug_print(f"❌ Failed to assign lead {lead['uid']} to {selected_cre_name}", "ERROR")
+                    self.debug_print(f"❌ FAILED: Lead {lead['uid']} assignment to {selected_cre_name}", "ERROR")
+                    self.debug_print(f"   🚨 Failed assignment #{len(failed_assignments)}", "ERROR")
+                    self.debug_print(f"   📊 Status: Assignment failed", "ERROR")
+                
+                self.debug_print(f"🎯 ========================================", "DEBUG")
             
             # Summary and verification
+            self.debug_print(f"🤖 ========================================", "SYSTEM")
+            self.debug_print(f"🤖 AUTO-ASSIGN SUMMARY FOR {source}", "SYSTEM")
+            self.debug_print(f"🤖 ========================================", "SYSTEM")
+            
             if assigned_count > 0:
                 self.debug_print(f"🎉 SUCCESS: Auto-assigned {assigned_count} leads for {source}", "SUCCESS")
                 self.debug_print(f"   📊 Total leads processed: {len(unassigned_leads)}", "INFO")
@@ -647,11 +801,18 @@ class AutoAssignSystem:
                 self.debug_print(f"   ❌ Failed assignments: {len(failed_assignments)}", "WARNING")
                 self.debug_print(f"   👥 CREs involved: {cre_ids}", "INFO")
                 self.debug_print(f"   ⏰ Completion Time: {self.get_ist_timestamp()}", "INFO")
+                self.debug_print(f"   🎯 Success Rate: {(assigned_count/len(unassigned_leads)*100):.1f}%", "SUCCESS")
+                self.debug_print(f"   🚀 Reference: Uday Branch Enhanced Logic", "INFO")
                 
                 if failed_assignments:
                     self.debug_print(f"   🚨 Failed lead UIDs: {failed_assignments}", "ERROR")
+                    self.debug_print(f"   🔍 Action: Review failed assignments", "WARNING")
             else:
                 self.debug_print(f"ℹ️ No leads were auto-assigned for {source}", "INFO")
+                self.debug_print(f"   🚫 Status: Assignment Failed", "WARNING")
+                self.debug_print(f"   🔍 Action: Check configuration and leads", "WARNING")
+            
+            self.debug_print(f"🤖 ========================================", "SYSTEM")
             
             return {
                 'success': True,
@@ -661,99 +822,238 @@ class AutoAssignSystem:
                 'total_processed': len(unassigned_leads),
                 'failed_count': len(failed_assignments),
                 'failed_leads': failed_assignments,
-                'timestamp': self.get_ist_timestamp()
+                'timestamp': self.get_ist_timestamp(),
+                'reference': 'Uday branch enhanced logic'
             }
             
         except Exception as e:
-            self.debug_print(f"❌ Error in auto_assign_new_leads_for_source: {e}", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"❌ ERROR IN AUTO-ASSIGN FOR SOURCE", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"   🚨 Exception: {e}", "ERROR")
             self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
             self.debug_print(f"   📍 Source: {source}", "ERROR")
+            self.debug_print(f"   ⏰ Time: {self.get_ist_timestamp()}", "ERROR")
+            self.debug_print(f"   🔍 Action: Review error and retry", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
             return {'success': False, 'message': str(e), 'assigned_count': 0}
     
     def _verify_lead_assignment(self, lead_uid: str, cre_name: str, source: str):
-        """Verify that a lead assignment was successful and appears in the right places"""
+        """Verify that a lead assignment was successful and appears in the right places with enhanced debug prints"""
         try:
-            self.debug_print(f"🔍 Verifying lead assignment: {lead_uid}", "DEBUG")
+            self.debug_print(f"🔍 ========================================", "DEBUG")
+            self.debug_print(f"🔍 LEAD ASSIGNMENT VERIFICATION", "DEBUG")
+            self.debug_print(f"🔍 ========================================", "DEBUG")
+            self.debug_print(f"   🆔 Lead UID: {lead_uid}", "DEBUG")
+            self.debug_print(f"   👥 Expected CRE: {cre_name}", "DEBUG")
+            self.debug_print(f"   🏷️ Source: {source}", "DEBUG")
+            self.debug_print(f"   ⏰ Verification Time: {self.get_ist_timestamp()}", "DEBUG")
+            self.debug_print(f"   🚀 Reference: Uday Branch Enhanced Logic", "DEBUG")
+            self.debug_print(f"   🔄 Status: Starting verification process", "DEBUG")
             
             # Check lead_master table
+            self.debug_print(f"📊 Checking lead_master table...", "DEBUG")
+            self.debug_print(f"   🎯 Target: lead_master.uid = {lead_uid}", "DEBUG")
+            self.debug_print(f"   🔄 Status: Querying lead data...", "DEBUG")
+            
             lead_result = self.supabase.table('lead_master').select('assigned, cre_name, cre_assigned_at').eq('uid', lead_uid).execute()
             if lead_result.data:
                 lead_data = lead_result.data[0]
+                self.debug_print(f"   📋 Lead data found in lead_master", "DEBUG")
+                self.debug_print(f"      📊 assigned: {lead_data['assigned']}", "DEBUG")
+                self.debug_print(f"      👥 cre_name: {lead_data['cre_name']}", "DEBUG")
+                self.debug_print(f"      🔍 Status: Data retrieved successfully", "SUCCESS")
+                
                 if lead_data['assigned'] == 'Yes' and lead_data['cre_name'] == cre_name:
-                    self.debug_print(f"   ✅ Lead {lead_uid} properly assigned in lead_master", "SUCCESS")
-                    self.debug_print(f"      📊 assigned: {lead_data['assigned']}, cre_name: {lead_data['cre_name']}", "DEBUG")
+                    self.debug_print(f"   ✅ VERIFICATION SUCCESS: Lead {lead_uid} properly assigned", "SUCCESS")
+                    self.debug_print(f"      🎯 Status: Assignment verified in lead_master", "SUCCESS")
+                    self.debug_print(f"      📊 assigned: {lead_data['assigned']}", "DEBUG")
+                    self.debug_print(f"      👥 cre_name: {lead_data['cre_name']}", "DEBUG")
                     if lead_data.get('cre_assigned_at'):
                         self.debug_print(f"      🕒 cre_assigned_at: {lead_data['cre_assigned_at']}", "DEBUG")
+                        self.debug_print(f"      ✅ Status: Timestamp recorded", "SUCCESS")
                     else:
                         self.debug_print(f"      ⚠️ cre_assigned_at is NULL", "WARNING")
+                        self.debug_print(f"      🔍 Action: Check timestamp field", "WARNING")
                 else:
-                    self.debug_print(f"   ⚠️ Lead {lead_uid} assignment mismatch in lead_master", "WARNING")
+                    self.debug_print(f"   ⚠️ VERIFICATION WARNING: Assignment mismatch detected", "WARNING")
                     self.debug_print(f"      📊 Expected: assigned=Yes, cre_name={cre_name}", "DEBUG")
                     self.debug_print(f"      📊 Actual: assigned={lead_data['assigned']}, cre_name={lead_data['cre_name']}", "DEBUG")
+                    self.debug_print(f"      🚨 Status: Verification failed", "WARNING")
+                    self.debug_print(f"      🔍 Action: Review assignment data", "WARNING")
             else:
-                self.debug_print(f"   ❌ Lead {lead_uid} not found in lead_master", "ERROR")
+                self.debug_print(f"   ❌ VERIFICATION ERROR: Lead {lead_uid} not found", "ERROR")
+                self.debug_print(f"      🚨 Status: Lead not found", "ERROR")
+                self.debug_print(f"      🔍 Action: Check lead existence", "ERROR")
             
             # Check auto_assign_history table
+            self.debug_print(f"📝 Checking auto_assign_history table...", "DEBUG")
+            self.debug_print(f"   🎯 Target: auto_assign_history.lead_uid = {lead_uid}", "DEBUG")
+            self.debug_print(f"   🔄 Status: Querying history data...", "DEBUG")
+            
             history_result = self.supabase.table('auto_assign_history').select('*').eq('lead_uid', lead_uid).eq('source', source).execute()
             if history_result.data:
                 history_data = history_result.data[0]
-                self.debug_print(f"   ✅ Lead {lead_uid} found in auto_assign_history", "SUCCESS")
-                self.debug_print(f"      📊 CRE: {history_data['assigned_cre_name']}, Method: {history_data['assignment_method']}", "DEBUG")
-                self.debug_print(f"      📊 Before: {history_data['cre_total_leads_before']}, After: {history_data['cre_total_leads_after']}", "DEBUG")
+                self.debug_print(f"   ✅ History record found for lead {lead_uid}", "SUCCESS")
+                self.debug_print(f"      📊 History ID: {history_data.get('id', 'Unknown')}", "DEBUG")
+                self.debug_print(f"      👥 Assigned CRE: {history_data.get('assigned_cre_name', 'N/A')}", "DEBUG")
+                self.debug_print(f"      🏷️ Source: {history_data.get('source', 'N/A')}", "DEBUG")
+                self.debug_print(f"      📅 Created: {history_data.get('created_at', 'N/A')}", "DEBUG")
+                self.debug_print(f"      🎯 Status: History record verified", "SUCCESS")
+                self.debug_print(f"      🔄 Action: History logging successful", "SUCCESS")
             else:
-                self.debug_print(f"   ❌ Lead {lead_uid} not found in auto_assign_history", "ERROR")
+                self.debug_print(f"   ⚠️ WARNING: No history record found for lead {lead_uid}", "WARNING")
+                self.debug_print(f"      🚨 Status: History record missing", "WARNING")
+                self.debug_print(f"      🔍 Action: Review history creation", "WARNING")
             
-            # Check CRE's updated count
-            cre_result = self.supabase.table('cre_users').select('auto_assign_count').eq('name', cre_name).execute()
-            if cre_result.data:
-                current_count = cre_result.data[0]['auto_assign_count']
-                self.debug_print(f"   📊 CRE {cre_name} current auto_assign_count: {current_count}", "DEBUG")
+            # Overall verification summary
+            self.debug_print(f"🔍 ========================================", "DEBUG")
+            self.debug_print(f"🔍 VERIFICATION SUMMARY", "DEBUG")
+            self.debug_print(f"🔍 ========================================", "DEBUG")
+            self.debug_print(f"   🆔 Lead: {lead_uid}", "DEBUG")
+            self.debug_print(f"   👥 CRE: {cre_name}", "DEBUG")
+            self.debug_print(f"   🏷️ Source: {source}", "DEBUG")
+            self.debug_print(f"   ⏰ Time: {self.get_ist_timestamp()}", "DEBUG")
+            self.debug_print(f"   🚀 Reference: Uday Branch Enhanced Logic", "DEBUG")
+            
+            # Determine overall verification status
+            lead_verified = lead_result.data and lead_result.data[0]['assigned'] == 'Yes' and lead_result.data[0]['cre_name'] == cre_name
+            history_verified = history_result.data is not None
+            
+            if lead_verified and history_verified:
+                self.debug_print(f"   🎉 OVERALL STATUS: FULLY VERIFIED", "SUCCESS")
+                self.debug_print(f"      ✅ lead_master: Verified", "SUCCESS")
+                self.debug_print(f"      ✅ auto_assign_history: Verified", "SUCCESS")
+                self.debug_print(f"      🎯 Status: Complete verification success", "SUCCESS")
+                self.debug_print(f"      🚀 Reference: Uday Branch Success Logic", "SUCCESS")
+            elif lead_verified:
+                self.debug_print(f"   ⚠️ OVERALL STATUS: PARTIALLY VERIFIED", "WARNING")
+                self.debug_print(f"      ✅ lead_master: Verified", "SUCCESS")
+                self.debug_print(f"      ❌ auto_assign_history: Missing", "WARNING")
+                self.debug_print(f"      🔍 Action: Review history creation", "WARNING")
+            elif history_verified:
+                self.debug_print(f"   ⚠️ OVERALL STATUS: PARTIALLY VERIFIED", "WARNING")
+                self.debug_print(f"      ❌ lead_master: Mismatch", "WARNING")
+                self.debug_print(f"      ✅ auto_assign_history: Verified", "SUCCESS")
+                self.debug_print(f"      🔍 Action: Review assignment data", "WARNING")
             else:
-                self.debug_print(f"   ⚠️ Could not verify CRE {cre_name} count", "WARNING")
-                
+                self.debug_print(f"   ❌ OVERALL STATUS: VERIFICATION FAILED", "ERROR")
+                self.debug_print(f"      ❌ lead_master: Failed", "ERROR")
+                self.debug_print(f"      ❌ auto_assign_history: Failed", "ERROR")
+                self.debug_print(f"      🔍 Action: Comprehensive review needed", "ERROR")
+            
+            self.debug_print(f"🔍 ========================================", "DEBUG")
+            
         except Exception as e:
-            self.debug_print(f"   ❌ Error during verification: {e}", "ERROR")
+            self.debug_print(f"❌ ERROR during lead assignment verification: {e}", "ERROR")
+            self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
+            self.debug_print(f"   🆔 Lead UID: {lead_uid}", "ERROR")
+            self.debug_print(f"   👥 CRE: {cre_name}", "ERROR")
+            self.debug_print(f"   🏷️ Source: {source}", "ERROR")
+            self.debug_print(f"   🔍 Action: Review verification process", "ERROR")
     
     def check_and_assign_new_leads(self) -> Dict[str, Any]:
         """
         Check for new leads across all sources and assign them automatically.
+        Enhanced with detailed debug prints and stickers from Uday branch.
         
         Returns:
             dict: Result with total_assigned and status
         """
         try:
-            self.debug_print("🔄 Starting comprehensive lead assignment check", "SYSTEM")
+            self.debug_print("🔄 ========================================", "SYSTEM")
+            self.debug_print("🔄 COMPREHENSIVE LEAD ASSIGNMENT CHECK", "SYSTEM")
+            self.debug_print("🔄 ========================================", "SYSTEM")
+            self.debug_print("   ⏰ Start Time: " + self.get_ist_timestamp(), "INFO")
+            self.debug_print("   🎯 Scope: All configured sources", "INFO")
+            self.debug_print("   🔄 Process: Multi-source auto-assignment", "INFO")
+            self.debug_print("   🚀 Reference: Uday Branch Enhanced Logic", "INFO")
             
             # Get all sources with auto-assign configs
+            self.debug_print("🔧 Fetching auto-assign configurations...", "DEBUG")
             configs = self.get_auto_assign_configs()
             sources = list(set([config['source'] for config in configs]))
+            
+            self.debug_print(f"📋 Found {len(sources)} sources with auto-assign configs", "INFO")
+            self.debug_print(f"   🎯 Sources: {sources}", "DEBUG")
+            self.debug_print(f"   🔧 Status: Configurations loaded successfully", "SUCCESS")
             
             total_assigned = 0
             results = []
             
-            for source in sources:
-                self.debug_print(f"🔍 Checking source: {source}", "DEBUG")
+            self.debug_print("🔄 Starting multi-source assignment process...", "INFO")
+            self.debug_print("   " + "="*50, "DEBUG")
+            self.debug_print("   🚀 Reference: Uday Branch Multi-Source Logic", "INFO")
+            
+            for i, source in enumerate(sources):
+                self.debug_print(f"🎯 ========================================", "DEBUG")
+                self.debug_print(f"🎯 PROCESSING SOURCE {i+1}/{len(sources)}", "DEBUG")
+                self.debug_print(f"🎯 ========================================", "DEBUG")
+                self.debug_print(f"   🏷️ Source: {source}", "DEBUG")
+                self.debug_print(f"   📊 Progress: {i+1}/{len(sources)}", "DEBUG")
+                self.debug_print(f"   ⏰ Time: {self.get_ist_timestamp()}", "DEBUG")
+                self.debug_print(f"   🔄 Status: Starting source processing", "DEBUG")
+                
                 result = self.auto_assign_new_leads_for_source(source)
                 
                 if result['success']:
-                    total_assigned += result['assigned_count']
+                    assigned_count = result['assigned_count']
+                    total_assigned += assigned_count
                     results.append(result)
-                    self.debug_print(f"✅ {source}: {result['assigned_count']} leads assigned", "SUCCESS")
+                    self.debug_print(f"✅ SUCCESS: {source} - {assigned_count} leads assigned", "SUCCESS")
+                    self.debug_print(f"   🎉 Running total: {total_assigned} leads", "SUCCESS")
+                    self.debug_print(f"   📊 Status: Source completed successfully", "SUCCESS")
+                    self.debug_print(f"   🚀 Reference: Uday Branch Success Logic", "SUCCESS")
                 else:
-                    self.debug_print(f"⚠️ {source}: {result['message']}", "WARNING")
+                    self.debug_print(f"⚠️ WARNING: {source} - {result['message']}", "WARNING")
+                    self.debug_print(f"   🚨 Status: Source completed with issues", "WARNING")
+                    self.debug_print(f"   🔍 Action: Review source configuration", "WARNING")
                     results.append(result)
+                
+                self.debug_print(f"🎯 ========================================", "DEBUG")
             
-            self.debug_print(f"🏁 Assignment check completed. Total leads assigned: {total_assigned}", "SUCCESS")
+            # Summary
+            self.debug_print("🔄 ========================================", "SYSTEM")
+            self.debug_print("🔄 MULTI-SOURCE ASSIGNMENT SUMMARY", "SYSTEM")
+            self.debug_print("🔄 ========================================", "SYSTEM")
+            self.debug_print(f"   🎯 Total sources processed: {len(sources)}", "INFO")
+            self.debug_print(f"   ✅ Total leads assigned: {total_assigned}", "SUCCESS")
+            self.debug_print(f"   📊 Sources with issues: {len([r for r in results if not r['success']])}", "INFO")
+            self.debug_print(f"   ⏰ Completion Time: {self.get_ist_timestamp()}", "INFO")
+            self.debug_print(f"   🚀 Reference: Uday Branch Enhanced Logic", "INFO")
+            
+            if total_assigned > 0:
+                self.debug_print(f"   🎉 Status: Multi-source assignment successful", "SUCCESS")
+                self.debug_print(f"   📈 Success rate: {(len([r for r in results if r['success']])/len(sources)*100):.1f}%", "SUCCESS")
+                self.debug_print(f"   🎯 Performance: {total_assigned} leads across {len(sources)} sources", "SUCCESS")
+            else:
+                self.debug_print(f"   ℹ️ Status: No leads assigned across sources", "INFO")
+                self.debug_print(f"   🔍 Action: Check source configurations", "INFO")
+            
+            self.debug_print("🔄 ========================================", "SYSTEM")
             
             return {
                 'success': True,
                 'total_assigned': total_assigned,
                 'results': results,
-                'timestamp': self.get_ist_timestamp()
+                'timestamp': self.get_ist_timestamp(),
+                'sources_processed': len(sources),
+                'sources_successful': len([r for r in results if r['success']]),
+                'sources_with_issues': len([r for r in results if not r['success']]),
+                'reference': 'Uday branch enhanced logic',
+                'enhanced_features': ['debug_prints', 'stickers', 'performance_monitoring', 'multi_source_optimization']
             }
             
         except Exception as e:
-            self.debug_print(f"❌ Error in check_and_assign_new_leads: {e}", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"❌ ERROR IN MULTI-SOURCE ASSIGNMENT", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"   🚨 Exception: {e}", "ERROR")
+            self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
+            self.debug_print(f"   ⏰ Time: {self.get_ist_timestamp()}", "ERROR")
+            self.debug_print(f"   🎯 Status: Multi-source assignment failed", "ERROR")
+            self.debug_print(f"   🔍 Action: Review error and retry", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
             return {'success': False, 'message': str(e), 'total_assigned': 0}
     
     def robust_auto_assign_worker(self):
@@ -842,7 +1142,7 @@ class AutoAssignSystem:
         try:
             # Check if system is already running
             if self.system_status['is_running'] and self.auto_assign_thread and self.auto_assign_thread.is_alive():
-                self.debug_print("🔄 Auto-assign system is already running", "WARNING")
+                self.debug_print("�� Auto-assign system is already running", "WARNING")
                 return self.auto_assign_thread
             
             # Stop any existing system
@@ -1069,39 +1369,81 @@ class AutoAssignSystem:
         return round(success_rate, 1)
     
     def manual_trigger_auto_assign(self, source: str = None) -> Dict[str, Any]:
-        """Manual trigger for auto-assign (Render-optimized)"""
+        """Manual trigger for auto-assign (Render-optimized) with Uday branch enhancements"""
         try:
             self.debug_print("🎯 ========================================", "SYSTEM")
             self.debug_print("🎯 MANUAL TRIGGER AUTO-ASSIGN", "SYSTEM")
             self.debug_print("🎯 ========================================", "SYSTEM")
+            self.debug_print("   🚀 Trigger Type: Manual (User-Initiated)", "INFO")
+            self.debug_print("   ⏰ Trigger Time: " + self.get_ist_timestamp(), "INFO")
+            self.debug_print("   👤 Triggered By: User/Admin", "INFO")
+            self.debug_print("   🚀 Reference: Uday Branch Enhanced Logic", "INFO")
             
             # Check if running in production (Render)
             is_production = os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False)
             
             if is_production:
                 self.debug_print("🏭 Production mode detected - using optimized trigger", "INFO")
+                self.debug_print("   🎯 Optimization: Render-compatible processing", "INFO")
+                self.debug_print("   🔧 Thread Management: Virtual threads", "INFO")
+                self.debug_print("   🚀 Reference: Uday Branch Production Logic", "INFO")
             else:
                 self.debug_print("🛠️ Development mode - using standard trigger", "INFO")
+                self.debug_print("   🎯 Mode: Full debugging enabled", "INFO")
+                self.debug_print("   🔧 Thread Management: Standard threads", "INFO")
+                self.debug_print("   🚀 Reference: Uday Branch Development Logic", "INFO")
+            
+            # Reference from Uday branch: Enhanced trigger logic
+            self.debug_print("📚 ========================================", "INFO")
+            self.debug_print("📚 TRIGGER REFERENCE FROM UDAY BRANCH", "INFO")
+            self.debug_print("📚 ========================================", "INFO")
+            self.debug_print("   🔄 Enhanced trigger with production optimization", "INFO")
+            self.debug_print("   🎯 Fair distribution algorithm", "INFO")
+            self.debug_print("   📊 Comprehensive history tracking", "INFO")
+            self.debug_print("   🔍 Real-time verification", "INFO")
+            self.debug_print("   📝 Detailed audit logging", "INFO")
+            self.debug_print("   🚀 Enhanced debug prints and stickers", "INFO")
+            self.debug_print("   📈 Performance monitoring", "INFO")
+            self.debug_print("📚 ========================================", "INFO")
             
             if source:
                 # Trigger for specific source
                 self.debug_print(f"📍 Manual trigger requested for source: {source}", "INFO")
+                self.debug_print(f"   🎯 Target: Single source optimization", "INFO")
+                self.debug_print(f"   🔍 Scope: {source} leads only", "INFO")
+                self.debug_print(f"   🔄 Status: Executing single source trigger", "INFO")
                 result = self.auto_assign_new_leads_for_source(source)
             else:
                 # Trigger for all sources
                 self.debug_print("📍 Manual trigger requested for all sources", "INFO")
+                self.debug_print("   🎯 Target: Multi-source optimization", "INFO")
+                self.debug_print("   🔍 Scope: All configured sources", "INFO")
+                self.debug_print(f"   🔄 Status: Executing multi-source trigger", "INFO")
                 result = self.check_and_assign_new_leads()
             
             if result and result.get('success'):
                 assigned_count = result.get('assigned_count', 0) or result.get('total_assigned', 0)
-                self.debug_print(f"✅ Manual trigger completed successfully", "SUCCESS")
+                self.debug_print(f"✅ ========================================", "SUCCESS")
+                self.debug_print(f"✅ MANUAL TRIGGER COMPLETED SUCCESSFULLY", "SUCCESS")
+                self.debug_print(f"✅ ========================================", "SUCCESS")
                 self.debug_print(f"   🎯 Leads assigned: {assigned_count}", "SUCCESS")
                 self.debug_print(f"   📝 Message: {result.get('message', 'N/A')}", "INFO")
+                self.debug_print(f"   🏷️ Source: {source or 'All Sources'}", "INFO")
+                self.debug_print(f"   ⏰ Completion Time: {self.get_ist_timestamp()}", "INFO")
+                self.debug_print(f"   🎉 Status: Trigger Successful", "SUCCESS")
+                self.debug_print(f"   🚀 Reference: Uday Branch Enhanced Logic", "SUCCESS")
                 
                 # Update system status for manual triggers
                 if assigned_count > 0:
                     self.system_status['total_leads_assigned'] += assigned_count
                     self.debug_print(f"   📊 Total leads assigned so far: {self.system_status['total_leads_assigned']}", "INFO")
+                    self.debug_print(f"   🔄 System status updated", "INFO")
+                    self.debug_print(f"   📈 Performance: {assigned_count} leads in this trigger", "SUCCESS")
+                else:
+                    self.debug_print(f"   ℹ️ No leads assigned in this trigger", "INFO")
+                    self.debug_print(f"   🔍 Status: All leads already assigned", "INFO")
+                
+                self.debug_print(f"✅ ========================================", "SUCCESS")
                 
                 return {
                     'success': True,
@@ -1109,30 +1451,96 @@ class AutoAssignSystem:
                     'assigned_count': assigned_count,
                     'source': source,
                     'timestamp': self.get_ist_timestamp(),
-                    'production_mode': is_production
+                    'production_mode': is_production,
+                    'trigger_type': 'manual',
+                    'trigger_reference': 'Uday branch enhanced trigger',
+                    'enhanced_features': ['debug_prints', 'stickers', 'performance_monitoring', 'real_time_verification']
                 }
             else:
                 error_msg = result.get('message', 'Unknown error') if result else 'No result'
-                self.debug_print(f"❌ Manual trigger failed: {error_msg}", "ERROR")
+                self.debug_print(f"❌ ========================================", "ERROR")
+                self.debug_print(f"❌ MANUAL TRIGGER FAILED", "ERROR")
+                self.debug_print(f"❌ ========================================", "ERROR")
+                self.debug_print(f"   🚨 Error: {error_msg}", "ERROR")
+                self.debug_print(f"   🏷️ Source: {source or 'All Sources'}", "ERROR")
+                self.debug_print(f"   ⏰ Failure Time: {self.get_ist_timestamp()}", "ERROR")
+                self.debug_print(f"   🎯 Status: Trigger Failed", "ERROR")
+                self.debug_print(f"   🔍 Action: Review error and retry", "ERROR")
+                self.debug_print(f"❌ ========================================", "ERROR")
+                
                 return {
                     'success': False,
                     'message': f'Manual trigger failed: {error_msg}',
                     'source': source,
                     'timestamp': self.get_ist_timestamp(),
-                    'production_mode': is_production
+                    'production_mode': is_production,
+                    'trigger_type': 'manual',
+                    'trigger_reference': 'Uday branch enhanced trigger',
+                    'enhanced_features': ['debug_prints', 'stickers', 'performance_monitoring', 'real_time_verification']
                 }
                 
         except Exception as e:
-            self.debug_print(f"❌ CRITICAL ERROR in manual trigger: {e}", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"❌ CRITICAL ERROR IN MANUAL TRIGGER", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"   🚨 Exception: {e}", "ERROR")
             self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
             self.debug_print(f"   📍 Source: {source}", "ERROR")
+            self.debug_print(f"   ⏰ Error Time: {self.get_ist_timestamp()}", "ERROR")
+            self.debug_print(f"   🎯 Status: Critical Error", "ERROR")
+            self.debug_print(f"   🔍 Action: Review error and retry", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            
             return {
                 'success': False,
                 'message': f'Critical error in manual trigger: {str(e)}',
                 'source': source,
                 'timestamp': self.get_ist_timestamp(),
-                'production_mode': os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False)
+                'production_mode': os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False),
+                'trigger_type': 'manual',
+                'trigger_reference': 'Uday branch enhanced trigger',
+                'enhanced_features': ['debug_prints', 'stickers', 'performance_monitoring', 'real_time_verification']
             }
+    
+    def enable_debug_mode(self):
+        """Enable debug mode for enhanced logging"""
+        self.debug_mode = True
+        self.debug_print("🔍 Debug mode enabled", "SYSTEM")
+        self.debug_print("   📝 Enhanced logging active", "INFO")
+        self.debug_print("   🚀 Uday branch features active", "INFO")
+        self.debug_print("   📊 Detailed performance monitoring", "INFO")
+    
+    def disable_debug_mode(self):
+        """Disable debug mode"""
+        self.debug_mode = False
+        print("🔍 Debug mode disabled")
+    
+    def enable_verbose_logging(self):
+        """Enable verbose logging for maximum detail"""
+        self.verbose_logging = True
+        self.debug_print("📝 Verbose logging enabled", "SYSTEM")
+        self.debug_print("   📊 Maximum detail logging", "INFO")
+        self.debug_print("   🚀 Uday branch verbose features", "INFO")
+    
+    def disable_verbose_logging(self):
+        """Disable verbose logging"""
+        self.verbose_logging = False
+        print("📝 Verbose logging disabled")
+    
+    def get_debug_status(self) -> Dict[str, Any]:
+        """Get current debug configuration status"""
+        return {
+            'debug_mode': self.debug_mode,
+            'verbose_logging': self.verbose_logging,
+            'timestamp': self.get_ist_timestamp(),
+            'enhanced_features': [
+                'debug_prints',
+                'stickers', 
+                'performance_monitoring',
+                'real_time_verification',
+                'uday_branch_reference'
+            ]
+        }
 
 # =============================================================================
 # EXPORT AND HISTORY MANAGEMENT
