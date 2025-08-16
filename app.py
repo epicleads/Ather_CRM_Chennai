@@ -3764,6 +3764,3679 @@ def cre_dashboard():
     )
 
 @app.route('/update_lead/<uid>', methods=['GET', 'POST'])
+
+# WhatsApp Helper Functions
+def is_qualified_lead(message_content, button_payload):
+    """Check if a WhatsApp message indicates a qualified lead"""
+    if not message_content and not button_payload:
+        return False
+    
+    # Convert to lowercase for case-insensitive matching
+    message_lower = (message_content or "").lower()
+    button_lower = (button_payload or "").lower()
+    
+    # HIGH-INTENT BUTTON OPTIONS - These are the most qualified leads
+    high_intent_buttons = [
+        'know more',
+        'i need a call back', 
+        'share brochure',
+        'book test ride',
+        'book now'
+    ]
+    
+    # Check for high-intent button clicks first (highest priority)
+    if button_payload:
+        for button in high_intent_buttons:
+            if button.lower() in button_lower:
+                print(f"🎯 HIGH-INTENT BUTTON CLICKED: '{button}' - QUALIFIED LEAD!")
+                return True
+    
+    # Check message content for interest indicators
+    interest_keywords = [
+        'interested', 'interest', 'want', 'need', 'looking for', 'searching for',
+        'price', 'cost', 'quote', 'quotation', 'details', 'information',
+        'test drive', 'testdrive', 'book', 'booking', 'reserve', 'reservation',
+        'buy', 'purchase', 'buying', 'purchasing', 'compare', 'comparison',
+        'specifications', 'specs', 'features', 'benefits', 'advantages',
+        'delivery', 'availability', 'stock', 'in stock', 'ready stock',
+        'discount', 'offer', 'deal', 'best price', 'best deal',
+        'when', 'where', 'how', 'what', 'which', 'tell me', 'show me',
+        'contact', 'call me', 'call back', 'callback', 'reach out',
+        'yes', 'okay', 'ok', 'sure', 'definitely', 'absolutely'
+    ]
+    
+    # Check message content
+    for keyword in interest_keywords:
+        if keyword in message_lower:
+            return True
+    
+    # Check button payload for other action words
+    if button_payload:
+        action_keywords = ['yes', 'interested', 'book', 'call', 'info', 'details', 'price']
+        for keyword in action_keywords:
+            if keyword in button_lower:
+                return True
+    
+    return False
+
+def normalize_phone_number(phone):
+    """Normalize phone number to standard format"""
+    if not phone:
+        return None
+    
+    # Remove all non-digit characters
+    digits_only = ''.join(filter(str.isdigit, str(phone)))
+    
+    # Handle Indian numbers
+    if len(digits_only) == 10:
+        # 10 digits - add 91 prefix
+        return f"91{digits_only}"
+    elif len(digits_only) == 12 and digits_only.startswith('91'):
+        # 12 digits with 91 prefix - return as is
+        return digits_only
+    elif len(digits_only) == 11 and digits_only.startswith('0'):
+        # 11 digits starting with 0 - remove 0 and add 91
+        return f"91{digits_only[1:]}"
+    elif len(digits_only) >= 10 and len(digits_only) <= 15:
+        # Other valid lengths - return as is
+        return digits_only
+    
+    return None
+
+def check_existing_leads(phone_number):
+    """Check if phone number exists in lead_master or duplicate_leads tables"""
+    try:
+        # Check lead_master table
+        master_result = supabase.table("lead_master")\
+            .select("*")\
+            .eq("customer_mobile_number", phone_number)\
+            .execute()
+        
+        master_record = master_result.data[0] if master_result.data else None
+        
+        # Check duplicate_leads table - use customer_mobile_number instead of phone_number
+        try:
+            duplicate_result = supabase.table("duplicate_leads")\
+                .select("*")\
+                .eq("customer_mobile_number", phone_number)\
+                .execute()
+            
+            duplicate_record = duplicate_result.data[0] if duplicate_result.data else None
+        except Exception as e:
+            print(f"Warning: Error checking duplicate_leads table: {e}")
+            duplicate_record = None
+        
+        return master_record, duplicate_record
+        
+    except Exception as e:
+        print(f"Error checking existing leads: {e}")
+        raise e
+
+def is_duplicate_source(record, source, sub_source):
+    """Check if source/sub_source combination already exists in a record"""
+    try:
+        # Check all source fields in the record
+        for i in range(1, 11):  # Check source1 through source10
+            existing_source = record.get(f'source{i}')
+            existing_sub_source = record.get(f'sub_source{i}')
+            
+            if existing_source == source and existing_sub_source == sub_source:
+                return True
+        
+        return False
+        
+    except Exception as e:
+        print(f"Error checking duplicate source: {e}")
+        return False
+
+def find_next_available_source_slot(record):
+    """Find the next available slot for adding a new source"""
+    try:
+        for i in range(1, 11):  # Check source1 through source10
+            if not record.get(f'source{i}'):
+                return i
+        return None  # All slots are full
+        
+    except Exception as e:
+        print(f"Error finding next available slot: {e}")
+        return None
+
+def add_source_to_duplicate_record(record, source, sub_source, date, campaign_id):
+    """Add a new source to an existing duplicate record"""
+    try:
+        slot = find_next_available_source_slot(record)
+        if not slot:
+            print(f"No available slots for {record['uid']}")
+            return False
+        
+        update_data = {
+            f'source{slot}': source,
+            f'sub_source{slot}': sub_source,
+            f'date{slot}': date,
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        if slot == 1:
+            update_data['duplicate_count'] = record.get('duplicate_count', 0) + 1
+        
+        result = supabase.table("duplicate_leads")\
+            .update(update_data)\
+            .eq("uid", record['uid'])\
+            .execute()
+        
+        return bool(result.data)
+        
+    except Exception as e:
+        print(f"Error adding source to duplicate record: {e}")
+        return False
+
+def create_duplicate_record(master_record, source, sub_source, date, campaign_id):
+    """Create a new duplicate record"""
+    try:
+        sequence = get_next_sequence_number()
+        uid = generate_uid("DUPLICATE", master_record['customer_mobile_number'], sequence)
+        current_time = datetime.now()
+        
+        duplicate_data = {
+            'uid': uid,
+            'customer_mobile_number': master_record['customer_mobile_number'],
+            'customer_name': master_record['customer_name'],
+            'source1': master_record['source'],
+            'sub_source1': master_record['sub_source'],
+            'date1': master_record['date'],
+            'source2': source,
+            'sub_source2': sub_source,
+            'date2': date,
+            'duplicate_count': 2,
+            'created_at': current_time.isoformat(),
+            'updated_at': current_time.isoformat()
+        }
+        
+        result = supabase.table("duplicate_leads").insert(duplicate_data).execute()
+        return bool(result.data)
+        
+    except Exception as e:
+        print(f"Error creating duplicate record: {e}")
+        return False
+
+def get_next_sequence_number():
+    """Get next sequence number for UID generation"""
+    try:
+        # Try to get the highest UID number from lead_master to generate next sequence
+        result = supabase.table("lead_master").select("uid").order("uid", desc=True).limit(1).execute()
+        
+        if result.data and result.data[0]['uid']:
+            # Extract sequence number from existing UID (format: SOURCE_CHAR+SEQ_CHAR-MOBILE_LAST4-SEQ_NUM)
+            uid = result.data[0]['uid']
+            # Example: XB-1850-0002 -> extract 0002 -> return 3
+            if '-' in uid:
+                uid_parts = uid.split('-')
+                if len(uid_parts) >= 3:
+                    try:
+                        last_sequence = int(uid_parts[-1])
+                        return last_sequence + 1
+                    except ValueError:
+                        pass
+        
+        # If no existing UIDs or can't parse, start with 1
+        return 1
+        
+    except Exception as e:
+        print(f"Error getting sequence number: {e}")
+        # Fallback: use timestamp-based sequence
+        return int(datetime.now().timestamp()) % 10000
+
+def generate_uid(source, phone, sequence):
+    """Generate unique UID for leads"""
+    try:
+        # Get current date
+        current_date = datetime.now().strftime("%Y%m%d")
+        
+        # Create UID format: DATE_SOURCE_PHONE_SEQUENCE
+        uid = f"{current_date}_{source}_{phone[-4:]}_{sequence:04d}"
+        return uid
+    except Exception as e:
+        print(f"Error generating UID: {e}")
+        return f"UID_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+def send_whatsapp_message(phone_number, message):
+    """Placeholder function - not needed for lead capture"""
+    print(f"📱 Note: WhatsApp sending not implemented - only receiving leads")
+    return {"success": True, "message": "WhatsApp sending not implemented - only receiving leads"}
+
+def normalize_call_dates(update_data: dict) -> dict:
+    """Ensure all *_call_date fields are stored as full IST timestamps.
+    If any call date fields are present with any value, overwrite with current IST timestamp.
+    """
+    try:
+        call_keys = [
+            'first_call_date', 'second_call_date', 'third_call_date',
+            'fourth_call_date', 'fifth_call_date', 'sixth_call_date', 'seventh_call_date'
+        ]
+        for key in call_keys:
+            if key in update_data and update_data[key] is not None:
+                # Always overwrite with current timestamp, regardless of what was there
+                print(f"DEBUG: Normalizing {key} from '{update_data[key]}' to '{get_ist_timestamp()}'")
+                update_data[key] = get_ist_timestamp()
+    except Exception as e:
+        # Be resilient; on any issue, leave data as-is
+        print(f"DEBUG: Error in normalize_call_dates: {e}")
+        pass
+    return update_data
+
+def sync_timestamps_between_tables(uid: str, final_status: str, won_timestamp: str = None, lost_timestamp: str = None):
+    """
+    Synchronize won_timestamp and lost_timestamp between lead_master and ps_followup_master tables.
+    
+    Args:
+        uid: Lead UID
+        final_status: The final status ('Won' or 'Lost')
+        won_timestamp: Timestamp for won status (if applicable)
+        lost_timestamp: Timestamp for lost status (if applicable)
+    """
+    try:
+        if final_status == 'Won' and won_timestamp:
+            # Update both tables with won_timestamp
+            supabase.table('lead_master').update({'won_timestamp': won_timestamp}).eq('uid', uid).execute()
+            supabase.table('ps_followup_master').update({'won_timestamp': won_timestamp}).eq('lead_uid', uid).execute()
+            print(f"DEBUG: Synced won_timestamp '{won_timestamp}' for lead {uid} in both tables")
+            
+        elif final_status == 'Lost' and lost_timestamp:
+            # Update both tables with lost_timestamp
+            supabase.table('lead_master').update({'lost_timestamp': lost_timestamp}).eq('uid', uid).execute()
+            supabase.table('ps_followup_master').update({'lost_timestamp': lost_timestamp}).eq('lead_uid', uid).execute()
+            print(f"DEBUG: Synced lost_timestamp '{lost_timestamp}' for lead {uid} in both tables")
+            
+        elif final_status not in ['Won', 'Lost']:
+            # Clear timestamps if status is neither Won nor Lost
+            supabase.table('lead_master').update({
+                'won_timestamp': None,
+                'lost_timestamp': None
+            }).eq('uid', uid).execute()
+            supabase.table('ps_followup_master').update({
+                'won_timestamp': None,
+                'lost_timestamp': None
+            }).eq('lead_uid', uid).execute()
+            print(f"DEBUG: Cleared timestamps for lead {uid} as status is '{final_status}'")
+            
+    except Exception as e:
+        print(f"ERROR: Failed to sync timestamps for lead {uid}: {str(e)}")
+        # Don't raise the exception - we want the main operation to continue
+
+def sync_all_existing_timestamps():
+    """
+    Synchronize timestamps for all existing leads that might have mismatched timestamps.
+    This function can be run manually or as a maintenance task.
+    """
+    try:
+        print("Starting timestamp synchronization for all existing leads...")
+        
+        # Get all leads with final_status Won or Lost
+        won_leads = supabase.table('lead_master').select('uid, won_timestamp').eq('final_status', 'Won').not_.is_('won_timestamp', 'null').execute()
+        lost_leads = supabase.table('lead_master').select('uid, lost_timestamp').eq('final_status', 'Lost').not_.is_('lost_timestamp', 'null').execute()
+        
+        synced_count = 0
+        
+        # Sync Won leads
+        for lead in won_leads.data:
+            try:
+                supabase.table('ps_followup_master').update({'won_timestamp': lead['won_timestamp']}).eq('lead_uid', lead['uid']).execute()
+                synced_count += 1
+                print(f"Synced won_timestamp for lead {lead['uid']}")
+            except Exception as e:
+                print(f"Failed to sync won_timestamp for lead {lead['uid']}: {str(e)}")
+        
+        # Sync Lost leads
+        for lead in lost_leads.data:
+            try:
+                supabase.table('ps_followup_master').update({'lost_timestamp': lead['lost_timestamp']}).eq('lead_uid', lead['uid']).execute()
+                synced_count += 1
+                print(f"Synced lost_timestamp for lead {lead['uid']}")
+            except Exception as e:
+                print(f"Failed to sync lost_timestamp for lead {lead['uid']}: {str(e)}")
+        
+        print(f"Timestamp synchronization completed. Synced {synced_count} leads.")
+        return synced_count
+        
+    except Exception as e:
+        print(f"ERROR in sync_all_existing_timestamps: {str(e)}")
+        return 0
+
+def is_valid_date(date_string):
+    """Validate date string format (YYYY-MM-DD)"""
+    try:
+        datetime.strptime(date_string, '%Y-%m-%d')
+        return True
+    except ValueError:
+        return False
+
+def is_valid_uid(uid):
+    """Validate UID format"""
+    if not uid:
+        return False
+    # Add your UID validation logic here
+    return True
+
+
+# Using Flask's built-in tojson filter
+
+# Get environment variables with fallback values for testing
+SUPABASE_URL = os.environ.get('SUPABASE_URL')
+SUPABASE_KEY = os.environ.get('SUPABASE_ANON_KEY')
+SECRET_KEY = os.environ.get('FLASK_SECRET_KEY', 'fallback-secret-key-change-this')
+
+# Email configuration (add these to your .env file)
+SMTP_SERVER = os.environ.get('SMTP_SERVER', 'smtp.gmail.com')
+SMTP_PORT = int(os.environ.get('SMTP_PORT', '587'))
+EMAIL_USER = os.environ.get('EMAIL_USER', '')
+EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD', '')
+
+# Debug: Print to check if variables are loaded (remove in production)
+print(f"SUPABASE_URL loaded: {SUPABASE_URL is not None}")
+print(f"SUPABASE_KEY loaded: {SUPABASE_KEY is not None}")
+print(f"SUPABASE_URL: {SUPABASE_URL}")
+print(f"SUPABASE_ANON_KEY: {SUPABASE_KEY}")
+
+# Validate required environment variables
+if not SUPABASE_URL:
+    raise ValueError("SUPABASE_URL environment variable is required. Please check your .env file.")
+if not SUPABASE_KEY:
+    raise ValueError("SUPABASE_ANON_KEY environment variable is required. Please check your .env file.")
+
+app.secret_key = SECRET_KEY
+app.permanent_session_lifetime = timedelta(hours=24)
+
+# Initialize Supabase client
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    print("✅ Supabase client initialized successfully")
+    # Removed Supabase warm-up query for local development
+except Exception as e:
+    print(f"❌ Error initializing Supabase client: {e}")
+    raise
+
+# Initialize optimized operations for faster lead updates
+try:
+    optimized_ops = create_optimized_operations(supabase)
+    print("✅ Optimized operations initialized successfully")
+except Exception as e:
+    print(f"❌ Error initializing optimized operations: {e}")
+    # Continue without optimized operations if there's an error
+    optimized_ops = None
+
+# Initialize AuthManager
+auth_manager = AuthManager(supabase)
+# Store auth_manager in app config instead of direct attribute
+app.config['AUTH_MANAGER'] = auth_manager
+
+# Initialize rate limiter
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=["1000 per minute"]  # Use in-memory backend for local/dev
+)
+
+# Upload folder configuration
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'csv', 'xlsx', 'xls'}
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
+
+# Create upload folder if it doesn't exist
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def send_email_to_ps(ps_email, ps_name, lead_data, cre_name):
+    """Send email notification to PS when a lead is assigned"""
+    try:
+        if not EMAIL_USER or not EMAIL_PASSWORD:
+            print("Email credentials not configured. Skipping email notification.")
+            return False
+
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_USER
+        msg['To'] = ps_email
+        msg['Subject'] = f"New Lead Assigned - {lead_data['customer_name']}"
+
+        # Email body
+        body = f"""
+        Dear {ps_name},
+
+        A new lead has been assigned to you by {cre_name}.
+
+        Lead Details:
+        - Customer Name: {lead_data['customer_name']}
+        - Mobile Number: {lead_data['customer_mobile_number']}
+        - Source: {lead_data['source']}
+        - Lead Category: {lead_data.get('lead_category', 'Not specified')}
+        - Model Interested: {lead_data.get('model_interested', 'Not specified')}
+        - Branch: {lead_data.get('branch', 'Not specified')}
+
+        Please log in to the CRM system to view and update this lead.
+
+        Best regards,
+        Ather CRM System
+        """
+
+        msg.attach(MIMEText(body, 'plain'))
+
+        # Send email
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(EMAIL_USER, EMAIL_PASSWORD)
+        text = msg.as_string()
+        server.sendmail(EMAIL_USER, ps_email, text)
+        server.quit()
+
+        print(f"Email sent successfully to {ps_email}")
+        return True
+
+    except Exception as e:
+        print(f"Error sending email: {e}")
+        return False
+
+
+def read_csv_file(filepath):
+    """Read CSV file and return list of dictionaries with memory optimization"""
+    data = []
+    try:
+        with open(filepath, 'r', encoding='utf-8') as file:
+            csv_reader = csv.DictReader(file)
+            for row_num, row in enumerate(csv_reader):
+                if row_num >= 10000:  # Limit to 10,000 rows
+                    print(f"Warning: File contains more than 10,000 rows. Only processing first 10,000.")
+                    break
+
+                # Clean and validate row data
+                cleaned_row = {}
+                for key, value in row.items():
+                    if key and value:  # Only include non-empty keys and values
+                        cleaned_row[key.strip()] = str(value).strip()
+
+                if cleaned_row:  # Only add non-empty rows
+                    data.append(cleaned_row)
+
+                # Memory management for large files
+                if row_num % 1000 == 0 and row_num > 0:
+                    print(f"Processed {row_num} rows...")
+
+    except Exception as e:
+        print(f"Error reading CSV file: {e}")
+        raise
+
+    return data
+
+
+def read_excel_file(filepath):
+    """Read Excel file and return list of dictionaries with memory optimization"""
+    data = []
+    try:
+        workbook = openpyxl.load_workbook(filepath, read_only=True)  # Read-only mode for memory efficiency
+        sheet = workbook.active
+
+        # Get headers from first row
+        headers = []
+        if sheet and sheet[1]:
+            for cell in sheet[1]:
+                if cell and cell.value:
+                    headers.append(str(cell.value).strip())
+                else:
+                    headers.append(None)
+
+        # Read data rows with limit
+        row_count = 0
+        if sheet:
+            for row_num, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+                if row_count >= 10000:  # Limit to 10,000 rows
+                    print(f"Warning: File contains more than 10,000 rows. Only processing first 10,000.")
+                    break
+
+                row_data = {}
+                has_data = False
+
+                for i, value in enumerate(row):
+                    if i < len(headers) and headers[i] and value is not None:
+                        row_data[headers[i]] = str(value).strip()
+                        has_data = True
+
+                if has_data:  # Only add rows with actual data
+                    data.append(row_data)
+                    row_count += 1
+
+                # Memory management for large files
+                if row_count % 1000 == 0 and row_count > 0:
+                    print(f"Processed {row_count} rows...")
+
+        workbook.close()  # Explicitly close workbook
+
+    except Exception as e:
+        print(f"Error reading Excel file: {e}")
+        raise
+
+    return data
+
+
+def batch_insert_leads(leads_data, batch_size=100):
+    """Insert leads in batches to avoid overwhelming the database"""
+    total_inserted = 0
+    total_batches = (len(leads_data) + batch_size - 1) // batch_size
+
+    print(f"Starting batch insert: {len(leads_data)} leads in {total_batches} batches")
+
+    for i in range(0, len(leads_data), batch_size):
+        batch = leads_data[i:i + batch_size]
+        batch_num = (i // batch_size) + 1
+
+        try:
+            # Insert batch
+            result = supabase.table('lead_master').insert(batch).execute()
+
+            if result.data:
+                batch_inserted = len(result.data)
+                total_inserted += batch_inserted
+                print(f"Batch {batch_num}/{total_batches}: Inserted {batch_inserted} leads")
+            else:
+                print(f"Batch {batch_num}/{total_batches}: No data returned from insert")
+
+            # Small delay to prevent overwhelming the database
+            time.sleep(0.1)  # CHANGED from eventlet.sleep(0.1)
+
+            # Force garbage collection every 10 batches
+            if batch_num % 10 == 0:
+                gc.collect()
+
+        except Exception as e:
+            print(f"Error inserting batch {batch_num}: {e}")
+            # Continue with next batch instead of failing completely
+            continue
+
+    print(f"Batch insert completed: {total_inserted} total leads inserted")
+    return total_inserted
+
+
+def generate_uid(source, mobile_number, sequence):
+    """Generate UID based on source, mobile number, and sequence"""
+    source_map = {
+        'Google': 'G',
+        'Meta': 'M',
+        'Affiliate': 'A',
+        'Know': 'K',
+        'Whatsapp': 'W',
+        'WHATSAPP': 'W',  # WhatsApp mapping (all caps)
+        'WhatsApp': 'W',  # WhatsApp mapping (mixed case)
+        'Tele': 'T',
+        'Activity': 'AC',
+        'Walk-in': 'W',  # Walk-in mapping
+        'Walkin': 'W'    # Walkin mapping (without hyphen)
+    }
+
+    source_char = source_map.get(source, 'X')
+
+    # Get sequence character (A-Z)
+    sequence_char = chr(65 + (sequence % 26))  # A=65 in ASCII
+
+    # Get last 4 digits of mobile number
+    mobile_str = str(mobile_number).replace(' ', '').replace('-', '')
+    mobile_last4 = mobile_str[-4:] if len(mobile_str) >= 4 else mobile_str.zfill(4)
+
+    # Generate sequence number (0001, 0002, etc.)
+    seq_num = f"{(sequence % 9999) + 1:04d}"
+
+    return f"{source_char}{sequence_char}-{mobile_last4}-{seq_num}"
+
+
+def get_next_call_info(lead_data):
+    """Determine the next available call number and which calls are completed"""
+    call_order = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
+    completed_calls = []
+    next_call = 'first'
+
+    for call_num in call_order:
+        call_date_key = f'{call_num}_call_date'
+        if lead_data.get(call_date_key):
+            completed_calls.append(call_num)
+        else:
+            next_call = call_num
+            break
+
+    return next_call, completed_calls
+
+
+def get_next_ps_call_info(ps_data):
+    """Determine the next available PS call number and which calls are completed (now 7 calls)"""
+    call_order = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh']
+    completed_calls = []
+    next_call = 'first'
+
+    for call_num in call_order:
+        call_date_key = f'{call_num}_call_date'
+        if ps_data.get(call_date_key):
+            completed_calls.append(call_num)
+        else:
+            next_call = call_num
+            break
+
+    return next_call, completed_calls
+
+
+def get_accurate_count(table_name, filters=None):
+    """Get accurate count from Supabase table"""
+    try:
+        query = supabase.table(table_name).select('id')
+
+        if filters:
+            for key, value in filters.items():
+                if value is not None:
+                    query = query.eq(key, value)
+
+        result = query.execute()
+
+        # Count the returned data
+        return len(result.data) if result.data else 0
+
+    except Exception as e:
+        print(f"Error getting count from {table_name}: {e}")
+        return 0
+
+
+def safe_get_data(table_name, filters=None, select_fields='*', limit=10000):
+    """Safely get data from Supabase with error handling"""
+    try:
+        query = supabase.table(table_name).select(select_fields)
+
+        if filters:
+            for key, value in filters.items():
+                if value is not None:
+                    query = query.eq(key, value)
+
+        # Add limit to prevent default 1000 row limitation
+        if limit:
+            query = query.limit(limit)
+
+        result = query.execute()
+        return result.data or []
+    except Exception as e:
+        print(f"Error fetching data from {table_name}: {e}")
+        return []
+
+
+def sync_test_drive_to_alltest_drive(source_table, original_id, lead_data):
+    """
+    Sync test drive data to alltest_drive table when test_drive_done is updated
+    """
+    try:
+        # Check if test_drive_done is not null and is Yes/No or True/False
+        test_drive_done = lead_data.get('test_drive_done')
+        
+        # Handle both boolean and string values
+        if test_drive_done is None:
+            return
+        
+        # Convert boolean to string if needed
+        if test_drive_done is True:
+            test_drive_done = 'Yes'
+        elif test_drive_done is False:
+            test_drive_done = 'No'
+        elif test_drive_done not in ['Yes', 'No']:
+            return
+        
+        # Check if record already exists in alltest_drive
+        existing_record = supabase.table('alltest_drive').select('*').eq('source_table', source_table).eq('original_id', str(original_id)).execute()
+        
+        # Prepare data for alltest_drive table
+        alltest_drive_data = {
+            'source_table': source_table,
+            'original_id': str(original_id),
+            'test_drive_done': test_drive_done,
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        # Map fields based on source table
+        if source_table == 'walkin_table':
+            alltest_drive_data.update({
+                'customer_name': lead_data.get('customer_name'),
+                'mobile_number': lead_data.get('mobile_number'),
+                'lead_status': lead_data.get('lead_status'),
+                'lead_category': lead_data.get('lead_category'),
+                'model_interested': lead_data.get('model_interested'),
+                'final_status': lead_data.get('status'),
+                'ps_name': lead_data.get('ps_assigned'),
+                'branch': lead_data.get('branch'),
+                'created_at': lead_data.get('created_at')
+            })
+            # For walkin_table, use uid instead of id
+            alltest_drive_data['original_id'] = lead_data.get('uid', str(original_id))
+        elif source_table == 'ps_followup_master':
+            alltest_drive_data.update({
+                'customer_name': lead_data.get('customer_name'),
+                'mobile_number': lead_data.get('customer_mobile_number'),
+                'lead_status': lead_data.get('lead_status'),
+                'lead_category': lead_data.get('lead_category'),
+                'model_interested': lead_data.get('model_interested'),
+                'final_status': lead_data.get('final_status'),
+                'ps_name': lead_data.get('ps_name'),
+                'branch': lead_data.get('branch') or lead_data.get('ps_branch'),
+                'created_at': lead_data.get('created_at'),
+                'lead_source': lead_data.get('lead_source'),
+                'cre_name': lead_data.get('cre_name')
+            })
+        elif source_table == 'activity_leads':
+            alltest_drive_data.update({
+                'customer_name': lead_data.get('customer_name'),
+                'mobile_number': lead_data.get('customer_phone_number'),
+                'lead_status': lead_data.get('lead_status'),
+                'lead_category': lead_data.get('lead_category'),
+                'model_interested': lead_data.get('interested_model'),
+                'final_status': lead_data.get('final_status'),
+                'ps_name': lead_data.get('ps_name'),
+                'branch': lead_data.get('location'),
+                'created_at': lead_data.get('created_at'),
+                'remarks': lead_data.get('remarks'),
+                'activity_name': lead_data.get('activity_name'),
+                'activity_location': lead_data.get('activity_location'),
+                'customer_location': lead_data.get('customer_location'),
+                'customer_profession': lead_data.get('customer_profession'),
+                'gender': lead_data.get('gender')
+            })
+        
+        # Insert or update record in alltest_drive table
+        if existing_record.data:
+            # Update existing record
+            supabase.table('alltest_drive').update(alltest_drive_data).eq('source_table', source_table).eq('original_id', str(original_id)).execute()
+        else:
+            # Insert new record
+            supabase.table('alltest_drive').insert(alltest_drive_data).execute()
+            
+        print(f"Successfully synced test drive data for {source_table} - {original_id}")
+        
+    except Exception as e:
+        print(f"Error syncing test drive data to alltest_drive: {e}")
+
+
+def create_or_update_ps_followup(lead_data, ps_name, ps_branch):
+    from datetime import datetime
+    try:
+        existing = supabase.table('ps_followup_master').select('*').eq('lead_uid', lead_data['uid']).execute()
+        ps_followup_data = {
+            'lead_uid': lead_data['uid'],
+            'ps_name': ps_name,
+            'ps_branch': ps_branch,
+            'customer_name': lead_data.get('customer_name'),
+            'customer_mobile_number': lead_data.get('customer_mobile_number'),
+            'source': lead_data.get('source'),
+            'cre_name': lead_data.get('cre_name'),
+            'lead_category': lead_data.get('lead_category'),
+            'model_interested': lead_data.get('model_interested'),
+            'final_status': 'Pending',
+            'ps_assigned_at': datetime.now().isoformat(),  # Always set when PS is assigned
+            'created_at': lead_data.get('created_at') or datetime.now().isoformat(),
+            'first_call_date': None  # Ensure fresh leads start without first_call_date
+        }
+        if existing.data:
+            supabase.table('ps_followup_master').update(ps_followup_data).eq('lead_uid', lead_data['uid']).execute()
+        else:
+            supabase.table('ps_followup_master').insert(ps_followup_data).execute()
+    except Exception as e:
+        print(f"Error creating/updating PS followup: {e}")
+
+def track_cre_call_attempt(uid, cre_name, call_no, lead_status, call_was_recorded=False, follow_up_date=None, remarks=None):
+    """Track CRE call attempt in the history table and update TAT for first attempt"""
+    try:
+        # Get the next attempt number for this call
+        attempt_result = supabase.table('cre_call_attempt_history').select('attempt').eq('uid', uid).eq('call_no', call_no).order('attempt', desc=True).limit(1).execute()
+        next_attempt = 1
+        if attempt_result.data:
+            next_attempt = attempt_result.data[0]['attempt'] + 1
+
+        # Fetch the current final_status from lead_master
+        final_status = None
+        lead_result = supabase.table('lead_master').select('final_status').eq('uid', uid).limit(1).execute()
+        if lead_result.data and 'final_status' in lead_result.data[0]:
+            final_status = lead_result.data[0]['final_status']
+
+        # Prepare attempt data
+        attempt_data = {
+            'uid': uid,
+            'call_no': call_no,
+            'attempt': next_attempt,
+            'status': lead_status,
+            'cre_name': cre_name,
+            'call_was_recorded': call_was_recorded,
+            'follow_up_date': follow_up_date,
+            'remarks': remarks,
+            'final_status': final_status
+        }
+
+        # Insert the attempt record
+        insert_result = supabase.table('cre_call_attempt_history').insert(attempt_data).execute()
+        print(f"Tracked call attempt: {uid} - {call_no} call, attempt {next_attempt}, status: {lead_status}")
+
+        # --- TAT Calculation and Update ---
+        if call_no == 'first' and next_attempt == 1:
+            # Fetch lead's created_at
+            lead_result = supabase.table('lead_master').select('created_at').eq('uid', uid).limit(1).execute()
+            if lead_result.data and lead_result.data[0].get('created_at'):
+                created_at_str = lead_result.data[0]['created_at']
+                from datetime import datetime
+                try:
+                    if 'T' in created_at_str:
+                        created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                    else:
+                        created_at = datetime.strptime(created_at_str, '%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    created_at = None
+                # Get updated_at from inserted attempt (if available), else use now
+                updated_at_str = None
+                if insert_result.data and insert_result.data[0].get('updated_at'):
+                    updated_at_str = insert_result.data[0]['updated_at']
+                else:
+                    from datetime import datetime
+                    updated_at_str = datetime.now().isoformat()
+                try:
+                    if 'T' in updated_at_str:
+                        updated_at = datetime.fromisoformat(updated_at_str.replace('Z', '+00:00'))
+                    else:
+                        updated_at = datetime.strptime(updated_at_str, '%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    updated_at = datetime.now()
+                if created_at:
+                    tat_seconds = (updated_at - created_at).total_seconds()
+                    # Update lead_master with TAT
+                    supabase.table('lead_master').update({'tat': tat_seconds}).eq('uid', uid).execute()
+                    print(f"TAT updated for lead {uid}: {tat_seconds} seconds")
+    except Exception as e:
+        print(f"Error tracking CRE call attempt: {e}")
+
+def track_ps_call_attempt(uid, ps_name, call_no, lead_status, call_was_recorded=False, follow_up_date=None, remarks=None):
+    """Track PS call attempt in the history table"""
+    try:
+        # Get the next attempt number for this call
+        attempt_result = supabase.table('ps_call_attempt_history').select('attempt').eq('uid', uid).eq('call_no', call_no).order('attempt', desc=True).limit(1).execute()
+        next_attempt = 1
+        if attempt_result.data:
+            next_attempt = attempt_result.data[0]['attempt'] + 1
+
+        # Fetch the current final_status from multiple tables
+        final_status = None
+        
+        # Try all possible tables and field combinations
+        tables_to_check = [
+            # (table_name, uid_field, status_field, uid_value)
+            ('ps_followup_master', 'lead_uid', 'final_status', uid),
+            ('lead_master', 'uid', 'final_status', uid),
+            ('walkin_table', 'uid', 'status', uid),
+            ('activity_leads', 'activity_uid', 'final_status', uid),
+            # Also try with different UID formats for walkin and activity
+            ('walkin_table', 'uid', 'status', uid.replace('WB-', 'W')),
+            ('activity_leads', 'activity_uid', 'final_status', uid.replace('WB-', 'A'))
+        ]
+        
+        for table_name, uid_field, status_field, uid_value in tables_to_check:
+            try:
+                result = supabase.table(table_name).select(status_field).eq(uid_field, uid_value).limit(1).execute()
+                if result.data and result.data[0].get(status_field):
+                    final_status = result.data[0][status_field]
+                    print(f"Found final_status '{final_status}' in {table_name} for {uid_value}")
+                    break
+            except Exception as e:
+                print(f"Error checking {table_name}: {e}")
+                continue
+        
+        # If still not found, set a default
+        if not final_status:
+            final_status = 'Pending'
+            print(f"No final_status found for {uid}, defaulting to 'Pending'")
+
+        # Prepare attempt data
+        attempt_data = {
+            'uid': uid,
+            'call_no': call_no,
+            'attempt': next_attempt,
+            'status': lead_status,
+            'ps_name': ps_name,
+            'call_was_recorded': call_was_recorded,
+            'follow_up_date': follow_up_date,
+            'remarks': remarks,
+            'final_status': final_status
+        }
+
+        # Insert the attempt record
+        supabase.table('ps_call_attempt_history').insert(attempt_data).execute()
+        print(f"Tracked PS call attempt: {uid} - {call_no} call, attempt {next_attempt}, status: {lead_status}")
+    except Exception as e:
+        print(f"Error tracking PS call attempt: {e}")
+
+
+def filter_leads_by_date(leads, filter_type, date_field='created_at'):
+    """Filter leads based on date range"""
+    if filter_type == 'all':
+        return leads
+
+    today = datetime.now().date()
+
+    if filter_type == 'today':
+        start_date = today
+        end_date = today
+    elif filter_type == 'mtd':  # Month to Date
+        start_date = today.replace(day=1)
+        end_date = today
+    elif filter_type == 'week':
+        start_date = today - timedelta(days=today.weekday())  # Start of current week (Monday)
+        end_date = today
+    elif filter_type == 'month':
+        start_date = today - timedelta(days=30)
+        end_date = today
+    elif filter_type == 'quarter':
+        start_date = today - timedelta(days=90)
+        end_date = today
+    elif filter_type == 'year':
+        start_date = today - timedelta(days=365)
+        end_date = today
+    else:
+        return leads
+
+    filtered_leads = []
+    for lead in leads:
+        lead_date_str = lead.get(date_field)
+        if lead_date_str:
+            try:
+                # Handle different date formats
+                if 'T' in lead_date_str:  # ISO format with time
+                    lead_date = datetime.fromisoformat(lead_date_str.replace('Z', '+00:00')).date()
+                else:  # Date only format
+                    lead_date = datetime.strptime(lead_date_str, '%Y-%m-%d').date()
+
+                if start_date <= lead_date <= end_date:
+                    filtered_leads.append(lead)
+            except (ValueError, TypeError):
+                # If date parsing fails, include the lead
+                filtered_leads.append(lead)
+        else:
+            # If no date field, include the lead
+            filtered_leads.append(lead)
+
+    return filtered_leads
+
+
+def fix_missing_timestamps():
+    """
+    Fix missing timestamps for existing leads that have final_status but missing won_timestamp or lost_timestamp
+    """
+    try:
+        # Fix lead_master table
+        # Get leads with final_status = 'Won' but no won_timestamp
+        won_leads = supabase.table('lead_master').select('uid, final_status, won_timestamp, lost_timestamp, updated_at').eq('final_status', 'Won').is_('won_timestamp', 'null').execute()
+        
+        for lead in won_leads.data:
+            supabase.table('lead_master').update({
+                'won_timestamp': lead.get('updated_at') or datetime.now().isoformat()
+            }).eq('uid', lead['uid']).execute()
+        
+        # Get leads with final_status = 'Lost' but no lost_timestamp
+        lost_leads = supabase.table('lead_master').select('uid, final_status, won_timestamp, lost_timestamp, updated_at').eq('final_status', 'Lost').is_('lost_timestamp', 'null').execute()
+        
+        for lead in lost_leads.data:
+            supabase.table('lead_master').update({
+                'lost_timestamp': lead.get('updated_at') or datetime.now().isoformat()
+            }).eq('uid', lead['uid']).execute()
+        
+        # Fix ps_followup_master table
+        # Get PS leads with final_status = 'Won' but no won_timestamp
+        ps_won_leads = supabase.table('ps_followup_master').select('lead_uid, final_status, won_timestamp, lost_timestamp, updated_at').eq('final_status', 'Won').is_('won_timestamp', 'null').execute()
+        
+        for lead in ps_won_leads.data:
+            supabase.table('ps_followup_master').update({
+                'won_timestamp': lead.get('updated_at') or datetime.now().isoformat()
+            }).eq('lead_uid', lead['lead_uid']).execute()
+        
+        # Get PS leads with final_status = 'Lost' but no lost_timestamp
+        ps_lost_leads = supabase.table('ps_followup_master').select('lead_uid, final_status, won_timestamp, lost_timestamp, updated_at').eq('final_status', 'Lost').is_('lost_timestamp', 'null').execute()
+        
+        for lead in ps_lost_leads.data:
+            supabase.table('ps_followup_master').update({
+                'lost_timestamp': lead.get('updated_at') or datetime.now().isoformat()
+            }).eq('lead_uid', lead['lead_uid']).execute()
+        
+        print(f"Fixed {len(won_leads.data)} won leads, {len(lost_leads.data)} lost leads in lead_master")
+        print(f"Fixed {len(ps_won_leads.data)} won leads, {len(ps_lost_leads.data)} lost leads in ps_followup_master")
+        
+    except Exception as e:
+        print(f"Error fixing timestamps: {str(e)}")
+
+
+@app.route('/')
+def index():
+    session.clear()  # Ensure no session data is present
+    return render_template('index.html')
+
+
+@app.route('/unified_login', methods=['POST'])
+@limiter.limit("100000 per minute")
+def unified_login() -> Response:
+    start_time = time.time()
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '').strip()
+    user_type = request.form.get('user_type', '').strip().lower()
+
+    valid_user_types = ['admin', 'cre', 'ps', 'bh', 'rec']
+    if user_type not in valid_user_types:
+        flash('Please select a valid role (Admin, CRE, PS, Branch Head, or Receptionist)', 'error')
+        return redirect(url_for('index'))
+
+    # Branch Head login removed
+
+    elif user_type == 'bh':
+        # Branch Head authentication
+        bh_user = supabase.table('branch_head_users').select('*').eq('username', username).execute().data
+        if not bh_user:
+            flash('Invalid username or password', 'error')
+            return redirect(url_for('index'))
+        bh_user = bh_user[0]
+        if not bh_user.get('is_active', True):
+            flash('User is inactive', 'error')
+            return redirect(url_for('index'))
+        # Check password using werkzeug
+        try:
+            print(f"DEBUG: Attempting to verify password for Branch Head {username}")
+            print(f"DEBUG: Password hash format: {bh_user['password_hash'][:20]}...")
+            print(f"DEBUG: Using check_password_hash with hash and password")
+            if not check_password_hash(bh_user['password_hash'], password):
+                print(f"DEBUG: Password verification failed for Branch Head {username}")
+                flash('Incorrect password', 'error')
+                return redirect(url_for('index'))
+            print(f"DEBUG: Password verification successful for Branch Head {username}")
+        except Exception as e:
+            print(f"DEBUG: Error checking password hash for Branch Head {username}: {str(e)}")
+            print(f"DEBUG: Error type: {type(e).__name__}")
+            print(f"DEBUG: Full error details: {e}")
+            # Fallback: check if plain password matches (for backward compatibility)
+            if bh_user.get('password') != password:
+                print(f"DEBUG: Plain password fallback also failed for Branch Head {username}")
+                flash('Incorrect password', 'error')
+                return redirect(url_for('index'))
+            print(f"DEBUG: Plain password fallback successful for Branch Head {username}")
+            # If plain password matches, update to new hash format
+            try:
+                new_password_hash = generate_password_hash(password)
+                print(f"DEBUG: Generated new password hash for Branch Head {username}")
+                supabase.table('branch_head_users').update({
+                    'password_hash': new_password_hash
+                }).eq('id', bh_user['id']).execute()
+                print(f"DEBUG: Updated password hash for Branch Head {username}")
+            except Exception as update_error:
+                print(f"DEBUG: Failed to update password hash for Branch Head {username}: {str(update_error)}")
+        # Create proper session
+        session_id = auth_manager.create_session(bh_user['id'], 'bh', bh_user)
+        if not session_id:
+            flash('Session creation failed. Please try again.', 'error')
+            return redirect(url_for('index'))
+        
+        # Set additional Branch Head specific session data
+        session['bh_user_id'] = bh_user['id']
+        session['bh_branch'] = bh_user['branch']
+        session['bh_name'] = bh_user.get('name', username)
+        
+        flash('Welcome! Logged in as Branch Head', 'success')
+        return redirect(url_for('bh_dashboard'))
+    elif user_type == 'rec':
+        # Receptionist authentication
+        rec_user = supabase.table('rec_users').select('*').eq('username', username).execute().data
+        if not rec_user:
+            flash('Invalid username or password', 'error')
+            return redirect(url_for('index'))
+        rec_user = rec_user[0]
+        if not rec_user.get('is_active', True):
+            flash('User is inactive', 'error')
+            return redirect(url_for('index'))
+        # Check password using werkzeug
+        try:
+            print(f"DEBUG: Attempting to verify password for Receptionist {username}")
+            print(f"DEBUG: Password hash format: {rec_user['password_hash'][:20]}...")
+            print(f"DEBUG: Using check_password_hash with hash and password")
+            if not check_password_hash(rec_user['password_hash'], password):
+                print(f"DEBUG: Password verification failed for Receptionist {username}")
+                flash('Incorrect password', 'error')
+                return redirect(url_for('index'))
+            print(f"DEBUG: Password verification successful for Receptionist {username}")
+        except Exception as e:
+            print(f"DEBUG: Error checking password hash for Receptionist {username}: {str(e)}")
+            print(f"DEBUG: Error type: {type(e).__name__}")
+            print(f"DEBUG: Full error details: {e}")
+            # Fallback: check if plain password matches (for backward compatibility)
+            if rec_user.get('password') != password:
+                print(f"DEBUG: Plain password fallback also failed for Receptionist {username}")
+                flash('Incorrect password', 'error')
+                return redirect(url_for('index'))
+            print(f"DEBUG: Plain password fallback successful for Receptionist {username}")
+            # If plain password matches, update to new hash format
+            try:
+                new_password_hash = generate_password_hash(password)
+                print(f"DEBUG: Generated new password hash for Receptionist {username}")
+                supabase.table('rec_users').update({
+                    'password_hash': new_password_hash
+                }).eq('id', rec_user['id']).execute()
+                print(f"DEBUG: Updated password hash for Receptionist {username}")
+            except Exception as update_error:
+                print(f"DEBUG: Failed to update password hash for Receptionist {username}: {str(update_error)}")
+        session.clear()
+        session['rec_user_id'] = rec_user['id']
+        session['rec_branch'] = rec_user['branch']
+        session['rec_name'] = rec_user.get('name', username)
+        session['user_type'] = 'rec'
+        session['username'] = username
+        flash('Welcome! Logged in as Receptionist', 'success')
+        return redirect(url_for('add_walkin_lead'))
+
+    # Existing logic for admin, cre, ps
+    t_user = time.time()
+    success, message, user_data = auth_manager.authenticate_user(username, password, user_type)
+    print(f"[PERF] unified_login: authenticate_user({user_type}) took {time.time() - t_user:.3f} seconds")
+    if success:
+        t2 = time.time()
+        session_id = auth_manager.create_session(user_data['id'], user_type, user_data)
+        print(f"DEBUG: Logged in as user_type={user_type}, session.user_type={session.get('user_type')}")
+        print(f"[PERF] unified_login: create_session took {time.time() - t2:.3f} seconds")
+        if session_id:
+            flash(f'Welcome! Logged in as {user_type.upper()}', 'success')
+            t3 = time.time()
+            # Redirect to appropriate dashboard
+            if user_type == 'admin':
+                print(f"[PERF] unified_login: redirect to admin_dashboard after {time.time() - t3:.3f} seconds")
+                print(f"[PERF] unified_login TOTAL took {time.time() - start_time:.3f} seconds")
+                return redirect(url_for('admin_dashboard'))
+            elif user_type == 'cre':
+                print(f"[PERF] unified_login: redirect to cre_dashboard after {time.time() - t3:.3f} seconds")
+                print(f"[PERF] unified_login TOTAL took {time.time() - start_time:.3f} seconds")
+                return redirect(url_for('cre_dashboard'))
+            elif user_type == 'ps':
+                print(f"[PERF] unified_login: redirect to ps_dashboard after {time.time() - t3:.3f} seconds")
+                print(f"[PERF] unified_login TOTAL took {time.time() - start_time:.3f} seconds")
+                return redirect(url_for('ps_dashboard'))
+        else:
+            flash('Error creating session', 'error')
+            print(f"[PERF] unified_login: session creation failed after {time.time() - t2:.3f} seconds")
+            print(f"[PERF] unified_login TOTAL took {time.time() - start_time:.3f} seconds")
+            return redirect(url_for('index'))
+    else:
+        flash('Invalid username or password', 'error')
+        print(f"[PERF] unified_login TOTAL (invalid login) took {time.time() - start_time:.3f} seconds")
+        return redirect(url_for('index'))
+# Keep the old login routes for backward compatibility (redirect to unified login)
+@app.route('/admin_login', methods=['GET', 'POST'])
+def admin_login():
+    if request.method == 'POST':
+        return unified_login()
+    return redirect(url_for('index'))
+
+
+@app.route('/cre_login', methods=['GET', 'POST'])
+def cre_login():
+    if request.method == 'POST':
+        return unified_login()
+    return redirect(url_for('index'))
+
+
+@app.route('/ps_login', methods=['GET', 'POST'])
+def ps_login():
+    if request.method == 'POST':
+        return unified_login()
+    return redirect(url_for('index'))
+
+
+@app.route('/password_reset_request', methods=['GET', 'POST'])
+@limiter.limit("5 per minute")
+def password_reset_request():
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        user_type = request.form.get('user_type', '').strip()
+
+        if not username or not user_type:
+            flash('Please enter username and select user type', 'error')
+            return render_template('password_reset_request.html')
+
+        success, message, token = auth_manager.generate_password_reset_token(username, user_type)
+
+        if success:
+            # Send the reset link via email
+            # Fetch user email from the appropriate table
+            user_email = None
+            try:
+                if user_type == 'admin':
+                    user_result = supabase.table('admin_users').select('email').eq('username', username).execute()
+                elif user_type == 'cre':
+                    user_result = supabase.table('cre_users').select('email').eq('username', username).execute()
+                elif user_type == 'ps':
+                    user_result = supabase.table('ps_users').select('email').eq('username', username).execute()
+                else:
+                    user_result = None
+                if user_result and user_result.data and user_result.data[0].get('email'):
+                    user_email = user_result.data[0]['email']
+            except Exception as e:
+                print(f"Error fetching user email for password reset: {e}")
+                user_email = None
+
+            reset_url = url_for('password_reset', token=token, _external=True)
+            email_sent = False
+            if user_email:
+                try:
+                    msg = MIMEMultipart()
+                    msg['From'] = EMAIL_USER
+                    msg['To'] = user_email
+                    msg['Subject'] = 'Ather CRM Password Reset Request'
+                    body = f"""
+                    Dear {username},
+
+                    We received a request to reset your password for your Ather CRM account.
+
+                    Please click the link below to reset your password:
+                    {reset_url}
+
+                    If you did not request this, please ignore this email.
+
+                    Best regards,\nAther CRM System
+                    """
+                    msg.attach(MIMEText(body, 'plain'))
+                    server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+                    server.starttls()
+                    server.login(EMAIL_USER, EMAIL_PASSWORD)
+                    text = msg.as_string()
+                    server.sendmail(EMAIL_USER, user_email, text)
+                    server.quit()
+                    print(f"Password reset email sent to {user_email}")
+                    email_sent = True
+                except Exception as e:
+                    print(f"Error sending password reset email: {e}")
+                    email_sent = False
+            if email_sent:
+                flash('If the username exists and is valid, a password reset link has been sent to the registered email address.', 'success')
+            else:
+                flash('If the username exists and is valid, a password reset link has been sent to the registered email address.', 'success')
+                # Optionally, log or alert admin if email sending failed
+        else:
+            flash(message, 'error')
+
+    return render_template('password_reset_request.html')
+
+
+@app.route('/password_reset/<token>', methods=['GET', 'POST'])
+def password_reset(token):
+    if request.method == 'POST':
+        new_password = request.form.get('new_password', '').strip()
+        confirm_password = request.form.get('confirm_password', '').strip()
+
+        if not new_password or not confirm_password:
+            flash('Please enter and confirm your new password', 'error')
+            return render_template('password_reset.html', token=token)
+
+        if new_password != confirm_password:
+            flash('Passwords do not match', 'error')
+            return render_template('password_reset.html', token=token)
+
+        success, message = auth_manager.reset_password_with_token(token, new_password)
+
+        if success:
+            flash('Password reset successfully. Please log in with your new password.', 'success')
+            return redirect(url_for('index'))
+        else:
+            flash(message, 'error')
+
+    return render_template('password_reset.html', token=token)
+
+
+@app.route('/change_password', methods=['POST'])
+@require_auth()
+def change_password():
+    current_password = request.form.get('current_password', '').strip()
+    new_password = request.form.get('new_password', '').strip()
+    confirm_password = request.form.get('confirm_password', '').strip()
+
+    if not all([current_password, new_password, confirm_password]):
+        flash('All fields are required', 'error')
+        return redirect(url_for('security_settings'))
+
+    if new_password != confirm_password:
+        flash('New passwords do not match', 'error')
+        return redirect(url_for('security_settings'))
+
+    user_id = session.get('user_id')
+    user_type = session.get('user_type')
+
+    if not user_id or not user_type:
+        flash('Session information not found', 'error')
+        return redirect(url_for('security_settings'))
+
+    success, message = auth_manager.change_password(user_id, user_type, current_password, new_password)
+
+    if success:
+        flash('Password changed successfully', 'success')
+    else:
+        flash(message, 'error')
+
+    return redirect(url_for('security_settings'))
+
+
+@app.route('/change_cre_password', methods=['GET', 'POST'])
+@require_cre
+def change_cre_password():
+    if request.method == 'POST':
+        current_password = request.form.get('current_password', '').strip()
+        new_password = request.form.get('new_password', '').strip()
+        confirm_password = request.form.get('confirm_password', '').strip()
+
+        if not all([current_password, new_password, confirm_password]):
+            flash('All fields are required', 'error')
+            return render_template('change_cre_password.html')
+
+        if new_password != confirm_password:
+            flash('New passwords do not match', 'error')
+            return render_template('change_cre_password.html')
+
+        user_id = session.get('user_id')
+        user_type = session.get('user_type')
+
+        if not user_id or not user_type:
+            flash('Session information not found', 'error')
+            return render_template('change_cre_password.html')
+
+        success, message = auth_manager.change_password(user_id, user_type, current_password, new_password)
+
+        if success:
+            flash('Password changed successfully', 'success')
+            return redirect(url_for('cre_dashboard'))
+        else:
+            flash(message, 'error')
+
+    return render_template('change_cre_password.html')
+
+
+@app.route('/change_ps_password', methods=['GET', 'POST'])
+@require_ps
+def change_ps_password():
+    if request.method == 'POST':
+        current_password = request.form.get('current_password', '').strip()
+        new_password = request.form.get('new_password', '').strip()
+        confirm_password = request.form.get('confirm_password', '').strip()
+
+        if not all([current_password, new_password, confirm_password]):
+            flash('All fields are required', 'error')
+            return render_template('change_ps_password.html')
+
+        if new_password != confirm_password:
+            flash('New passwords do not match', 'error')
+            return render_template('change_ps_password.html')
+
+        user_id = session.get('user_id')
+        user_type = session.get('user_type')
+
+        if not user_id or not user_type:
+            flash('Session information not found', 'error')
+            return render_template('change_ps_password.html')
+
+        success, message = auth_manager.change_password(user_id, user_type, current_password, new_password)
+
+        if success:
+            flash('Password changed successfully', 'success')
+            return redirect(url_for('ps_dashboard'))
+        else:
+            flash(message, 'error')
+
+    return render_template('change_ps_password.html')
+
+
+@app.route('/security_settings')
+@require_auth()
+def security_settings():
+    user_id = session.get('user_id')
+    user_type = session.get('user_type')
+
+    if not user_id or not user_type:
+        flash('Session information not found', 'error')
+        return redirect(url_for('index'))
+
+    # Get active sessions
+    sessions = auth_manager.get_user_sessions(user_id, user_type)
+
+    # Get audit logs
+    audit_logs = auth_manager.get_audit_logs(user_id, user_type, limit=20)
+
+    return render_template('security_settings.html', sessions=sessions, audit_logs=audit_logs)
+
+
+@app.route('/security_audit')
+@require_admin
+def security_audit():
+    """Security audit dashboard"""
+    return render_template('security_audit.html')
+
+
+@app.route('/run_security_audit', methods=['POST'])
+@require_admin
+def run_security_audit():
+    """Run comprehensive security audit"""
+    try:
+        # Run security verification
+        audit_results = run_security_verification(supabase)
+
+        # Log the security audit
+        user_id = session.get('user_id')
+        user_type = session.get('user_type')
+        
+        if user_id and user_type:
+            auth_manager.log_audit_event(
+                user_id=user_id,
+                user_type=user_type,
+                action='SECURITY_AUDIT_RUN',
+                resource='security_audit',
+                details={'overall_score': audit_results.get('overall_score', 0)}
+            )
+
+        return jsonify({
+            'success': True,
+            'results': audit_results
+        })
+    except Exception as e:
+        print(f"Error running security audit: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        })
+
+
+@app.route('/terminate_session', methods=['POST'])
+@require_auth()
+def terminate_session():
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+
+        if not session_id:
+            return jsonify({'success': False, 'message': 'Session ID required'})
+
+        auth_manager.deactivate_session(session_id)
+
+        user_id = session.get('user_id')
+        user_type = session.get('user_type')
+        
+        if user_id and user_type:
+            auth_manager.log_audit_event(
+                user_id=user_id,
+                user_type=user_type,
+                action='SESSION_TERMINATED',
+                details={'terminated_session': session_id}
+            )
+
+        return jsonify({'success': True, 'message': 'Session terminated successfully'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/terminate_all_sessions', methods=['POST'])
+@require_auth()
+def terminate_all_sessions():
+    try:
+        user_id = session.get('user_id')
+        user_type = session.get('user_type')
+        current_session = session.get('session_id')
+
+        if user_id and user_type and current_session:
+            auth_manager.deactivate_all_user_sessions(user_id, user_type, current_session)
+            auth_manager.log_audit_event(
+                user_id=user_id,
+                user_type=user_type,
+                action='ALL_SESSIONS_TERMINATED',
+                details={'except_session': current_session}
+            )
+        else:
+            return jsonify({'success': False, 'message': 'Session information not found'})
+
+        return jsonify({'success': True, 'message': 'All other sessions terminated successfully'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/admin_dashboard')
+@require_admin
+def admin_dashboard():
+    # Get counts for dashboard with better error handling and actual queries
+    try:
+        # Get actual counts from database with proper queries
+        cre_count = get_accurate_count('cre_users')
+        ps_count = get_accurate_count('ps_users')
+        bh_count = get_accurate_count('branch_head_users')
+        leads_count = get_accurate_count('lead_master')
+        unassigned_leads = get_accurate_count('lead_master', {'assigned': 'No'})
+
+        print(
+            f"Dashboard counts - CRE: {cre_count}, PS: {ps_count}, Branch Heads: {bh_count}, Total Leads: {leads_count}, Unassigned: {unassigned_leads}")
+
+    except Exception as e:
+        print(f"Error getting dashboard counts: {e}")
+        cre_count = ps_count = bh_count = leads_count = unassigned_leads = 0
+
+    # Log dashboard access
+    user_id = session.get('user_id')
+    user_type = session.get('user_type')
+    if user_id and user_type:
+        auth_manager.log_audit_event(
+            user_id=user_id,
+            user_type=user_type,
+            action='DASHBOARD_ACCESS',
+            resource='admin_dashboard'
+        )
+
+    return render_template('admin_dashboard.html',
+                           cre_count=cre_count,
+                           ps_count=ps_count,
+                           bh_count=bh_count,
+                           leads_count=leads_count,
+                           unassigned_leads=unassigned_leads)
+
+
+@app.route('/bh_dashboard')
+def bh_dashboard():
+    """Branch Head dashboard"""
+    # Check if user is logged in as Branch Head
+    if session.get('user_type') != 'bh':
+        flash('Access denied. Branch Head access only.', 'error')
+        return redirect(url_for('index'))
+    
+    # Log dashboard access
+    user_id = session.get('bh_user_id')
+    user_type = session.get('user_type')
+    if user_id and user_type:
+        auth_manager.log_audit_event(
+            user_id=user_id,
+            user_type=user_type,
+            action='DASHBOARD_ACCESS',
+            resource='bh_dashboard'
+        )
+    
+    return render_template('bh_dashboard.html')
+
+
+@app.route('/upload_data', methods=['GET', 'POST'])
+@require_admin
+def upload_data():
+    if request.method == 'POST':
+        if 'file' not in request.files:
+            flash('No file selected', 'error')
+            return redirect(request.url)
+
+        file = request.files['file']
+        source = request.form.get('source', '').strip()
+
+        if not source:
+            flash('Please select a data source', 'error')
+            return redirect(request.url)
+
+        if file.filename == '':
+            flash('No file selected', 'error')
+            return redirect(request.url)
+
+        if file and file.filename and allowed_file(file.filename):
+            filename = secure_filename(str(file.filename))
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+
+            try:
+                file.save(filepath)
+
+                # Check file size
+                file_size = os.path.getsize(filepath)
+                if file_size > 50 * 1024 * 1024:  # 50MB limit
+                    flash('File too large. Maximum size is 50MB.', 'error')
+                    os.remove(filepath)
+                    return redirect(request.url)
+
+                print(f"Processing file: {filename} ({file_size / 1024 / 1024:.2f} MB)")
+
+                # Read the file based on extension
+                if filename.lower().endswith('.csv'):
+                    data = read_csv_file(filepath)
+                else:
+                    data = read_excel_file(filepath)
+
+                if not data:
+                    flash('No valid data found in file', 'error')
+                    os.remove(filepath)
+                    return redirect(request.url)
+
+                print(f"Read {len(data)} rows from file")
+
+                # Get current sequence number for UID generation
+                result = supabase.table('lead_master').select('uid').execute()
+                current_count = len(result.data) if result.data else 0
+
+                # Prepare leads data for batch insert
+                leads_to_insert = []
+                skipped_rows = 0
+
+                for index, row in enumerate(data):
+                    try:
+                        # Validate required fields
+                        required_fields = ['customer_name', 'customer_mobile_number', 'date']
+                        if not all(key in row and str(row[key]).strip() for key in required_fields):
+                            skipped_rows += 1
+                            continue
+
+                        uid = generate_uid(source, row['customer_mobile_number'],
+                                           current_count + len(leads_to_insert) + 1)
+
+                        lead_data = {
+                            'uid': uid,
+                            'date': str(row['date']).strip(),
+                            'customer_name': str(row['customer_name']).strip(),
+                            'customer_mobile_number': str(row['customer_mobile_number']).strip(),
+                            'source': source,
+                            'assigned': 'No',
+                            'final_status': 'Pending'
+                        }
+
+                        leads_to_insert.append(lead_data)
+
+
+                    except Exception as e:
+                        print(f"Error processing row {index}: {e}")
+                        skipped_rows += 1
+                        continue
+
+                if not leads_to_insert:
+                    flash('No valid leads found to insert', 'error')
+                    os.remove(filepath)
+                    return redirect(request.url)
+
+                print(f"Prepared {len(leads_to_insert)} leads for insertion")
+
+                # Batch insert leads
+                success_count = batch_insert_leads(leads_to_insert)
+
+                # Log data upload
+                auth_manager.log_audit_event(
+                    user_id=session.get('user_id'),
+                    user_type=session.get('user_type'),
+                    action='DATA_UPLOAD',
+                    resource='lead_master',
+                    details={
+                        'source': source,
+                        'records_uploaded': success_count,
+                        'filename': filename,
+                        'file_size_mb': round(file_size / 1024 / 1024, 2),
+                        'skipped_rows': skipped_rows
+                    }
+                )
+
+                # Create success message
+                message = f'Successfully uploaded {success_count} leads'
+                if skipped_rows > 0:
+                    message += f' ({skipped_rows} rows skipped due to missing data)'
+                message += '. Please go to "Assign Leads" to assign them to CREs.'
+
+                flash(message, 'success')
+
+                # Clean up uploaded file
+                os.remove(filepath)
+
+            except Exception as e:
+                print(f"Error processing file: {e}")
+                flash(f'Error processing file: {str(e)}', 'error')
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+        else:
+            flash('Invalid file format. Please upload CSV or Excel files only.', 'error')
+
+    return render_template('upload_data.html')
+
+@app.route('/assign_leads')
+@require_admin
+def assign_leads():
+    try:
+        # Fetch all unassigned leads in batches of 1000
+        all_unassigned_leads = []
+        batch_size = 1000
+        offset = 0
+        while True:
+            result = supabase.table('lead_master').select('*').eq('assigned', 'No').range(offset, offset + batch_size - 1).execute()
+            batch = result.data or []
+            all_unassigned_leads.extend(batch)
+            if len(batch) < batch_size:
+                break
+            offset += batch_size
+
+        # Organize by source
+        leads_by_source = {}
+        for lead in all_unassigned_leads:
+            source = lead.get('source', 'Unknown')
+            leads_by_source.setdefault(source, []).append(lead)
+
+        # Get CREs
+        cres = safe_get_data('cre_users')
+
+        # Get accurate total unassigned count
+        actual_unassigned_count = get_accurate_count('lead_master', {'assigned': 'No'})
+
+        # Get accurate per-source unassigned counts
+        source_unassigned_counts = {}
+        for source in leads_by_source.keys():
+            source_unassigned_counts[source] = get_accurate_count('lead_master', {'assigned': 'No', 'source': source})
+
+        # Also include sources that have auto-assign configurations, even if they have 0 unassigned leads
+        try:
+            auto_assign_configs = supabase.table('auto_assign_config').select('source').execute()
+            if auto_assign_configs.data:
+                for config in auto_assign_configs.data:
+                    source = config.get('source')
+                    if source and source not in source_unassigned_counts:
+                        # Add source with 0 unassigned leads if it has auto-assign config
+                        source_unassigned_counts[source] = 0
+                        # Also add to leads_by_source to ensure the template can render it
+                        leads_by_source[source] = []
+        except Exception as e:
+            print(f"Warning: Could not fetch auto-assign configs: {e}")
+
+        return render_template('assign_leads.html',
+                               unassigned_leads=all_unassigned_leads,
+                               actual_unassigned_count=actual_unassigned_count,
+                               cres=cres,
+                               leads_by_source=leads_by_source,
+                               source_unassigned_counts=source_unassigned_counts)
+    except Exception as e:
+        print(f"Error loading assign leads data: {e}")
+        flash(f'Error loading data: {str(e)}', 'error')
+        return redirect(url_for('admin_dashboard'))
+
+
+@app.route('/assign_leads_dynamic_action', methods=['POST'])
+@require_admin
+def assign_leads_dynamic_action():
+    try:
+        data = request.get_json()
+        assignments = data.get('assignments', [])
+
+        if not assignments:
+            return jsonify({'success': False, 'message': 'No assignments provided'}), 400
+
+        # Fetch all unassigned leads in batches
+        all_unassigned = []
+        batch_size = 1000
+        offset = 0
+        while True:
+            result = supabase.table('lead_master').select('*').eq('assigned', 'No').range(offset, offset + batch_size - 1).execute()
+            batch = result.data or []
+            all_unassigned.extend(batch)
+            if len(batch) < batch_size:
+                break
+            offset += batch_size
+
+        leads_by_source = {}
+        for lead in all_unassigned:
+            source = lead.get('source', 'Unknown')
+            leads_by_source.setdefault(source, []).append(lead)
+
+        total_assigned = 0
+
+        for assignment in assignments:
+            cre_id = assignment.get('cre_id')
+            source = assignment.get('source')
+            quantity = assignment.get('quantity')
+
+            if not cre_id or not source or not quantity:
+                continue
+
+            # Get CRE details
+            cre_data = supabase.table('cre_users').select('*').eq('id', cre_id).execute()
+            if not cre_data.data:
+                continue
+
+            cre = cre_data.data[0]
+            leads = leads_by_source.get(source, [])
+
+            if not leads:
+                print(f"No unassigned leads found for source {source}")
+                continue
+
+            random.shuffle(leads)
+            leads_to_assign = leads[:quantity]
+            leads_by_source[source] = leads[quantity:]  # Remove assigned leads
+
+            for lead in leads_to_assign:
+                update_data = {
+                    'cre_name': cre['name'],
+                    'assigned': 'Yes',
+                    'cre_assigned_at': datetime.now().isoformat()
+
+                }
+
+                try:
+                    supabase.table('lead_master').update(update_data).eq('uid', lead['uid']).execute()
+                    total_assigned += 1
+                    print(f"Assigned lead {lead['uid']} to CRE {cre['name']} for source {source}")
+                    if total_assigned % 100 == 0:
+                        time.sleep(0.1)
+                except Exception as e:
+                    print(f"Error assigning lead {lead['uid']}: {e}")
+
+        print(f"Total leads assigned: {total_assigned}")
+        return jsonify({'success': True, 'message': f'Total {total_assigned} leads assigned successfully'})
+
+    except Exception as e:
+        print(f"Error in dynamic lead assignment: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+@app.route('/add_cre', methods=['GET', 'POST'])
+@require_admin
+def add_cre():
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        phone = request.form.get('phone', '').strip()
+        email = request.form.get('email', '').strip()
+
+        if not all([name, username, password, phone, email]):
+            flash('All fields are required', 'error')
+            return render_template('add_cre.html')
+
+        if not auth_manager.validate_password_strength(password):
+            flash(
+                'Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character',
+                'error')
+            return render_template('add_cre.html')
+
+        try:
+            # Check if username already exists
+            existing = supabase.table('cre_users').select('username').eq('username', username).execute()
+            if existing.data:
+                flash('Username already exists', 'error')
+                return render_template('add_cre.html')
+
+            # Hash password using auth_manager (provides hash and salt)
+            password_hash, salt = auth_manager.hash_password(password)
+
+            # Replace the existing cre_data creation with this:
+            cre_data = {
+                'name': name,
+                'username': username,
+                'password': password,  # Keep for backward compatibility
+                'password_hash': password_hash,
+                'salt': salt,  # Add the salt value
+                'phone': phone,
+                'email': email,
+                'is_active': True,
+                'role': 'cre',
+                'failed_login_attempts': 0
+            }
+
+            result = supabase.table('cre_users').insert(cre_data).execute()
+
+            # Log CRE creation
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='CRE_CREATED',
+                resource='cre_users',
+                resource_id=str(result.data[0]['id']) if result.data else None,
+                details={'cre_name': name, 'username': username}
+            )
+
+            flash('CRE added successfully', 'success')
+            return redirect(url_for('manage_cre'))
+        except Exception as e:
+            flash(f'Error adding CRE: {str(e)}', 'error')
+
+    return render_template('add_cre.html')
+
+
+@app.route('/add_ps', methods=['GET', 'POST'])
+@require_admin
+def add_ps():
+    branches = ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
+
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        phone = request.form.get('phone', '').strip()
+        email = request.form.get('email', '').strip()
+        branch = request.form.get('branch', '').strip()
+
+        if not all([name, username, password, phone, email, branch]):
+            flash('All fields are required', 'error')
+            return render_template('add_ps.html', branches=branches)
+
+        if not auth_manager.validate_password_strength(password):
+            flash(
+                'Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character',
+                'error')
+            return render_template('add_ps.html', branches=branches)
+
+        try:
+            # Check if username already exists
+            existing = supabase.table('ps_users').select('username').eq('username', username).execute()
+            if existing.data:
+                flash('Username already exists', 'error')
+                return render_template('add_ps.html', branches=branches)
+
+            # Hash password using auth_manager (provides hash and salt)
+            password_hash, salt = auth_manager.hash_password(password)
+
+            # Replace the existing ps_data creation with this:
+            ps_data = {
+                'name': name,
+                'username': username,
+                'password': password,  # Keep for backward compatibility
+                'password_hash': password_hash,
+                'salt': salt,  # Add the salt value
+                'phone': phone,
+                'email': email,
+                'branch': branch,
+                'is_active': True,
+                'role': 'ps',
+                'failed_login_attempts': 0
+            }
+
+            result = supabase.table('ps_users').insert(ps_data).execute()
+
+            # Log PS creation
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='PS_CREATED',
+                resource='ps_users',
+                resource_id=str(result.data[0]['id']) if result.data else None,
+                details={'ps_name': name, 'username': username, 'branch': branch}
+            )
+
+            flash('Product Specialist added successfully', 'success')
+            return redirect(url_for('manage_ps'))
+        except Exception as e:
+            flash(f'Error adding Product Specialist: {str(e)}', 'error')
+
+    return render_template('add_ps.html', branches=branches)
+
+
+@app.route('/add_bh', methods=['GET', 'POST'])
+@require_admin
+def add_bh():
+    branches = ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
+
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        phone = request.form.get('phone', '').strip()
+        email = request.form.get('email', '').strip()
+        branch = request.form.get('branch', '').strip()
+
+        if not all([name, username, password, phone, email, branch]):
+            flash('All fields are required', 'error')
+            return render_template('add_bh.html', branches=branches)
+
+        if not auth_manager.validate_password_strength(password):
+            flash(
+                'Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character',
+                'error')
+            return render_template('add_bh.html', branches=branches)
+
+        try:
+            # Check if username already exists
+            existing = supabase.table('branch_head_users').select('username').eq('username', username).execute()
+            if existing.data:
+                flash('Username already exists', 'error')
+                return render_template('add_bh.html', branches=branches)
+
+            # Hash password using auth_manager (provides hash and salt)
+            password_hash, salt = auth_manager.hash_password(password)
+
+            # Create branch head data
+            bh_data = {
+                'name': name,
+                'username': username,
+                'password': password,  # Keep for backward compatibility
+                'password_hash': password_hash,
+                'salt': salt,  # Add the salt value
+                'phone': phone,
+                'email': email,
+                'branch': branch,
+                'is_active': True,
+                'role': 'bh',
+                'failed_login_attempts': 0
+            }
+
+            result = supabase.table('branch_head_users').insert(bh_data).execute()
+
+            # Log Branch Head creation
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='BRANCH_HEAD_CREATED',
+                resource='branch_head_users',
+                resource_id=str(result.data[0]['id']) if result.data else None,
+                details={'bh_name': name, 'username': username, 'branch': branch}
+            )
+
+            flash('Branch Head added successfully', 'success')
+            return redirect(url_for('manage_bh'))
+        except Exception as e:
+            flash(f'Error adding Branch Head: {str(e)}', 'error')
+
+    return render_template('add_bh.html', branches=branches)
+
+
+@app.route('/manage_cre')
+@require_admin
+def manage_cre():
+    try:
+        cre_users = safe_get_data('cre_users')
+        return render_template('manage_cre.html', cre_users=cre_users)
+    except Exception as e:
+        flash(f'Error loading CRE users: {str(e)}', 'error')
+        return render_template('manage_cre.html', cre_users=[])
+
+
+@app.route('/manage_bh')
+@require_admin
+def manage_bh():
+    try:
+        bh_users = safe_get_data('branch_head_users')
+        return render_template('manage_bh.html', bh_users=bh_users)
+    except Exception as e:
+        flash(f'Error loading Branch Head users: {str(e)}', 'error')
+        return render_template('manage_bh.html', bh_users=[])
+
+
+@app.route('/delete_bh/<int:bh_id>', methods=['DELETE'])
+@require_admin
+def delete_bh(bh_id):
+    print(f"DEBUG: delete_bh route called with bh_id: {bh_id}")
+    try:
+        # Get the Branch Head details first
+        bh_result = supabase.table('branch_head_users').select('*').eq('id', bh_id).execute()
+        print(f"DEBUG: bh_result data: {bh_result.data}")
+        if not bh_result.data:
+            print(f"DEBUG: Branch Head not found for id: {bh_id}")
+            flash('Branch Head not found', 'error')
+            return redirect(url_for('manage_bh'))
+        
+        bh = bh_result.data[0]
+        bh_name = bh.get('name')
+        print(f"DEBUG: Found Branch Head: {bh_name}")
+        
+        # Check if Branch Head has any associated data that would prevent deletion
+        # For now, we'll allow deletion but you can add checks here if needed
+        
+        # Delete the Branch Head user
+        delete_result = supabase.table('branch_head_users').delete().eq('id', bh_id).execute()
+        print(f"DEBUG: Delete result: {delete_result}")
+        
+        # Log the deletion
+        auth_manager.log_audit_event(
+            user_id=session.get('user_id'),
+            user_type=session.get('user_type'),
+            action='BRANCH_HEAD_DELETED',
+            resource='branch_head_users',
+            resource_id=str(bh_id),
+            details={'bh_name': bh_name}
+        )
+        
+        print(f"DEBUG: Branch Head {bh_name} deleted successfully")
+        return jsonify({'success': True, 'message': f'Branch Head {bh_name} deleted successfully'})
+        
+    except Exception as e:
+        print(f"DEBUG: Error in delete_bh: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/toggle_bh_status/<int:bh_id>', methods=['POST'])
+@require_admin
+def toggle_bh_status(bh_id):
+    try:
+        data = request.get_json()
+        active_status = data.get('active', True)
+
+        # Update Branch Head status
+        result = supabase.table('branch_head_users').update({
+            'is_active': active_status
+        }).eq('id', bh_id).execute()
+
+        if result.data:
+            # Log status change
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='BRANCH_HEAD_STATUS_CHANGED',
+                resource='branch_head_users',
+                resource_id=str(bh_id),
+                details={'new_status': 'active' if active_status else 'inactive'}
+            )
+
+            return jsonify({'success': True, 'message': 'Branch Head status updated successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Branch Head not found'})
+
+    except Exception as e:
+        print(f"Error toggling Branch Head status: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/manage_ps')
+@require_admin
+def manage_ps():
+    try:
+        ps_users = safe_get_data('ps_users')
+        return render_template('manage_ps.html', ps_users=ps_users)
+    except Exception as e:
+        flash(f'Error loading PS users: {str(e)}', 'error')
+        return render_template('manage_ps.html', ps_users=[])
+
+
+@app.route('/toggle_ps_status/<int:ps_id>', methods=['POST'])
+@require_admin
+def toggle_ps_status(ps_id):
+    try:
+        data = request.get_json()
+        active_status = data.get('active', True)
+
+        # Update PS status
+        result = supabase.table('ps_users').update({
+            'is_active': active_status
+        }).eq('id', ps_id).execute()
+
+        if result.data:
+            # Log status change
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='PS_STATUS_CHANGED',
+                resource='ps_users',
+                resource_id=str(ps_id),
+                details={'new_status': 'active' if active_status else 'inactive'}
+            )
+
+            return jsonify({'success': True, 'message': 'PS status updated successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'PS not found'})
+
+    except Exception as e:
+        print(f"Error toggling PS status: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/edit_bh/<int:bh_id>', methods=['POST'])
+@require_admin
+def edit_bh(bh_id):
+    try:
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip()
+        phone = data.get('phone', '').strip()
+        branch = data.get('branch', '').strip()
+
+        if not all([name, username, email, phone, branch]):
+            return jsonify({'success': False, 'message': 'All fields are required'})
+
+        # Check if username already exists for other users
+        existing = supabase.table('branch_head_users').select('username').eq('username', username).neq('id', bh_id).execute()
+        if existing.data:
+            return jsonify({'success': False, 'message': 'Username already exists'})
+
+        # Update the Branch Head
+        result = supabase.table('branch_head_users').update({
+            'name': name,
+            'username': username,
+            'email': email,
+            'phone': phone,
+            'branch': branch
+        }).eq('id', bh_id).execute()
+
+        if result.data:
+            # Log the update
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='BRANCH_HEAD_UPDATED',
+                resource='branch_head_users',
+                resource_id=str(bh_id),
+                details={'bh_name': name, 'username': username, 'branch': branch}
+            )
+
+            return jsonify({'success': True, 'message': 'Branch Head updated successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Branch Head not found'})
+
+    except Exception as e:
+        print(f"Error updating Branch Head: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/manage_leads')
+@require_admin
+def manage_leads():
+    try:
+        cres = safe_get_data('cre_users')
+        cre_id = request.args.get('cre_id')
+        source = request.args.get('source')
+        qualification = request.args.get('qualification', 'all')
+        date_filter = request.args.get('date_filter', 'all')
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        final_status = request.args.get('final_status', '')
+        page = int(request.args.get('page', 1))
+        per_page = 50
+        search_uid = request.args.get('search_uid', '').strip()
+        selected_cre = None
+        leads = []
+        sources = []
+        total_leads = 0
+        if cre_id:
+            # Find selected CRE
+            selected_cre = next((cre for cre in cres if str(cre.get('id')) == str(cre_id)), None)
+            # Fetch leads for this CRE
+            filters = {'cre_name': selected_cre['name']} if selected_cre else {}
+            if source:
+                filters['source'] = source
+            leads = safe_get_data('lead_master', filters)
+            # UID substring search for this CRE
+            if search_uid:
+                leads = [lead for lead in leads if search_uid.lower() in str(lead.get('uid', '')).lower()]
+            # Qualification filter
+            if qualification == 'qualified':
+                leads = [lead for lead in leads if lead.get('first_call_date')]
+            elif qualification == 'unqualified':
+                leads = [lead for lead in leads if not lead.get('first_call_date')]
+            # Final status filter
+            if final_status:
+                leads = [lead for lead in leads if (lead.get('final_status') or '') == final_status]
+            # Date filtering
+            if date_filter == 'today':
+                today_str = datetime.now().strftime('%Y-%m-%d')
+                leads = [lead for lead in leads if lead.get('cre_assigned_at') and str(lead.get('cre_assigned_at')).startswith(today_str)]
+            elif date_filter == 'range' and start_date and end_date:
+                def in_range(ld):
+                    dt = ld.get('cre_assigned_at')
+                    if not dt:
+                        return False
+                    try:
+                        dt_val = dt[:10]
+                        return start_date <= dt_val <= end_date
+                    except Exception:
+                        return False
+                leads = [lead for lead in leads if in_range(lead)]
+            # Get all unique sources for this CRE's leads
+            sources = sorted(list(set(lead.get('source', 'Unknown') for lead in leads)))
+            # Pagination
+            total_leads = len(leads)
+            total_pages = (total_leads + per_page - 1) // per_page
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            leads = leads[start_idx:end_idx]
+        else:
+            if search_uid:
+                # Search by UID substring across all leads
+                all_leads = safe_get_data('lead_master')
+                leads = [lead for lead in all_leads if search_uid.lower() in str(lead.get('uid', '')).lower()]
+                sources = sorted(list(set(lead.get('source', 'Unknown') for lead in leads)))
+                total_leads = len(leads)
+                total_pages = 1
+                page = 1
+            else:
+                total_pages = 1
+                page = 1
+        # Add formatted CRE TAT for display
+        def format_cre_tat(tat):
+            try:
+                tat = float(tat)
+            except (TypeError, ValueError):
+                return 'N/A'
+            if tat < 60:
+                return f"{int(tat)}s"
+            elif tat < 3600:
+                m = int(tat // 60)
+                s = int(tat % 60)
+                return f"{m}m {s}s"
+            elif tat < 86400:
+                h = int(tat // 3600)
+                m = int((tat % 3600) // 60)
+                s = int(tat % 60)
+                return f"{h}h {m}m {s}s"
+            else:
+                d = int(tat // 86400)
+                h = int((tat % 86400) // 3600)
+                return f"{d} Days {h}h"
+        for lead in leads:
+            lead['cre_tat_display'] = format_cre_tat(lead.get('tat'))
+        return render_template('manage_leads.html', cres=cres, selected_cre=selected_cre, leads=leads, sources=sources, selected_source=source, qualification=qualification, date_filter=date_filter, start_date=start_date, end_date=end_date, page=page, total_pages=total_pages, total_leads=total_leads, final_status=final_status)
+    except Exception as e:
+        flash(f'Error loading leads: {str(e)}', 'error')
+        return render_template('manage_leads.html', cres=[], selected_cre=None, leads=[], sources=[], selected_source=None, qualification='all', date_filter='all', start_date=None, end_date=None, page=1, total_pages=1, total_leads=0, final_status='')
+
+
+@app.route('/delete_leads', methods=['POST'])
+@require_admin
+def delete_leads():
+    try:
+        delete_type = request.form.get('delete_type')
+
+        if delete_type == 'single':
+            uid = request.form.get('uid')
+            if not uid:
+                return jsonify({'success': False, 'message': 'No UID provided'})
+
+            # Delete from ps_followup_master first (foreign key constraint)
+            supabase.table('ps_followup_master').delete().eq('lead_uid', uid).execute()
+
+            # Delete from lead_master
+            result = supabase.table('lead_master').delete().eq('uid', uid).execute()
+
+            # Log deletion
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='LEAD_DELETED',
+                resource='lead_master',
+                resource_id=uid,
+                details={'delete_type': 'single'}
+            )
+
+            return jsonify({'success': True, 'message': 'Lead deleted successfully'})
+
+        elif delete_type == 'bulk':
+            uids = request.form.getlist('uids')
+            if not uids:
+                return jsonify({'success': False, 'message': 'No leads selected'})
+
+            # Delete from ps_followup_master first
+            for uid in uids:
+                supabase.table('ps_followup_master').delete().eq('lead_uid', uid).execute()
+
+            # Delete from lead_master
+            for uid in uids:
+                supabase.table('lead_master').delete().eq('uid', uid).execute()
+
+            # Log bulk deletion
+            auth_manager.log_audit_event(
+                user_id=session.get('user_id'),
+                user_type=session.get('user_type'),
+                action='LEADS_BULK_DELETED',
+                resource='lead_master',
+                details={'delete_type': 'bulk', 'count': len(uids), 'uids': uids}
+            )
+
+            return jsonify({'success': True, 'message': f'{len(uids)} leads deleted successfully'})
+
+        else:
+            return jsonify({'success': False, 'message': 'Invalid delete type'})
+
+    except Exception as e:
+        print(f"Error deleting leads: {e}")
+        return jsonify({'success': False, 'message': f'Error deleting leads: {str(e)}'})
+
+
+@app.route('/bulk_unassign_leads', methods=['POST'])
+@require_admin
+def bulk_unassign_leads():
+    try:
+        uids = request.form.getlist('uids')
+        if not uids:
+            return jsonify({'success': False, 'message': 'No leads selected'})
+
+        # Update leads to unassigned
+        for uid in uids:
+            supabase.table('lead_master').update({
+                'cre_name': None,
+                'assigned': 'No',
+                'ps_name': None
+            }).eq('uid', uid).execute()
+
+            # Also remove from PS followup if exists
+            supabase.table('ps_followup_master').delete().eq('lead_uid', uid).execute()
+
+        # Log bulk unassignment
+        auth_manager.log_audit_event(
+            user_id=session.get('user_id'),
+            user_type=session.get('user_type'),
+            action='LEADS_BULK_UNASSIGNED',
+            resource='lead_master',
+            details={'count': len(uids), 'uids': uids}
+        )
+
+        return jsonify({'success': True, 'message': f'{len(uids)} leads unassigned successfully'})
+
+    except Exception as e:
+        print(f"Error unassigning leads: {e}")
+        return jsonify({'success': False, 'message': f'Error unassigning leads: {str(e)}'})
+
+
+@app.route('/delete_cre/<int:cre_id>')
+@require_admin
+def delete_cre(cre_id):
+    try:
+        # Get the CRE details first
+        cre_result = supabase.table('cre_users').select('*').eq('id', cre_id).execute()
+        if not cre_result.data:
+            flash('CRE not found', 'error')
+            return redirect(url_for('manage_cre'))
+        
+        cre = cre_result.data[0]
+        cre_name = cre.get('name')
+        
+        # Check if CRE has any pending leads in lead_master
+        pending_leads_result = supabase.table('lead_master').select('id').eq('cre_name', cre_name).eq('final_status', 'Pending').execute()
+        pending_count = len(pending_leads_result.data) if pending_leads_result.data else 0
+        
+        # Check if CRE has any pending leads in ps_followup_master
+        ps_pending_result = supabase.table('ps_followup_master').select('id').eq('cre_name', cre_name).eq('final_status', 'Pending').execute()
+        ps_pending_count = len(ps_pending_result.data) if ps_pending_result.data else 0
+        
+        total_pending = pending_count + ps_pending_count
+        
+        if total_pending > 0:
+            flash(f'Cannot delete CRE {cre_name}. They have {total_pending} pending leads ({pending_count} in lead_master, {ps_pending_count} in ps_followup). Please transfer or close these leads first.', 'error')
+            return redirect(url_for('manage_cre'))
+        
+        # If no pending leads, proceed with deletion
+        # Update leads assigned to this CRE to unassigned
+        supabase.table('lead_master').update({
+            'cre_name': None,
+            'assigned': 'No'
+        }).eq('cre_name', cre_name).execute()
+        
+        # Update ps_followup_master leads
+        supabase.table('ps_followup_master').update({
+            'cre_name': None
+        }).eq('cre_name', cre_name).execute()
+
+        # Delete the CRE user
+        supabase.table('cre_users').delete().eq('id', cre_id).execute()
+
+        # Log CRE deletion
+        auth_manager.log_audit_event(
+            user_id=session.get('user_id'),
+            user_type=session.get('user_type'),
+            action='CRE_DELETED',
+            resource='cre_users',
+            resource_id=str(cre_id),
+            details={'cre_name': cre_name}
+        )
+
+        flash(f'CRE {cre_name} has been deleted successfully', 'success')
+        
+    except Exception as e:
+        print(f"Error deleting CRE: {str(e)}")
+        flash('Error deleting CRE', 'error')
+
+    return redirect(url_for('manage_cre'))
+
+
+@app.route('/delete_ps/<int:ps_id>')
+@require_admin
+def delete_ps(ps_id):
+    try:
+        # Get the PS details first
+        ps_result = supabase.table('ps_users').select('*').eq('id', ps_id).execute()
+        if not ps_result.data:
+            flash('PS not found', 'error')
+            return redirect(url_for('manage_ps'))
+        
+        ps = ps_result.data[0]
+        ps_name = ps.get('name')
+        
+        # Check if PS has any pending leads in ps_followup_master
+        ps_pending_result = supabase.table('ps_followup_master').select('id').eq('ps_name', ps_name).eq('final_status', 'Pending').execute()
+        ps_pending_count = len(ps_pending_result.data) if ps_pending_result.data else 0
+        
+        # Check if PS has any pending leads in walkin_table
+        walkin_pending_result = supabase.table('walkin_table').select('id').eq('ps_assigned', ps_name).eq('status', 'Pending').execute()
+        walkin_pending_count = len(walkin_pending_result.data) if walkin_pending_result.data else 0
+        
+        # Check if PS has any pending leads in activity_leads
+        activity_pending_result = supabase.table('activity_leads').select('id').eq('ps_name', ps_name).eq('final_status', 'Pending').execute()
+        activity_pending_count = len(activity_pending_result.data) if activity_pending_result.data else 0
+        
+        total_pending = ps_pending_count + walkin_pending_count + activity_pending_count
+        
+        if total_pending > 0:
+            flash(f'Cannot delete PS {ps_name}. They have {total_pending} pending leads ({ps_pending_count} in ps_followup, {walkin_pending_count} in walkin, {activity_pending_count} in activity). Please transfer or close these leads first.', 'error')
+            return redirect(url_for('manage_ps'))
+        
+        # If no pending leads, proceed with deletion
+        # Update leads assigned to this PS to unassigned
+        supabase.table('lead_master').update({
+            'ps_name': None
+        }).eq('ps_name', ps_name).execute()
+        
+        # Update ps_followup_master leads
+        supabase.table('ps_followup_master').update({
+            'ps_name': None
+        }).eq('ps_name', ps_name).execute()
+        
+        # Update walkin_table leads
+        supabase.table('walkin_table').update({
+            'ps_assigned': None
+        }).eq('ps_assigned', ps_name).execute()
+        
+        # Update activity_leads
+        supabase.table('activity_leads').update({
+            'ps_name': None
+        }).eq('ps_name', ps_name).execute()
+
+        # Delete the PS user
+        supabase.table('ps_users').delete().eq('id', ps_id).execute()
+
+        # Log PS deletion
+        auth_manager.log_audit_event(
+            user_id=session.get('user_id'),
+            user_type=session.get('user_type'),
+            action='PS_DELETED',
+            resource='ps_users',
+            resource_id=str(ps_id),
+            details={'ps_name': ps_name}
+        )
+
+        flash(f'PS {ps_name} has been deleted successfully', 'success')
+        
+    except Exception as e:
+        print(f"Error deleting PS: {str(e)}")
+        flash('Error deleting PS', 'error')
+
+    return redirect(url_for('manage_ps'))
+
+
+@app.route('/edit_cre/<int:cre_id>', methods=['GET', 'POST'])
+@require_admin
+def edit_cre(cre_id):
+    """Edit CRE user details"""
+    try:
+        if request.method == 'POST':
+            email = request.form.get('email')
+            phone = request.form.get('phone')
+            
+            if not email or not phone:
+                flash('Email and phone are required', 'error')
+                return redirect(url_for('edit_cre', cre_id=cre_id))
+            
+            # Update the CRE
+            supabase.table('cre_users').update({
+                'email': email,
+                'phone': phone
+            }).eq('id', cre_id).execute()
+            
+            flash('CRE details updated successfully', 'success')
+            return redirect(url_for('manage_cre'))
+        
+        # Get CRE details for editing
+        cre_result = supabase.table('cre_users').select('*').eq('id', cre_id).execute()
+        if not cre_result.data:
+            flash('CRE not found', 'error')
+            return redirect(url_for('manage_cre'))
+        
+        cre = cre_result.data[0]
+        return render_template('edit_cre.html', cre=cre)
+        
+    except Exception as e:
+        print(f"Error editing CRE: {str(e)}")
+        flash('Error editing CRE', 'error')
+        return redirect(url_for('manage_cre'))
+
+
+@app.route('/edit_ps/<int:ps_id>', methods=['GET', 'POST'])
+@require_admin
+def edit_ps(ps_id):
+    """Edit PS user details"""
+    try:
+        if request.method == 'POST':
+            email = request.form.get('email')
+            phone = request.form.get('phone')
+            
+            if not email or not phone:
+                flash('Email and phone are required', 'error')
+                return redirect(url_for('edit_ps', ps_id=ps_id))
+            
+            # Update the PS
+            supabase.table('ps_users').update({
+                'email': email,
+                'phone': phone
+            }).eq('id', ps_id).execute()
+            
+            flash('PS details updated successfully', 'success')
+            return redirect(url_for('manage_ps'))
+        
+        # Get PS details for editing
+        ps_result = supabase.table('ps_users').select('*').eq('id', ps_id).execute()
+        if not ps_result.data:
+            flash('PS not found', 'error')
+            return redirect(url_for('manage_ps'))
+        
+        ps = ps_result.data[0]
+        return render_template('edit_ps.html', ps=ps)
+        
+    except Exception as e:
+        print(f"Error editing PS: {str(e)}")
+        flash('Error editing PS', 'error')
+        return redirect(url_for('manage_ps'))
+
+
+@app.route('/manage_rec', methods=['GET', 'POST'])
+@require_admin
+def manage_rec():
+    branches = ["PORUR", "NUNGAMBAKKAM", "TIRUVOTTIYUR"]
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        name = request.form.get('name', '').strip()
+        branch = request.form.get('branch', '').strip()
+        if not all([username, password, name, branch]):
+            flash('All fields are required', 'error')
+        else:
+            existing = supabase.table('rec_users').select('username').eq('username', username).execute()
+            if existing.data:
+                flash('Username already exists', 'error')
+            else:
+                password_hash, salt = auth_manager.hash_password(password)
+                rec_data = {
+                    'username': username,
+                    'password_hash': password_hash,
+                    'salt': salt,  # Add the salt value
+                    'password': password,  # Store plain password as well
+                    'name': name,
+                    'branch': branch,
+                    'is_active': True
+                }
+                try:
+                    supabase.table('rec_users').insert(rec_data).execute()
+                    flash('Receptionist user added successfully', 'success')
+                except Exception as e:
+                    flash(f'Error adding receptionist: {str(e)}', 'error')
+    rec_users = safe_get_data('rec_users')
+    return render_template('manage_rec.html', rec_users=rec_users, branches=branches)
+
+
+@app.route('/delete_rec/<int:rec_id>')
+@require_admin
+def delete_rec(rec_id):
+    try:
+        supabase.table('rec_users').delete().eq('id', rec_id).execute()
+        flash('Receptionist user deleted successfully', 'success')
+    except Exception as e:
+        flash(f'Error deleting receptionist: {str(e)}', 'error')
+    return redirect(url_for('manage_rec'))
+
+
+@app.route('/check_duplicate_lead', methods=['POST'])
+@require_auth(['admin', 'cre'])
+def check_duplicate_lead():
+    """
+    Check if a lead with the same phone number already exists.
+    Returns duplicate information if found.
+    """
+    try:
+        data = request.get_json()
+        phone_number = data.get('phone_number', '').strip()
+        source = data.get('source', '').strip()
+        subsource = data.get('subsource', '').strip()
+        
+        if not phone_number:
+            return jsonify({'success': False, 'message': 'Phone number is required'}), 400
+        
+        # Normalize phone number (remove all non-digits)
+        normalized_phone = ''.join(filter(str.isdigit, phone_number))
+        
+        # Check in lead_master table
+        result = supabase.table('lead_master').select('*').eq('customer_mobile_number', normalized_phone).execute()
+        existing_leads = result.data or []
+        
+        if existing_leads:
+            # Found existing lead(s)
+            existing_lead = existing_leads[0]  # Get the first one
+            
+            # Check if this exact source-subsource combination already exists
+            exact_match = any(
+                lead.get('source') == source and lead.get('sub_source') == subsource 
+                for lead in existing_leads
+            )
+            
+            if exact_match:
+                # This is a true duplicate - same phone, same source, same subsource
+                return jsonify({
+                    'success': True,
+                    'is_duplicate': True,
+                    'existing_lead': existing_lead,
+                    'duplicate_type': 'exact_match',
+                    'message': 'Lead with this phone number and source-subsource combination already exists'
+                })
+            else:
+                # Phone exists but with different source/subsource
+                # Get all existing sources for this phone number
+                existing_sources = []
+                for lead in existing_leads:
+                    if lead.get('source') and lead.get('sub_source'):
+                        existing_sources.append({
+                            'source': lead.get('source'),
+                            'sub_source': lead.get('sub_source')
+                        })
+                
+                return jsonify({
+                    'success': True,
+                    'is_duplicate': True,
+                    'existing_lead': existing_lead,
+                    'existing_sources': existing_sources,
+                    'duplicate_type': 'new_source',
+                    'message': 'Phone number exists with different sources'
+                })
+        
+        # Check in duplicate_leads table
+        duplicate_result = supabase.table('duplicate_leads').select('*').eq('customer_mobile_number', normalized_phone).execute()
+        duplicate_leads = duplicate_result.data or []
+        
+        if duplicate_leads:
+            # Found in duplicate_leads table
+            duplicate_lead = duplicate_leads[0]
+            
+            # Check if this exact source-subsource combination already exists in any slot
+            exact_match = False
+            existing_sources = []
+            
+            # Check all source slots (source1 to source10)
+            for i in range(1, 11):
+                source_field = f'source{i}'
+                sub_source_field = f'sub_source{i}'
+                
+                if duplicate_lead.get(source_field) and duplicate_lead.get(sub_source_field):
+                    existing_sources.append({
+                        'source': duplicate_lead.get(source_field),
+                        'sub_source': duplicate_lead.get(sub_source_field)
+                    })
+                    
+                    # Check if this slot matches the new source/subsource
+                    if (duplicate_lead.get(source_field) == source and 
+                        duplicate_lead.get(sub_source_field) == subsource):
+                        exact_match = True
+            
+            if exact_match:
+                return jsonify({
+                    'success': True,
+                    'is_duplicate': True,
+                    'existing_lead': duplicate_lead,
+                    'duplicate_type': 'exact_match',
+                    'message': 'Lead with this phone number and source-subsource combination already exists in duplicates'
+                })
+            else:
+                return jsonify({
+                    'success': True,
+                    'is_duplicate': True,
+                    'existing_lead': duplicate_lead,
+                    'existing_sources': existing_sources,
+                    'duplicate_type': 'new_source',
+                    'message': 'Phone number exists in duplicates with different sources'
+                })
+        
+        # No duplicate found
+        return jsonify({
+            'success': True,
+            'is_duplicate': False,
+            'message': 'No duplicate found'
+        })
+        
+    except Exception as e:
+        print(f"Error checking duplicate lead: {e}")
+        return jsonify({'success': False, 'message': f'Error checking duplicate: {str(e)}'}), 500
+
+@app.route('/add_lead', methods=['GET', 'POST'])
+@require_cre
+def add_lead():
+    from datetime import datetime, date
+    branches = ['PORUR', 'NUNGAMBAKKAM', 'TIRUVOTTIYUR']
+    ps_users = safe_get_data('ps_users')
+    if request.method == 'POST':
+        customer_name = request.form.get('customer_name', '').strip()
+        customer_mobile_number = request.form.get('customer_mobile_number', '').strip()
+        source = request.form.get('source', '').strip()
+        subsource = request.form.get('subsource', '').strip()
+        lead_status = request.form.get('lead_status', '').strip()
+        lead_category = request.form.get('lead_category', '').strip()
+        model_interested = request.form.get('model_interested', '').strip()
+        branch = request.form.get('branch', '').strip()
+        ps_name = request.form.get('ps_name', '').strip()
+        final_status = request.form.get('final_status', 'Pending').strip()
+        follow_up_date = request.form.get('follow_up_date', '').strip()
+        remark = request.form.get('remark', '').strip()
+        is_duplicate_new_source = request.form.get('is_duplicate_new_source', '').strip()
+        date_now = datetime.now().strftime('%Y-%m-%d')
+        
+        # Validation
+        if not customer_name or not customer_mobile_number or not source or not subsource:
+            flash('Please fill all required fields', 'error')
+            return render_template('add_lead.html', branches=branches, ps_users=ps_users)
+        
+        # Validate follow_up_date is required when final_status is Pending
+        if final_status == 'Pending' and not follow_up_date:
+            flash('Follow-up date is required when final status is Pending', 'error')
+            return render_template('add_lead.html', branches=branches, ps_users=ps_users)
+        
+        # Normalize phone number
+        normalized_phone = ''.join(filter(str.isdigit, customer_mobile_number))
+        
+        # Check for duplicates if not already confirmed as new source
+        if not is_duplicate_new_source:
+            try:
+                # Check in lead_master
+                result = supabase.table('lead_master').select('*').eq('customer_mobile_number', normalized_phone).execute()
+                existing_leads = result.data or []
+                
+                if existing_leads:
+                    # Check for exact source-subsource match
+                    exact_match = any(
+                        lead.get('source') == source and lead.get('sub_source') == subsource 
+                        for lead in existing_leads
+                    )
+                    
+                    if exact_match:
+                        flash('Lead with this phone number and source-subsource combination already exists!', 'error')
+                        return render_template('add_lead.html', branches=branches, ps_users=ps_users)
+                
+                # Check in duplicate_leads
+                duplicate_result = supabase.table('duplicate_leads').select('*').eq('customer_mobile_number', normalized_phone).execute()
+                duplicate_leads = duplicate_result.data or []
+                
+                if duplicate_leads:
+                    # Check if this exact source-subsource combination already exists in any slot
+                    exact_match = False
+                    for duplicate_lead in duplicate_leads:
+                        # Check all source slots (source1 to source10)
+                        for i in range(1, 11):
+                            source_field = f'source{i}'
+                            sub_source_field = f'sub_source{i}'
+                            
+                            if (duplicate_lead.get(source_field) == source and 
+                                duplicate_lead.get(sub_source_field) == subsource):
+                                exact_match = True
+                                break
+                        if exact_match:
+                            break
+                    
+                    if exact_match:
+                        flash('Lead with this phone number and source-subsource combination already exists in duplicates!', 'error')
+                        return render_template('add_lead.html', branches=branches, ps_users=ps_users)
+                        
+            except Exception as e:
+                print(f"Error checking duplicates: {e}")
+                flash('Error checking for duplicates. Please try again.', 'error')
+                return render_template('add_lead.html', branches=branches, ps_users=ps_users)
+        
+        # UID: Source initial (uppercase) + '-' + first 5 letters of name (no spaces, uppercase) + last 5 digits of phone
+        src_initial = source[0].upper() if source else 'X'
+        name_part = ''.join(customer_name.split()).upper()[:5]
+        phone_part = normalized_phone[-5:] if len(normalized_phone) >= 5 else normalized_phone
+        uid = f"{src_initial}-{name_part}{phone_part}"
+        
+        # CRE name from session
+        cre_name = session.get('cre_name')
+        
+        # Prepare lead data
+        lead_data = {
+            'uid': uid,
+            'date': date_now,
+            'customer_name': customer_name,
+            'customer_mobile_number': normalized_phone,
+            'source': source,
+            'sub_source': subsource,
+            'lead_status': lead_status,
+            'lead_category': lead_category,
+            'model_interested': model_interested,
+            'branch': branch,
+            'ps_name': ps_name if ps_name else None,
+            'final_status': final_status,
+            'follow_up_date': follow_up_date if follow_up_date else None,
+            'assigned': 'Yes' if cre_name else 'No',  # Set to Yes if CRE is adding the lead
+            'cre_assigned_at': datetime.now().isoformat() if cre_name else None,
+            'ps_assigned_at': datetime.now().isoformat() if ps_name else None,
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat(),
+            'first_remark': remark,
+            'cre_name': cre_name,
+            'first_call_date': get_ist_timestamp()
+        }
+        try:
+            # If this is a duplicate with new source, add to duplicate_leads table
+            if is_duplicate_new_source:
+                # Check if there's already a duplicate record
+                existing_duplicate = supabase.table('duplicate_leads').select('*').eq('customer_mobile_number', normalized_phone).execute()
+                
+                if existing_duplicate.data:
+                    # Add to existing duplicate record
+                    duplicate_record = existing_duplicate.data[0]
+                    # Find next available slot
+                    next_slot = None
+                    for i in range(1, 11):
+                        source_field = f'source{i}'
+                        if not duplicate_record.get(source_field):
+                            next_slot = i
+                            break
+                    
+                    if next_slot:
+                        # Update the existing duplicate record
+                        update_data = {
+                            f'source{next_slot}': source,
+                            f'sub_source{next_slot}': subsource,
+                            f'date{next_slot}': date_now,
+                            'duplicate_count': duplicate_record.get('duplicate_count', 0) + 1,
+                            'updated_at': datetime.now().isoformat()
+                        }
+                        supabase.table('duplicate_leads').update(update_data).eq('id', duplicate_record['id']).execute()
+                        flash(f'Lead added to existing duplicate record with new source: {source} - {subsource}', 'success')
+                    else:
+                        flash('Error: Duplicate record is full (max 10 sources reached)', 'error')
+                else:
+                    # Create new duplicate record
+                    original_lead = supabase.table('lead_master').select('*').eq('customer_mobile_number', normalized_phone).execute()
+                    if original_lead.data:
+                        original = original_lead.data[0]
+                        # Create duplicate record with proper structure
+                        duplicate_data = {
+                            'uid': uid,
+                            'customer_mobile_number': normalized_phone,
+                            'customer_name': customer_name,
+                            'original_lead_id': original['id'],
+                            'source1': original['source'],
+                            'sub_source1': original.get('sub_source'),
+                            'date1': original['date'],
+                            'source2': source,
+                            'sub_source2': subsource,
+                            'date2': date_now,
+                            'duplicate_count': 2,
+                            'created_at': datetime.now().isoformat(),
+                            'updated_at': datetime.now().isoformat()
+                        }
+                        supabase.table('duplicate_leads').insert(duplicate_data).execute()
+                        flash(f'Lead added to duplicates with new source: {source} - {subsource}', 'success')
+                    else:
+                        flash('Error: Original lead not found for duplicate creation', 'error')
+            else:
+                supabase.table('lead_master').insert(lead_data).execute()
+                
+                # Track the initial call attempt for fresh leads
+                if lead_status:
+                    track_cre_call_attempt(
+                        uid=uid,
+                        cre_name=cre_name,
+                        call_no='first',
+                        lead_status=lead_status,
+                        call_was_recorded=True,  # Fresh leads always have first_call_date recorded
+                        follow_up_date=follow_up_date if follow_up_date else None,
+                        remarks=remark if remark else None
+                    )
+                
+                # Create PS followup if PS is assigned during lead creation
+                if ps_name:
+                    ps_user = next((ps for ps in ps_users if ps['name'] == ps_name), None)
+                    if ps_user:
+                        create_or_update_ps_followup(lead_data, ps_name, ps_user['branch'])
+                        
+                        # Send email notification to PS
+                        try:
+                            socketio.start_background_task(send_email_to_ps, ps_user['email'], ps_user['name'], lead_data, cre_name)
+                            flash(f'Lead added successfully and assigned to {ps_name}! Email notification sent.', 'success')
+                        except Exception as e:
+                            print(f"Error sending email: {e}")
+                            flash(f'Lead added successfully and assigned to {ps_name}! (Email notification failed)', 'warning')
+                    else:
+                        flash('Lead added successfully! (PS assignment failed)', 'warning')
+                else:
+                    flash('Lead added successfully!', 'success')
+            
+            return redirect(url_for('cre_dashboard'))
+        except Exception as e:
+            flash(f'Error adding lead: {str(e)}', 'error')
+            return render_template('add_lead.html', branches=branches, ps_users=ps_users)
+    return render_template('add_lead.html', branches=branches, ps_users=ps_users)
+
+# Add import for optimized operations
+from optimized_lead_operations import create_optimized_operations
+
+@app.route('/add_lead_optimized', methods=['POST'])
+@require_cre
+def add_lead_optimized():
+    """
+    Optimized lead creation endpoint with improved performance
+    """
+    try:
+        from datetime import datetime
+        
+        # Get form data
+        customer_name = request.form.get('customer_name', '').strip()
+        customer_mobile_number = request.form.get('customer_mobile_number', '').strip()
+        source = request.form.get('source', '').strip()
+        subsource = request.form.get('subsource', '').strip()
+        lead_status = request.form.get('lead_status', '').strip()
+        lead_category = request.form.get('lead_category', '').strip()
+        model_interested = request.form.get('model_interested', '').strip()
+        branch = request.form.get('branch', '').strip()
+        ps_name = request.form.get('ps_name', '').strip()
+        final_status = request.form.get('final_status', 'Pending').strip()
+        follow_up_date = request.form.get('follow_up_date', '').strip()
+        remark = request.form.get('remark', '').strip()
+        date_now = datetime.now().strftime('%Y-%m-%d')
+        
+        # Validation
+        if not customer_name or not customer_mobile_number or not source or not subsource:
+            return jsonify({
+                'success': False,
+                'message': 'Please fill all required fields'
+            })
+        
+        # Validate follow_up_date is required when final_status is Pending
+        if final_status == 'Pending' and not follow_up_date:
+            return jsonify({
+                'success': False,
+                'message': 'Follow-up date is required when final status is Pending'
+            })
+        
+        # Normalize phone number
+        normalized_phone = ''.join(filter(str.isdigit, customer_mobile_number))
+        
+        # CRE name from session
+        cre_name = session.get('cre_name')
+        
+        # Prepare lead data
+        lead_data = {
+            'date': date_now,
+            'customer_name': customer_name,
+            'customer_mobile_number': normalized_phone,
+            'source': source,
+            'sub_source': subsource,
+            'lead_status': lead_status,
+            'lead_category': lead_category,
+            'model_interested': model_interested,
+            'branch': branch,
+            'ps_name': ps_name if ps_name else None,
+            'final_status': final_status,
+            'follow_up_date': follow_up_date if follow_up_date else None,
+            'assigned': 'Yes' if cre_name else 'No',
+            'cre_assigned_at': datetime.now().isoformat() if cre_name else None,
+            'ps_assigned_at': datetime.now().isoformat() if ps_name else None,
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat(),
+            'first_remark': remark,
+            'cre_name': cre_name,
+            'first_call_date': get_ist_timestamp()
+        }
+        
+        # Get PS branch if PS is assigned
+        ps_branch = None
+        if ps_name:
+            ps_users = safe_get_data('ps_users')
+            ps_user = next((ps for ps in ps_users if ps['name'] == ps_name), None)
+            if ps_user:
+                ps_branch = ps_user['branch']
+        
+        # Use optimized operations
+        optimized_ops = create_optimized_operations(supabase)
+        result = optimized_ops.create_lead_optimized(lead_data, cre_name, ps_name, ps_branch)
+        
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'message': result['message'],
+                'uid': result['uid'],
+                'execution_time': f"{result['execution_time']:.3f}s"
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': result['message'],
+                'execution_time': f"{result['execution_time']:.3f}s"
+            })
+            
+    except Exception as e:
+        print(f"Error in optimized lead creation: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Error creating lead: {str(e)}'
+        })
+
+@app.route('/add_lead_with_cre', methods=['POST'])
+@require_admin  # <-- Change to @require_cre if you want CREs to use it, or create a custom decorator for both
+def add_lead_with_cre():
+    """
+    Add a new lead with minimal required columns.
+    - Checks for duplicate by last 10 digits of phone number.
+    - If duplicate, returns UID of existing lead.
+    - Only fills: uid, customer_name, customer_mobile_number, source, date, assigned.
+    - Source is always 'Google(Web)', UID uses 'G' as the source character.
+    """
+    try:
+        # Check if this is an AJAX request
+        is_ajax = request.headers.get('Content-Type') == 'application/json'
+        
+        if is_ajax:
+            # Handle JSON request
+            data = request.get_json()
+            customer_name = data.get('customer_name', '').strip()
+            customer_mobile_number = data.get('customer_mobile_number', '').strip()
+            source = data.get('source', 'GOOGLE').strip()
+            subsource = data.get('subsource', '').strip()
+            assigned_cre_id = data.get('assigned_cre')
+        else:
+            # Handle form request
+            customer_name = request.form.get('customer_name', '').strip()
+            customer_mobile_number = request.form.get('customer_mobile_number', '').strip()
+            source = request.form.get('source', 'GOOGLE').strip()
+            subsource = request.form.get('subsource', '').strip()
+            assigned_cre_id = request.form.get('assigned_cre')
+        
+        assigned = "Yes"
+        date_now = datetime.now().strftime('%Y-%m-%d')
+
+        # Validate required fields
+        if not customer_name or not customer_mobile_number or not source or not subsource:
+            if is_ajax:
+                return jsonify({
+                    'success': False,
+                    'message': 'Customer name, mobile number, source, and subsource are required'
+                })
+            else:
+                flash('Customer name, mobile number, source, and subsource are required', 'error')
+                return redirect('/assign_leads')
+
+        # Normalize phone number to last 10 digits
+        mobile_digits = ''.join(filter(str.isdigit, customer_mobile_number))[-10:]
+        
+        if len(mobile_digits) != 10:
+            if is_ajax:
+                return jsonify({
+                    'success': False,
+                    'message': 'Invalid mobile number. Please provide a 10-digit number.'
+                })
+            else:
+                flash('Invalid mobile number. Please provide a 10-digit number.', 'error')
+                return redirect('/assign_leads')
+
+        # Check if this is a duplicate with new source from form
+        if is_ajax:
+            is_duplicate_new_source = data.get('is_duplicate_new_source', '').strip() == 'true'
+        else:
+            is_duplicate_new_source = request.form.get('is_duplicate_new_source', '').strip() == 'true'
+        
+        # Check for duplicate by phone number and source-subsource combination
+        existing_leads = supabase.table('lead_master').select('*').eq('customer_mobile_number', mobile_digits).execute()
+        duplicate_leads = supabase.table('duplicate_leads').select('*').eq('customer_mobile_number', mobile_digits).execute()
+        
+        original_lead = None
+        
+        # Only check for duplicates if not already confirmed as duplicate with new source
+        if not is_duplicate_new_source:
+            # Check in lead_master table
+            if existing_leads.data:
+                original_lead = existing_leads.data[0]
+                # Check if this exact source-subsource combination already exists
+                if original_lead.get('source') == source and original_lead.get('sub_source') == subsource:
+                    if is_ajax:
+                        return jsonify({
+                            'success': False,
+                            'message': f'Lead with this phone number and source-subsource combination already exists. UID: {original_lead["uid"]}',
+                            'uid': original_lead["uid"]
+                        })
+                    else:
+                        flash(f'Lead with this phone number and source-subsource combination already exists. UID: {original_lead["uid"]}', 'error')
+                        return redirect('/assign_leads')
+                else:
+                    # Phone exists but with different source/subsource - this is a duplicate with new source
+                    is_duplicate_new_source = True
+            
+            # Check in duplicate_leads table
+            if duplicate_leads.data:
+                duplicate_lead = duplicate_leads.data[0]
+                # Check if this exact source-subsource combination already exists in any slot
+                exact_match = False
+                for i in range(1, 11):
+                    source_field = f'source{i}'
+                    sub_source_field = f'sub_source{i}'
+                    
+                    if (duplicate_lead.get(source_field) == source and 
+                        duplicate_lead.get(sub_source_field) == subsource):
+                        exact_match = True
+                        break
+                
+                if exact_match:
+                    if is_ajax:
+                        return jsonify({
+                            'success': False,
+                            'message': f'Lead with this phone number and source-subsource combination already exists in duplicates. UID: {duplicate_lead["uid"]}',
+                            'uid': duplicate_lead["uid"]
+                        })
+                    else:
+                        flash(f'Lead with this phone number and source-subsource combination already exists in duplicates. UID: {duplicate_lead["uid"]}', 'error')
+                        return redirect('/assign_leads')
+                else:
+                    # Phone exists in duplicates but with different source/subsource
+                    is_duplicate_new_source = True
+        else:
+            # If is_duplicate_new_source is true, we need to get the original lead
+            if existing_leads.data:
+                original_lead = existing_leads.data[0]
+
+        # Generate UID using the correct function based on source
+        # Map source to UID source character
+        source_mapping = {
+            'GOOGLE': 'Google',
+            'META': 'Meta',
+            'BTL': 'BTL',
+            'OEM': 'OEM'
+        }
+        uid_source = source_mapping.get(source, 'Google')
+        
+        sequence = 1
+        uid = generate_uid(uid_source, mobile_digits, sequence)
+        # Ensure UID is unique
+        while supabase.table('lead_master').select('uid').eq('uid', uid).execute().data:
+            sequence += 1
+            uid = generate_uid(uid_source, mobile_digits, sequence)
+
+        # Get assigned CRE ID from form
+        if is_ajax:
+            assigned_cre_id = data.get('assigned_cre')
+        else:
+            assigned_cre_id = request.form.get('assigned_cre')
+        print(f"🔍 Raw assigned_cre_id from form: '{assigned_cre_id}' (type: {type(assigned_cre_id)})")
+        
+        cre_name = None
+        if assigned_cre_id and assigned_cre_id.strip():
+            try:
+                # Convert to integer if it's a string
+                cre_id = int(assigned_cre_id) if isinstance(assigned_cre_id, str) else assigned_cre_id
+                print(f"🔍 Looking up CRE with ID: {cre_id}")
+                
+                cre_data = supabase.table('cre_users').select('name').eq('id', cre_id).execute()
+                if cre_data.data:
+                    cre_name = cre_data.data[0]['name']
+                    print(f"✅ Found CRE: {cre_name} for ID: {cre_id}")
+                else:
+                    print(f"❌ No CRE found for ID: {cre_id}")
+                    print(f"Available CRE IDs: {[cre['id'] for cre in supabase.table('cre_users').select('id,name').execute().data]}")
+            except Exception as e:
+                print(f"❌ Error fetching CRE data: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print("❌ No assigned_cre_id provided in form or it's empty")
+            print(f"All form fields: {dict(request.form)}")
+
+        # Prepare lead data (only required columns)
+        # Set assigned based on whether CRE is assigned
+        assigned_status = "Yes" if cre_name else "No"
+        
+        lead_data = {
+            'uid': uid,
+            'customer_name': customer_name,
+            'customer_mobile_number': mobile_digits,
+            'source': source,
+            'sub_source': subsource,
+            'date': date_now,   
+            'assigned': assigned_status,
+            'final_status': 'Pending',
+            'cre_name': cre_name,
+            'lead_status': 'Pending',
+            'lead_category': None,  # Keep as null for assign leads page
+            'cre_assigned_at': datetime.now().isoformat() if cre_name else None,
+            'ps_assigned_at': None,  # Will be set when PS is assigned
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat(),
+            'ps_assigned_at': None  # Added this line to ensure ps_assigned_at is set
+        }
+        print('=== DEBUG INFO ===')
+        print('Form data:', dict(request.form))
+        print('Assigned CRE ID:', assigned_cre_id)
+        print('CRE name fetched:', cre_name)
+        print('Is duplicate new source:', is_duplicate_new_source)
+        print('Lead data to insert:', lead_data)
+        print('==================')
+
+        # Insert lead based on whether it's a duplicate with new source
+        if is_duplicate_new_source:
+            print("=== DUPLICATE HANDLING ===")
+            print(f"Original lead: {original_lead}")
+            print(f"Duplicate leads: {duplicate_leads.data}")
+            
+            if original_lead:
+                # Create new duplicate record
+                duplicate_data = {
+                    'uid': uid,
+                    'customer_mobile_number': mobile_digits,
+                    'customer_name': customer_name,
+                    'original_lead_id': original_lead['id'],
+                    'source1': original_lead['source'],
+                    'sub_source1': original_lead.get('sub_source'),
+                    'date1': original_lead['date'],
+                    'source2': source,
+                    'sub_source2': subsource,
+                    'date2': date_now,
+                    'duplicate_count': 2,
+                    'created_at': datetime.now().isoformat(),
+                    'updated_at': datetime.now().isoformat()
+                }
+                print(f"Creating duplicate record: {duplicate_data}")
+                result = supabase.table('duplicate_leads').insert(duplicate_data).execute()
+                if result.data:
+                    print("Duplicate record created successfully")
+                    if is_ajax:
+                        return jsonify({'success': True, 'message': 'Lead added to duplicates with new source', 'uid': uid})
+                    else:
+                        flash('Lead added to duplicates with new source', 'success')
+                        return redirect('/assign_leads')
+                else:
+                    print("Failed to create duplicate record")
+                    if is_ajax:
+                        return jsonify({'success': False, 'message': 'Failed to add duplicate lead'})
+                    else:
+                        flash('Failed to add duplicate lead', 'error')
+                        return redirect('/assign_leads')
+            elif duplicate_leads.data:
+                # Add to existing duplicate record
+                duplicate_record = duplicate_leads.data[0]
+                # Find next available slot
+                next_slot = None
+                for i in range(1, 11):
+                    source_field = f'source{i}'
+                    if not duplicate_record.get(source_field):
+                        next_slot = i
+                        break
+                
+                if next_slot:
+                    # Update the existing duplicate record
+                    update_data = {
+                        f'source{next_slot}': source,
+                        f'sub_source{next_slot}': subsource,
+                        f'date{next_slot}': date_now,
+                        'duplicate_count': duplicate_record.get('duplicate_count', 0) + 1,
+                        'updated_at': datetime.now().isoformat()
+                    }
+                    result = supabase.table('duplicate_leads').update(update_data).eq('id', duplicate_record['id']).execute()
+                    if result.data:
+                        if is_ajax:
+                            return jsonify({'success': True, 'message': 'Lead added to existing duplicate record', 'uid': uid})
+                        else:
+                            flash('Lead added to existing duplicate record', 'success')
+                            return redirect('/assign_leads')
+                    else:
+                        if is_ajax:
+                            return jsonify({'success': False, 'message': 'Failed to update duplicate record'})
+                        else:
+                            flash('Failed to update duplicate record', 'error')
+                            return redirect('/assign_leads')
+                else:
+                    if is_ajax:
+                        return jsonify({'success': False, 'message': 'Duplicate record is full (max 10 sources reached)'})
+                    else:
+                        flash('Duplicate record is full (max 10 sources reached)', 'error')
+                        return redirect('/assign_leads')
+            else:
+                # Phone exists in duplicate_leads but not in lead_master - this shouldn't happen
+                if is_ajax:
+                    return jsonify({'success': False, 'message': 'Error: Original lead not found for duplicate creation'})
+                else:
+                    flash('Error: Original lead not found for duplicate creation', 'error')
+                    return redirect('/assign_leads')
+        else:
+            # Insert as new lead
+            print("=== FRESH LEAD INSERTION ===")
+            print(f"Inserting fresh lead: {lead_data}")
+            result = supabase.table('lead_master').insert(lead_data).execute()
+            if result.data:
+                print("Fresh lead inserted successfully")
+                if is_ajax:
+                    return jsonify({'success': True, 'message': 'Lead added successfully', 'uid': uid})
+                else:
+                    flash('Lead added successfully', 'success')
+                    return redirect('/assign_leads')
+            else:
+                print("Failed to insert fresh lead")
+                if is_ajax:
+                    return jsonify({'success': False, 'message': 'Failed to add lead'})
+                else:
+                    flash('Failed to add lead', 'error')
+                    return redirect('/assign_leads')
+
+    except Exception as e:
+        print(f"Error adding lead with CRE: {e}")
+        import traceback
+        traceback.print_exc()
+        if is_ajax:
+            return jsonify({'success': False, 'message': f'Error adding lead: {str(e)}'})
+        else:
+            flash(f'Error adding lead: {str(e)}', 'error')
+            return redirect('/assign_leads')
+
+@app.route('/cre_dashboard')
+@require_cre
+def cre_dashboard():
+    import time
+    from datetime import datetime, date
+    start_time = time.time()
+    cre_name = session.get('cre_name')
+    
+    # Get status parameter for Won/Lost toggle
+    status = request.args.get('status', 'lost')
+    # Get tab and sub_tab parameters for redirection
+    tab = request.args.get('tab', '')
+    sub_tab = request.args.get('sub_tab', '')
+    
+    today = date.today()
+    today_str = today.isoformat()
+
+    # --- AUTO-INCREMENT LOGIC FOR UNATTENDED LEADS (CRE) ---
+    # 1. Regular leads (lead_master)
+    all_leads = safe_get_data('lead_master', {'cre_name': cre_name})
+    for lead in all_leads:
+        follow_up_date = lead.get('follow_up_date')
+        final_status = lead.get('final_status')
+        if follow_up_date and str(follow_up_date) < today_str and final_status not in ['Won', 'Lost']:
+            supabase.table('lead_master').update({'follow_up_date': today_str}).eq('uid', lead.get('uid')).execute()
+
+
+
+    # 3. Event leads (activity_leads)
+    event_event_leads = safe_get_data('activity_leads', {'cre_assigned': cre_name})
+    for lead in event_event_leads:
+        cre_followup_date = lead.get('cre_followup_date')
+        final_status = lead.get('final_status')
+        if cre_followup_date and str(cre_followup_date)[:10] < today_str and final_status not in ['Won', 'Lost']:
+            supabase.table('activity_leads').update({'cre_followup_date': today_str}).eq('activity_uid', lead.get('activity_uid')).execute()
+
+    # --- Date Filter Logic ---
+    filter_type = request.args.get('filter_type', 'all')
+    start_date_str = request.args.get('start_date')
+    end_date_str = request.args.get('end_date')
+
+    all_leads = safe_get_data('lead_master', {'cre_name': cre_name})
+    
+    # Apply date filtering using the 'date' column
+    if filter_type == 'today':
+        today_str = date.today().isoformat()
+        all_leads = [lead for lead in all_leads if lead.get('date') == today_str]
+    elif filter_type == 'range' and start_date_str and end_date_str:
+        # Filter leads where lead['date'] falls within the range
+        all_leads = [
+            lead for lead in all_leads 
+            if lead.get('date') and start_date_str <= lead['date'] <= end_date_str
+        ]
+    # For 'all' filter type, we keep all leads without date filtering
+
+    print(f"Date filter applied - Type: {filter_type}, Leads count: {len(all_leads)}")
+    if filter_type == 'range':
+        print(f"Date range: {start_date_str} to {end_date_str}")
+
+    # Fetch event leads assigned to this CRE
+    event_event_leads = safe_get_data('activity_leads', {'cre_assigned': cre_name})
+
+    print("Fetched leads for CRE:", cre_name, "Count:", len(all_leads))
+    print("Status parameter from URL:", status)
+
+    # Initialize buckets for leads for mutual exclusivity
+    untouched_leads = []
+    called_leads = []
+    follow_up_leads = []  # New list for "Call me Back" leads
+    attended_leads = []
+    assigned_to_ps = []
+    won_leads = []
+    lost_leads = []
+    
+    # Get current month for filtering
+    current_month = datetime.now().strftime('%Y-%m')
+    print(f"DEBUG: Filtering for current month: {current_month}")
+
+    non_contact_statuses = ['RNR', 'Busy on another Call', 'Call me Back', 'Call Disconnected', 'Call not Connected']
+
+    for lead in all_leads:
+        lead_status = (lead.get('lead_status') or '').strip()
+        final_status = lead.get('final_status')
+        has_first_call = lead.get('first_call_date') is not None
+
+        if final_status == 'Won':
+            # Only count leads won in current month
+            if lead.get('won_timestamp'):
+                won_month = str(lead.get('won_timestamp'))[:7]  # Get YYYY-MM part
+                if won_month == current_month:
+                    won_leads.append(lead)
+                    print(f"DEBUG: Added to won leads - UID: {lead.get('uid')}, Won: {lead.get('won_timestamp')}")
+            continue
+        if final_status == 'Lost':
+            # Only count leads lost in current month
+            if lead.get('lost_timestamp'):
+                lost_month = str(lead.get('lost_timestamp'))[:7]  # Get YYYY-MM part
+                if lost_month == current_month:
+                    lost_leads.append(lead)
+                    print(f"DEBUG: Added to lost leads - UID: {lead.get('uid')}, Lost: {lead.get('lost_timestamp')}")
+            continue
+
+        # PS Assigned: any lead with a PS assigned in current month
+        if lead.get('ps_name') and lead.get('ps_assigned_at'):
+            ps_assigned_month = str(lead.get('ps_assigned_at'))[:7]  # Get YYYY-MM part
+            if ps_assigned_month == current_month:
+                assigned_to_ps.append(lead)
+                print(f"DEBUG: Added to PS assigned - UID: {lead.get('uid')}, PS: {lead.get('ps_name')}, Assigned: {lead.get('ps_assigned_at')}")
+
+        # Pending Leads: final_status == 'Pending' AND has first_call_date
+        if final_status == 'Pending' and has_first_call:
+            attended_leads.append(lead)
+
+        # Untouched Leads (Fresh leads that are still pending)
+        if not has_first_call and lead_status == 'Pending':
+            untouched_leads.append(lead)
+            continue
+
+        # Called Fresh Leads: Non-contact status on FIRST update only
+        if lead_status in non_contact_statuses and not has_first_call:
+            # Separate "Call me Back" leads into follow_up_leads
+            if lead_status == 'Call me Back':
+                follow_up_leads.append(lead)
+            else:
+                called_leads.append(lead)
+            continue
+
+    print(f"Won leads count (current month): {len(won_leads)}")
+    print(f"Lost leads count (current month): {len(lost_leads)}")
+    print(f"PS assigned count (current month): {len(assigned_to_ps)}")
+    
+    untouched_count = len(untouched_leads)
+    called_count = len(called_leads)
+    follow_up_count = len(follow_up_leads)
+    total_fresh_leads = untouched_count + called_count + follow_up_count
+
+    fresh_leads_sorted = sorted(
+        untouched_leads + called_leads + follow_up_leads,
+        key=lambda l: l.get('date') or '',  # Sort by 'date' column
+        reverse=True
+    )
+
+    # Get today's followups
+    today = date.today()
+    today_str = today.isoformat()
+    todays_followups = [
+        lead for lead in all_leads
+        if (lead.get('follow_up_date') and str(lead.get('follow_up_date')).startswith(today_str)
+        and lead.get('final_status') not in ['Won', 'Lost'])
+    ]
+    
+    # Get leads sent to CRE for verification from PS (from ps_followup_master)
+    ps_verification_leads = []
+    try:
+        ps_verification_result = supabase.table('ps_followup_master').select('*').eq('final_status', 'Sent to CRE').execute()
+        if ps_verification_result.data:
+            for ps_lead in ps_verification_result.data:
+                # Get the corresponding lead from lead_master for display
+                lead_result = supabase.table('lead_master').select('*').eq('uid', ps_lead.get('lead_uid')).execute()
+                if lead_result.data:
+                    lead_data = lead_result.data[0]
+                    # Add PS information to the lead data
+                    lead_data['ps_name'] = ps_lead.get('ps_name')
+                    lead_data['ps_branch'] = ps_lead.get('ps_branch')
+                    # Note: sent_to_cre_at column doesn't exist, using updated_at instead
+                    lead_data['sent_to_cre_at'] = ps_lead.get('updated_at')
+                    lead_data['ps_lead_status'] = ps_lead.get('lead_status')
+                    ps_verification_leads.append(lead_data)
+    except Exception as e:
+        print(f"Error fetching PS verification leads: {e}")
+        ps_verification_leads = []
+
+    # Add event leads with today's cre_followup_date to the follow-up list
+    event_leads_today = []
+    for lead in event_event_leads:
+        cre_followup_date = lead.get('cre_followup_date')
+        if cre_followup_date and str(cre_followup_date)[:10] == today_str:
+            event_lead_row = {
+                'is_event_lead': True,
+                'activity_uid': lead.get('activity_uid'),
+                'customer_name': lead.get('customer_name'),
+                'customer_phone_number': lead.get('customer_phone_number'),
+                'lead_status': lead.get('lead_status'),
+                'location': lead.get('location'),
+                'activity_name': lead.get('activity_name'),
+            }
+            event_leads_today.append(event_lead_row)
+    
+    todays_followups.extend(event_leads_today)
+
+    print(f"[PERF] cre_dashboard TOTAL took {time.time() - start_time:.3f} seconds")
+    print(f"=== DASHBOARD SUMMARY ===")
+    print(f"Current Month Filter: {current_month}")
+    print(f"Fresh Leads: {total_fresh_leads} (Untouched: {untouched_count}, Called: {called_count}, Follow-up: {follow_up_count})")
+    print(f"Today's Follow-ups: {len(todays_followups)}")
+    print(f"Pending Leads: {len(attended_leads)}")
+    print(f"PS Assigned (Current Month): {len(assigned_to_ps)}")
+    print(f"Won Leads (Current Month): {len(won_leads)}")
+    print(f"Lost Leads (Current Month): {len(lost_leads)}")
+    print(f"========================")
+    
+    return render_template(
+        'cre_dashboard.html',
+        untouched_count=untouched_count,
+        called_count=called_count,
+        follow_up_count=follow_up_count,
+        total_fresh_leads=total_fresh_leads,
+        fresh_leads_sorted=fresh_leads_sorted,
+        untouched_leads=untouched_leads,
+        called_leads=called_leads,
+        follow_up_leads=follow_up_leads,
+        pending_leads=attended_leads,
+        todays_followups=todays_followups,
+        attended_leads=attended_leads,
+        assigned_to_ps=assigned_to_ps,
+        won_leads=won_leads,
+        lost_leads=lost_leads,
+        ps_verification_leads=ps_verification_leads,
+        event_event_leads=event_event_leads,
+        filter_type=filter_type,  # Pass filter type to template
+        start_date=start_date_str,  # Pass start date to template
+        end_date=end_date_str,  # Pass end date to template
+        status=status,  # Pass status parameter to template
+        return_tab=tab,  # Pass tab parameter to template
+        return_sub_tab=sub_tab  # Pass sub_tab parameter to template
+    )
+
+@app.route('/update_lead/<uid>', methods=['GET', 'POST'])
 @require_cre
 def update_lead(uid):
     # Get return_tab parameter for redirection
@@ -12907,6 +16580,80 @@ def api_auto_assign_status():
         
     except Exception as e:
         print(f"❌ ERROR getting auto-assign status: {e}")
+        print(f"   🚨 Exception type: {type(e).__name__}")
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/api/force_start_auto_assign', methods=['POST'])
+def force_start_auto_assign():
+    """Force start the auto-assign system"""
+    try:
+        print("🚀 ========================================")
+        print("🚀 FORCE STARTING AUTO-ASSIGN SYSTEM")
+        print("🚀 ========================================")
+        
+        if not auto_assign_system:
+            print("❌ Auto-assign system not available")
+            return jsonify({'success': False, 'message': 'Auto-assign system not available'})
+        
+        print(f"🔄 Force starting auto-assign system...")
+        result = auto_assign_system.force_start_system()
+        
+        if result:
+            print(f"✅ Auto-assign system force started successfully")
+            print(f"🚀 ========================================")
+            return jsonify({
+                'success': True, 
+                'message': 'Auto-assign system force started successfully',
+                'timestamp': get_ist_timestamp()
+            })
+        else:
+            print(f"❌ Failed to force start auto-assign system")
+            print(f"🚀 ========================================")
+            return jsonify({
+                'success': False, 
+                'message': 'Failed to force start auto-assign system',
+                'timestamp': get_ist_timestamp()
+            })
+        
+    except Exception as e:
+        print(f"❌ ERROR force starting auto-assign system: {e}")
+        print(f"   🚨 Exception type: {type(e).__name__}")
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/api/check_health_auto_assign', methods=['POST'])
+def check_health_auto_assign():
+    """Check auto-assign system health and restart if needed"""
+    try:
+        print("🏥 ========================================")
+        print("🏥 CHECKING AUTO-ASSIGN SYSTEM HEALTH")
+        print("🏥 ========================================")
+        
+        if not auto_assign_system:
+            print("❌ Auto-assign system not available")
+            return jsonify({'success': False, 'message': 'Auto-assign system not available'})
+        
+        print(f"🔄 Checking system health and restarting if needed...")
+        result = auto_assign_system.check_system_health_and_restart()
+        
+        if result:
+            print(f"✅ Auto-assign system health check completed successfully")
+            print(f"🏥 ========================================")
+            return jsonify({
+                'success': True, 
+                'message': 'System health check completed successfully',
+                'timestamp': get_ist_timestamp()
+            })
+        else:
+            print(f"❌ Auto-assign system health check failed")
+            print(f"🏥 ========================================")
+            return jsonify({
+                'success': False, 
+                'message': 'System health check failed',
+                'timestamp': get_ist_timestamp()
+            })
+        
+    except Exception as e:
+        print(f"❌ ERROR checking auto-assign system health: {e}")
         print(f"   🚨 Exception type: {type(e).__name__}")
         return jsonify({'success': False, 'message': str(e)})
 

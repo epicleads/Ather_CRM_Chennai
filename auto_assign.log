@@ -2,3 +2,281 @@
 2025-08-16 17:23:43,625 - auto_assign_module - INFO - ✅ Thread created successfully: thread_0_TestThread
 2025-08-16 17:23:44,627 - auto_assign_module - INFO - ✅ Thread thread_0_TestThread completed successfully
 2025-08-16 17:23:45,631 - auto_assign_module - INFO - 🧹 Cleaned up thread: thread_0_TestThread
+2025-08-16 18:06:08,362 - auto_assign_module - INFO - 🚀 Auto-Assign System initialized
+2025-08-16 18:06:08,363 - auto_assign_module - INFO - 🔍 Debug mode enabled
+2025-08-16 18:06:08,363 - auto_assign_module - INFO - 📝 Verbose logging enabled
+2025-08-16 18:06:08,364 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.364293] 🚀 Auto-start enabled - starting system automatically
+2025-08-16 18:06:08,364 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.364293] 🚀 ========================================
+2025-08-16 18:06:08,364 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.364293] 🚀 AUTO-STARTING AUTO-ASSIGN SYSTEM
+2025-08-16 18:06:08,364 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.364293] 🚀 ========================================
+2025-08-16 18:06:08,364 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.364293]    ⏰ Start Time: 2025-08-16T23:36:08.364293
+2025-08-16 18:06:08,365 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.365572]    🎯 Mode: Automatic startup
+2025-08-16 18:06:08,365 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.365572]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:08,365 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.365572] 🚀 ========================================
+2025-08-16 18:06:08,365 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.365572] 🚀 STARTING ROBUST AUTO-ASSIGN SYSTEM
+2025-08-16 18:06:08,365 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.365572] 🚀 ========================================
+2025-08-16 18:06:08,365 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.365572]    ⏰ Start Time: 2025-08-16T23:36:08.365572
+2025-08-16 18:06:08,365 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.365572]    🎯 Mode: Manual startup
+2025-08-16 18:06:08,366 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.366622]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:08,366 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.366622] 🚀 Starting robust auto-assign system...
+2025-08-16 18:06:08,366 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.366622]    🛠️ Development mode - using regular threads
+2025-08-16 18:06:08,366 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.366622]    📋 Will check for new leads every 5 minutes
+2025-08-16 18:06:08,366 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.366622]    🚀 Reference: Uday Branch Development Logic
+2025-08-16 18:06:08,366 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.366622]    ⚡ First auto-assign check starting now...
+2025-08-16 18:06:08,367 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.367683] 🚀 ========================================
+2025-08-16 18:06:08,367 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.367683] 🚀 ROBUST AUTO-ASSIGN WORKER STARTED
+2025-08-16 18:06:08,368 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.368688] 🚀 ========================================
+2025-08-16 18:06:08,368 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.368688]    ⏰ Start Time: 2025-08-16T23:36:08.368688
+2025-08-16 18:06:08,368 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.368688]    🎯 Mode: Background worker
+2025-08-16 18:06:08,368 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.368688]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:08,368 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.368688] 🚀 Starting immediate auto-assign check...
+2025-08-16 18:06:08,368 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.368688]    🔄 Status: Executing immediate check
+2025-08-16 18:06:08,369 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.369746] 🔄 ========================================
+2025-08-16 18:06:08,369 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.369746] 🔄 COMPREHENSIVE LEAD ASSIGNMENT CHECK
+2025-08-16 18:06:08,369 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.369746] 🔄 ========================================
+2025-08-16 18:06:08,369 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.369746]    ⏰ Start Time: 2025-08-16T23:36:08.369746
+2025-08-16 18:06:08,369 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.369746]    🎯 Scope: All configured sources
+2025-08-16 18:06:08,369 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.369746]    🔄 Process: Multi-source auto-assignment
+2025-08-16 18:06:08,369 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.369746]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:08,371 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:08.371152] 🔧 Fetching auto-assign configurations...
+2025-08-16 18:06:08,371 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.371152] 📋 Found 0 sources with auto-assign configs
+2025-08-16 18:06:08,371 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:08.371152]    🎯 Sources: []
+2025-08-16 18:06:08,371 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:08.371152]    🔧 Status: Configurations loaded successfully
+2025-08-16 18:06:08,371 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.371152] 🔄 Starting multi-source assignment process...
+2025-08-16 18:06:08,371 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:08.371152]    ==================================================
+2025-08-16 18:06:08,372 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.372190]    🚀 Reference: Uday Branch Multi-Source Logic
+2025-08-16 18:06:08,372 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.372190] 🔄 ========================================
+2025-08-16 18:06:08,372 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.372190] 🔄 MULTI-SOURCE ASSIGNMENT SUMMARY
+2025-08-16 18:06:08,372 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.372190] 🔄 ========================================
+2025-08-16 18:06:08,372 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.372190]    🎯 Total sources processed: 0
+2025-08-16 18:06:08,373 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:08.372190]    ✅ Total leads assigned: 0
+2025-08-16 18:06:08,373 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.373200]    📊 Sources with issues: 0
+2025-08-16 18:06:08,373 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.373200]    ⏰ Completion Time: 2025-08-16T23:36:08.373200
+2025-08-16 18:06:08,373 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.373200]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:08,373 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.373200]    ℹ️ Status: No leads assigned across sources
+2025-08-16 18:06:08,373 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.373200]    🔍 Action: Check source configurations
+2025-08-16 18:06:08,374 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.374199] 🔄 ========================================
+2025-08-16 18:06:08,374 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:08.374199] ✅ Immediate auto-assign completed successfully
+2025-08-16 18:06:08,374 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.374199] ℹ️ No new leads found for immediate assignment
+2025-08-16 18:06:08,374 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.374199]    🔍 Status: All leads already assigned
+2025-08-16 18:06:08,374 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:08.374199]    ================================================================================
+2025-08-16 18:06:08,374 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.374199]    🚀 Background process starting...
+2025-08-16 18:06:08,375 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.375201] 🛠️ Development mode - checking every 300 seconds
+2025-08-16 18:06:08,375 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.375201]    🚀 Reference: Uday Branch Development Logic
+2025-08-16 18:06:08,375 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:08.375201] ⏳ Waiting 300 seconds for next check...
+2025-08-16 18:06:08,868 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:08.868546] ✅ Robust auto-assign system started successfully
+2025-08-16 18:06:08,868 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:08.868819]    🧵 Thread ID: 67480
+2025-08-16 18:06:08,868 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.868819]    🏭 Production Mode: False
+2025-08-16 18:06:08,868 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.868819]    🕒 Started At: 2025-08-16T23:36:08.868546
+2025-08-16 18:06:08,868 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:08.868819]    🎯 Status: System running
+2025-08-16 18:06:08,869 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:08.869436]    🚀 Reference: Uday Branch Success Logic
+2025-08-16 18:06:08,869 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:08.869436] ✅ Auto-start completed successfully
+2025-08-16 18:06:08,869 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:08.869436]    🧵 Thread started
+2025-08-16 18:06:08,869 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:08.869436]    🎯 Status: System running
+2025-08-16 18:06:08,869 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.869436] 🔍 Debug mode enabled
+2025-08-16 18:06:08,869 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.869436]    📝 Enhanced logging active
+2025-08-16 18:06:08,870 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.870662]    🚀 Uday branch features active
+2025-08-16 18:06:08,870 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.870662]    📊 Detailed performance monitoring
+2025-08-16 18:06:08,870 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:08.870662] 📊 System status retrieved successfully
+2025-08-16 18:06:08,871 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.871814] 🚀 ========================================
+2025-08-16 18:06:08,871 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.871814] 🚀 FORCE STARTING AUTO-ASSIGN SYSTEM
+2025-08-16 18:06:08,871 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:08.871814] 🚀 ========================================
+2025-08-16 18:06:08,871 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.871814]    ⏰ Start Time: 2025-08-16T23:36:08.871814
+2025-08-16 18:06:08,871 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.871814]    🎯 Mode: Force start
+2025-08-16 18:06:08,871 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:08.871814]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:08,872 - auto_assign_module - WARNING - ⚠️ [2025-08-16T23:36:08.872823] 🛑 Force stopping existing system...
+2025-08-16 18:06:11,873 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:11.873542] 🚀 ========================================
+2025-08-16 18:06:11,873 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:11.873542] 🚀 STARTING ROBUST AUTO-ASSIGN SYSTEM
+2025-08-16 18:06:11,873 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:11.873542] 🚀 ========================================
+2025-08-16 18:06:11,873 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:11.873542]    ⏰ Start Time: 2025-08-16T23:36:11.873542
+2025-08-16 18:06:11,873 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:11.873542]    🎯 Mode: Manual startup
+2025-08-16 18:06:11,874 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:11.874549]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:11,874 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:11.874549] 🛑 Stopping existing auto-assign system...
+2025-08-16 18:06:13,875 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:13.875212] ✅ Existing system stopped
+2025-08-16 18:06:13,875 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:13.875212] 🚀 Starting robust auto-assign system...
+2025-08-16 18:06:13,875 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.875212]    🛠️ Development mode - using regular threads
+2025-08-16 18:06:13,876 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.876223]    📋 Will check for new leads every 5 minutes
+2025-08-16 18:06:13,876 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.876223]    🚀 Reference: Uday Branch Development Logic
+2025-08-16 18:06:13,876 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.876223]    ⚡ First auto-assign check starting now...
+2025-08-16 18:06:13,876 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:13.876223] 🚀 ========================================
+2025-08-16 18:06:13,876 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:13.876223] 🚀 ROBUST AUTO-ASSIGN WORKER STARTED
+2025-08-16 18:06:13,877 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:13.877222] 🚀 ========================================
+2025-08-16 18:06:13,877 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.877222]    ⏰ Start Time: 2025-08-16T23:36:13.877222
+2025-08-16 18:06:13,877 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.877222]    🎯 Mode: Background worker
+2025-08-16 18:06:13,877 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.877222]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:13,877 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:13.877222] 🚀 Starting immediate auto-assign check...
+2025-08-16 18:06:13,877 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.877222]    🔄 Status: Executing immediate check
+2025-08-16 18:06:13,878 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:13.878225] 🔄 ========================================
+2025-08-16 18:06:13,878 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:13.878225] 🔄 COMPREHENSIVE LEAD ASSIGNMENT CHECK
+2025-08-16 18:06:13,878 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:13.878225] 🔄 ========================================
+2025-08-16 18:06:13,878 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.878225]    ⏰ Start Time: 2025-08-16T23:36:13.878225
+2025-08-16 18:06:13,878 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.878225]    🎯 Scope: All configured sources
+2025-08-16 18:06:13,879 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.878225]    🔄 Process: Multi-source auto-assignment
+2025-08-16 18:06:13,879 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.879225]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:13,879 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:13.879225] 🔧 Fetching auto-assign configurations...
+2025-08-16 18:06:13,879 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.879225] 📋 Found 0 sources with auto-assign configs
+2025-08-16 18:06:13,879 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:13.879225]    🎯 Sources: []
+2025-08-16 18:06:13,879 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:13.879225]    🔧 Status: Configurations loaded successfully
+2025-08-16 18:06:13,880 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.880221] 🔄 Starting multi-source assignment process...
+2025-08-16 18:06:13,880 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:13.880221]    ==================================================
+2025-08-16 18:06:13,880 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.880221]    🚀 Reference: Uday Branch Multi-Source Logic
+2025-08-16 18:06:13,880 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:13.880221] 🔄 ========================================
+2025-08-16 18:06:13,880 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:13.880221] 🔄 MULTI-SOURCE ASSIGNMENT SUMMARY
+2025-08-16 18:06:13,881 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:13.881228] 🔄 ========================================
+2025-08-16 18:06:13,881 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.881228]    🎯 Total sources processed: 0
+2025-08-16 18:06:13,881 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:13.881228]    ✅ Total leads assigned: 0
+2025-08-16 18:06:13,881 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.881228]    📊 Sources with issues: 0
+2025-08-16 18:06:13,882 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.882224]    ⏰ Completion Time: 2025-08-16T23:36:13.882224
+2025-08-16 18:06:13,882 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.882224]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:13,882 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.882224]    ℹ️ Status: No leads assigned across sources
+2025-08-16 18:06:13,882 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.882224]    🔍 Action: Check source configurations
+2025-08-16 18:06:13,882 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:13.882224] 🔄 ========================================
+2025-08-16 18:06:13,882 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:13.882224] ✅ Immediate auto-assign completed successfully
+2025-08-16 18:06:13,883 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.883384] ℹ️ No new leads found for immediate assignment
+2025-08-16 18:06:13,883 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.883384]    🔍 Status: All leads already assigned
+2025-08-16 18:06:13,883 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:13.883384]    ================================================================================
+2025-08-16 18:06:13,883 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.883384]    🚀 Background process starting...
+2025-08-16 18:06:13,883 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.883384] 🛠️ Development mode - checking every 300 seconds
+2025-08-16 18:06:13,883 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:13.883384]    🚀 Reference: Uday Branch Development Logic
+2025-08-16 18:06:13,883 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:13.883384] ⏳ Waiting 300 seconds for next check...
+2025-08-16 18:06:14,377 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.377521] ✅ Robust auto-assign system started successfully
+2025-08-16 18:06:14,377 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.377521]    🧵 Thread ID: 33180
+2025-08-16 18:06:14,377 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.377521]    🏭 Production Mode: False
+2025-08-16 18:06:14,377 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.377521]    🕒 Started At: 2025-08-16T23:36:14.377521
+2025-08-16 18:06:14,377 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.377521]    🎯 Status: System running
+2025-08-16 18:06:14,377 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.377521]    🚀 Reference: Uday Branch Success Logic
+2025-08-16 18:06:14,377 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.377521] ✅ Force start completed successfully
+2025-08-16 18:06:14,379 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.379024]    🧵 Thread started
+2025-08-16 18:06:14,379 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.379024]    🎯 Status: System running
+2025-08-16 18:06:14,379 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.379024] 🏥 ========================================
+2025-08-16 18:06:14,379 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.379024] 🏥 SYSTEM HEALTH CHECK AND RESTART
+2025-08-16 18:06:14,379 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.379024] 🏥 ========================================
+2025-08-16 18:06:14,379 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.379024]    ⏰ Check Time: 2025-08-16T23:36:14.379024
+2025-08-16 18:06:14,379 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.379024]    🎯 Mode: Health check with auto-restart
+2025-08-16 18:06:14,380 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:14.380327] 📊 System status retrieved successfully
+2025-08-16 18:06:14,380 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.380327]    📊 Current Status:
+2025-08-16 18:06:14,380 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.380327]       🟢 Running: True
+2025-08-16 18:06:14,380 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.380327]       🧵 Thread Alive: True
+2025-08-16 18:06:14,380 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.380327]       📊 Total Runs: 0
+2025-08-16 18:06:14,381 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.381335]    ✅ System healthy - no restart needed
+2025-08-16 18:06:14,381 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:14.381335] 📊 System status retrieved successfully
+2025-08-16 18:06:14,381 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:14.381335] 📊 System status retrieved successfully
+2025-08-16 18:06:14,391 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:14.391591] 🏥 System health check completed. Score: 100/100
+2025-08-16 18:06:14,391 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:14.391591] 📊 Detailed status retrieved successfully
+2025-08-16 18:06:14,392 - auto_assign_module - INFO - 🚀 Auto-Assign System initialized
+2025-08-16 18:06:14,392 - auto_assign_module - INFO - 🔍 Debug mode enabled
+2025-08-16 18:06:14,392 - auto_assign_module - INFO - 📝 Verbose logging enabled
+2025-08-16 18:06:14,392 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.392596] 🚀 Auto-start enabled - starting system automatically
+2025-08-16 18:06:14,393 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.393600] 🚀 ========================================
+2025-08-16 18:06:14,393 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.393600] 🚀 AUTO-STARTING AUTO-ASSIGN SYSTEM
+2025-08-16 18:06:14,393 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.393600] 🚀 ========================================
+2025-08-16 18:06:14,393 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.393600]    ⏰ Start Time: 2025-08-16T23:36:14.393600
+2025-08-16 18:06:14,393 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.393600]    🎯 Mode: Automatic startup
+2025-08-16 18:06:14,394 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.394603]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:14,394 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.394603] 🚀 ========================================
+2025-08-16 18:06:14,394 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.394603] 🚀 STARTING ROBUST AUTO-ASSIGN SYSTEM
+2025-08-16 18:06:14,394 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.394603] 🚀 ========================================
+2025-08-16 18:06:14,395 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.395598]    ⏰ Start Time: 2025-08-16T23:36:14.395598
+2025-08-16 18:06:14,395 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.395598]    🎯 Mode: Manual startup
+2025-08-16 18:06:14,395 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.395598]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:14,395 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.395598] 🚀 Starting robust auto-assign system...
+2025-08-16 18:06:14,395 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.395598]    🛠️ Development mode - using regular threads
+2025-08-16 18:06:14,395 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.395598]    📋 Will check for new leads every 5 minutes
+2025-08-16 18:06:14,396 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.396827]    🚀 Reference: Uday Branch Development Logic
+2025-08-16 18:06:14,396 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.396827]    ⚡ First auto-assign check starting now...
+2025-08-16 18:06:14,396 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.396827] 🚀 ========================================
+2025-08-16 18:06:14,396 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.396827] 🚀 ROBUST AUTO-ASSIGN WORKER STARTED
+2025-08-16 18:06:14,396 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.396827] 🚀 ========================================
+2025-08-16 18:06:14,396 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.396827]    ⏰ Start Time: 2025-08-16T23:36:14.396827
+2025-08-16 18:06:14,397 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.397992]    🎯 Mode: Background worker
+2025-08-16 18:06:14,397 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.397992]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:14,397 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.397992] 🚀 Starting immediate auto-assign check...
+2025-08-16 18:06:14,397 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.397992]    🔄 Status: Executing immediate check
+2025-08-16 18:06:14,397 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.397992] 🔄 ========================================
+2025-08-16 18:06:14,397 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.397992] 🔄 COMPREHENSIVE LEAD ASSIGNMENT CHECK
+2025-08-16 18:06:14,397 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.397992] 🔄 ========================================
+2025-08-16 18:06:14,399 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.399369]    ⏰ Start Time: 2025-08-16T23:36:14.399369
+2025-08-16 18:06:14,399 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.399369]    🎯 Scope: All configured sources
+2025-08-16 18:06:14,399 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.399369]    🔄 Process: Multi-source auto-assignment
+2025-08-16 18:06:14,399 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.399369]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:14,399 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:14.399369] 🔧 Fetching auto-assign configurations...
+2025-08-16 18:06:14,399 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.399369] 📋 Found 0 sources with auto-assign configs
+2025-08-16 18:06:14,400 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:14.399369]    🎯 Sources: []
+2025-08-16 18:06:14,400 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.400377]    🔧 Status: Configurations loaded successfully
+2025-08-16 18:06:14,400 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.400377] 🔄 Starting multi-source assignment process...
+2025-08-16 18:06:14,400 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:14.400377]    ==================================================
+2025-08-16 18:06:14,400 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.400377]    🚀 Reference: Uday Branch Multi-Source Logic
+2025-08-16 18:06:14,400 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.400377] 🔄 ========================================
+2025-08-16 18:06:14,401 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.400377] 🔄 MULTI-SOURCE ASSIGNMENT SUMMARY
+2025-08-16 18:06:14,401 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.401450] 🔄 ========================================
+2025-08-16 18:06:14,401 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.401450]    🎯 Total sources processed: 0
+2025-08-16 18:06:14,401 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.401450]    ✅ Total leads assigned: 0
+2025-08-16 18:06:14,401 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.401450]    📊 Sources with issues: 0
+2025-08-16 18:06:14,402 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.402459]    ⏰ Completion Time: 2025-08-16T23:36:14.401450
+2025-08-16 18:06:14,402 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.402459]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:14,402 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.402459]    ℹ️ Status: No leads assigned across sources
+2025-08-16 18:06:14,402 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.402459]    🔍 Action: Check source configurations
+2025-08-16 18:06:14,402 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.402459] 🔄 ========================================
+2025-08-16 18:06:14,402 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.402459] ✅ Immediate auto-assign completed successfully
+2025-08-16 18:06:14,402 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.402459] ℹ️ No new leads found for immediate assignment
+2025-08-16 18:06:14,403 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.403713]    🔍 Status: All leads already assigned
+2025-08-16 18:06:14,403 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:14.403713]    ================================================================================
+2025-08-16 18:06:14,403 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.403713]    🚀 Background process starting...
+2025-08-16 18:06:14,403 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.403713] 🛠️ Development mode - checking every 300 seconds
+2025-08-16 18:06:14,403 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.403713]    🚀 Reference: Uday Branch Development Logic
+2025-08-16 18:06:14,403 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:14.403713] ⏳ Waiting 300 seconds for next check...
+2025-08-16 18:06:14,897 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.897695] ✅ Robust auto-assign system started successfully
+2025-08-16 18:06:14,897 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.897695]    🧵 Thread ID: 68716
+2025-08-16 18:06:14,898 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.898203]    🏭 Production Mode: False
+2025-08-16 18:06:14,898 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.898203]    🕒 Started At: 2025-08-16T23:36:14.897695
+2025-08-16 18:06:14,898 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.898203]    🎯 Status: System running
+2025-08-16 18:06:14,898 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.898203]    🚀 Reference: Uday Branch Success Logic
+2025-08-16 18:06:14,899 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.899211] ✅ Auto-start completed successfully
+2025-08-16 18:06:14,899 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.899211]    🧵 Thread started
+2025-08-16 18:06:14,899 - auto_assign_module - INFO - ✅ [2025-08-16T23:36:14.899211]    🎯 Status: System running
+2025-08-16 18:06:14,899 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.899211] 🎯 ========================================
+2025-08-16 18:06:14,899 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.899211] 🎯 MANUAL TRIGGER AUTO-ASSIGN
+2025-08-16 18:06:14,900 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.900211] 🎯 ========================================
+2025-08-16 18:06:14,900 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.900211]    🚀 Trigger Type: Manual (User-Initiated)
+2025-08-16 18:06:14,900 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.900211]    ⏰ Trigger Time: 2025-08-16T23:36:14.900211
+2025-08-16 18:06:14,900 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.900211]    👤 Triggered By: User/Admin
+2025-08-16 18:06:14,900 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.900211]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:14,901 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.901346] 🛠️ Development mode - using standard trigger
+2025-08-16 18:06:14,901 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.901346]    🎯 Mode: Full debugging enabled
+2025-08-16 18:06:14,901 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.901346]    🔧 Thread Management: Standard threads
+2025-08-16 18:06:14,901 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.901346]    🚀 Reference: Uday Branch Development Logic
+2025-08-16 18:06:14,901 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.901346] 📚 ========================================
+2025-08-16 18:06:14,901 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.901346] 📚 TRIGGER REFERENCE FROM UDAY BRANCH
+2025-08-16 18:06:14,902 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.902618] 📚 ========================================
+2025-08-16 18:06:14,902 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.902618]    🔄 Enhanced trigger with production optimization
+2025-08-16 18:06:14,902 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.902618]    🎯 Fair distribution algorithm
+2025-08-16 18:06:14,902 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.902618]    📊 Comprehensive history tracking
+2025-08-16 18:06:14,902 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.902618]    🔍 Real-time verification
+2025-08-16 18:06:14,903 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.902618]    📝 Detailed audit logging
+2025-08-16 18:06:14,903 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.903636]    🚀 Enhanced debug prints and stickers
+2025-08-16 18:06:14,903 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.903636]    📈 Performance monitoring
+2025-08-16 18:06:14,903 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.903636] 📚 ========================================
+2025-08-16 18:06:14,903 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.903636] 📍 Manual trigger requested for source: TEST_SOURCE
+2025-08-16 18:06:14,903 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.903636]    🎯 Target: Single source optimization
+2025-08-16 18:06:14,903 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.903636]    🔍 Scope: TEST_SOURCE leads only
+2025-08-16 18:06:14,904 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.904636]    🔄 Status: Executing single source trigger
+2025-08-16 18:06:14,904 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.904636] 🤖 ========================================
+2025-08-16 18:06:14,904 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.904636] 🤖 AUTO-ASSIGN FOR SOURCE: TEST_SOURCE
+2025-08-16 18:06:14,904 - auto_assign_module - INFO - 🤖 [2025-08-16T23:36:14.904636] 🤖 ========================================
+2025-08-16 18:06:14,904 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.904636]    ⏰ Start Time: 2025-08-16T23:36:14.904636
+2025-08-16 18:06:14,904 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.904636]    🎯 Source: TEST_SOURCE
+2025-08-16 18:06:14,905 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.905636]    🔄 Process: Fair Distribution (Round-Robin)
+2025-08-16 18:06:14,905 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.905636]    🚀 Reference: Uday Branch Enhanced Logic
+2025-08-16 18:06:14,905 - auto_assign_module - INFO - 🔍 [2025-08-16T23:36:14.905636] 🔧 Fetching auto-assign configuration for TEST_SOURCE...
+2025-08-16 18:06:14,905 - auto_assign_module - INFO - ℹ️ [2025-08-16T23:36:14.905636] ℹ️ No auto-assign configuration found for TEST_SOURCE
+2025-08-16 18:06:14,905 - auto_assign_module - WARNING - ⚠️ [2025-08-16T23:36:14.905636]    🚫 Status: Configuration Required
+2025-08-16 18:06:14,905 - auto_assign_module - WARNING - ⚠️ [2025-08-16T23:36:14.905636]    🔧 Action: Please configure auto-assign for TEST_SOURCE
+2025-08-16 18:06:14,906 - auto_assign_module - ERROR - ❌ [2025-08-16T23:36:14.906632] ❌ ========================================
+2025-08-16 18:06:14,906 - auto_assign_module - ERROR - ❌ [2025-08-16T23:36:14.906632] ❌ MANUAL TRIGGER FAILED
+2025-08-16 18:06:14,906 - auto_assign_module - ERROR - ❌ [2025-08-16T23:36:14.906632] ❌ ========================================
+2025-08-16 18:06:14,906 - auto_assign_module - ERROR - ❌ [2025-08-16T23:36:14.906632]    🚨 Error: No auto-assign configuration found for TEST_SOURCE
+2025-08-16 18:06:14,906 - auto_assign_module - ERROR - ❌ [2025-08-16T23:36:14.906632]    🏷️ Source: TEST_SOURCE
+2025-08-16 18:06:14,907 - auto_assign_module - ERROR - ❌ [2025-08-16T23:36:14.907636]    ⏰ Failure Time: 2025-08-16T23:36:14.907636
+2025-08-16 18:06:14,907 - auto_assign_module - ERROR - ❌ [2025-08-16T23:36:14.907636]    🎯 Status: Trigger Failed
+2025-08-16 18:06:14,907 - auto_assign_module - ERROR - ❌ [2025-08-16T23:36:14.907636]    🔍 Action: Review error and retry
+2025-08-16 18:06:14,907 - auto_assign_module - ERROR - ❌ [2025-08-16T23:36:14.907636] ❌ ========================================

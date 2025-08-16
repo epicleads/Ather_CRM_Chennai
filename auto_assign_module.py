@@ -307,20 +307,74 @@ class AutoAssignSystem:
             'last_run': None,
             'next_run': None,
             'errors': [],
-            'started_at': None
+            'started_at': None,
+            'thread_id': None,
+            'auto_start_enabled': True
         }
         self.auto_assign_thread = None
         self.running = False
         
-        # Debug configuration
-        self.debug_mode = os.environ.get('AUTO_ASSIGN_DEBUG', 'false').lower() == 'true'
-        self.verbose_logging = os.environ.get('AUTO_ASSIGN_VERBOSE', 'false').lower() == 'true'
+        # Debug configuration - Enable by default for better visibility
+        self.debug_mode = os.environ.get('AUTO_ASSIGN_DEBUG', 'true').lower() == 'true'
+        self.verbose_logging = os.environ.get('AUTO_ASSIGN_VERBOSE', 'true').lower() == 'true'
+        
+        # Auto-start the system if enabled
+        self.auto_start_enabled = os.environ.get('AUTO_ASSIGN_AUTO_START', 'true').lower() == 'true'
         
         logger.info("🚀 Auto-Assign System initialized")
         if self.debug_mode:
             logger.info("🔍 Debug mode enabled")
         if self.verbose_logging:
             logger.info("📝 Verbose logging enabled")
+        
+        # Auto-start the system if enabled
+        if self.auto_start_enabled:
+            self.debug_print("🚀 Auto-start enabled - starting system automatically", "SYSTEM")
+            try:
+                self.auto_start_system()
+            except Exception as e:
+                self.debug_print(f"❌ Auto-start failed: {e}", "ERROR")
+                logger.error(f"Auto-start failed: {e}")
+        else:
+            self.debug_print("⏸️ Auto-start disabled - system must be started manually", "INFO")
+    
+    def auto_start_system(self) -> bool:
+        """Automatically start the auto-assign system with enhanced error handling"""
+        try:
+            self.debug_print("🚀 ========================================", "SYSTEM")
+            self.debug_print("🚀 AUTO-STARTING AUTO-ASSIGN SYSTEM", "SYSTEM")
+            self.debug_print("🚀 ========================================", "SYSTEM")
+            self.debug_print("   ⏰ Start Time: " + self.get_ist_timestamp(), "INFO")
+            self.debug_print("   🎯 Mode: Automatic startup", "INFO")
+            self.debug_print("   🚀 Reference: Uday Branch Enhanced Logic", "INFO")
+            
+            # Check if system is already running
+            if self.system_status['is_running']:
+                self.debug_print("ℹ️ System is already running", "INFO")
+                return True
+            
+            # Start the system
+            thread = self.start_robust_auto_assign_system()
+            if thread:
+                self.debug_print("✅ Auto-start completed successfully", "SUCCESS")
+                self.debug_print("   🧵 Thread started", "SUCCESS")
+                self.debug_print("   🎯 Status: System running", "SUCCESS")
+                return True
+            else:
+                self.debug_print("❌ Auto-start failed", "ERROR")
+                self.debug_print("   🚨 Status: System not started", "ERROR")
+                return False
+                
+        except Exception as e:
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"❌ AUTO-START FAILED", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"   🚨 Exception: {e}", "ERROR")
+            self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
+            self.debug_print(f"   ⏰ Time: {self.get_ist_timestamp()}", "ERROR")
+            self.debug_print(f"   🎯 Status: Auto-start failed", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            return False
     
     def debug_print(self, message: str, level: str = 'INFO'):
         """Enhanced debug print function with configurable levels and stickers"""
@@ -1057,98 +1111,158 @@ class AutoAssignSystem:
             return {'success': False, 'message': str(e), 'total_assigned': 0}
     
     def robust_auto_assign_worker(self):
-        """Robust background worker that continuously checks for new leads (Render-compatible)"""
-        self.debug_print("🚀 Robust auto-assign background worker started", "SYSTEM")
-        self.system_status['is_running'] = True
-        self.system_status['started_at'] = self.get_ist_timestamp()
-        
-        # Check if running in production (Render)
-        is_production = os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False)
-        
-        # Immediate auto-assign when server starts
-        self.debug_print("🚀 Starting immediate auto-assign check...", "SYSTEM")
+        """Robust background worker that continuously checks for new leads (Render-compatible) with enhanced error handling"""
         try:
-            result = self.check_and_assign_new_leads()
-            if result and result.get('success'):
-                self.debug_print("✅ Immediate auto-assign completed successfully", "SUCCESS")
-                self.system_status['total_leads_assigned'] += result.get('total_assigned', 0)
-                if result.get('total_assigned', 0) > 0:
-                    self.debug_print(f"📊 {result.get('total_assigned')} leads assigned immediately", "SUCCESS")
-                else:
-                    self.debug_print("ℹ️ No new leads found for immediate assignment", "INFO")
-            else:
-                self.debug_print("⚠️ Immediate auto-assign completed with issues", "WARNING")
-        except Exception as e:
-            self.debug_print(f"❌ Error in immediate auto-assign: {e}", "ERROR")
-        
-        self.debug_print("   " + "="*80, "DEBUG")
-        
-        # Continuous background auto-assign with Render-optimized intervals
-        if is_production:
-            # Production mode: shorter intervals for better responsiveness
-            check_interval = 60  # 1 minute for production
-            self.debug_print(f"🏭 Production mode detected - checking every {check_interval} seconds", "INFO")
-        else:
-            # Development mode: longer intervals
-            check_interval = 300  # 5 minutes for development
-            self.debug_print(f"🛠️ Development mode - checking every {check_interval} seconds", "INFO")
-        
-        while self.running:
+            self.debug_print("🚀 ========================================", "SYSTEM")
+            self.debug_print("🚀 ROBUST AUTO-ASSIGN WORKER STARTED", "SYSTEM")
+            self.debug_print("🚀 ========================================", "SYSTEM")
+            self.debug_print("   ⏰ Start Time: " + self.get_ist_timestamp(), "INFO")
+            self.debug_print("   🎯 Mode: Background worker", "INFO")
+            self.debug_print("   🚀 Reference: Uday Branch Enhanced Logic", "INFO")
+            
+            # Update system status
+            self.system_status['is_running'] = True
+            self.system_status['started_at'] = self.get_ist_timestamp()
+            
+            # Check if running in production (Render)
+            is_production = os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False)
+            
+            # Immediate auto-assign when server starts
+            self.debug_print("🚀 Starting immediate auto-assign check...", "SYSTEM")
+            self.debug_print("   🔄 Status: Executing immediate check", "INFO")
+            
             try:
-                # Wait for next check
-                time.sleep(check_interval)
-                
-                # Update status
-                self.system_status['last_run'] = self.get_ist_timestamp()
-                self.system_status['next_run'] = self.get_ist_timestamp()
-                self.system_status['total_runs'] += 1
-                
-                self.debug_print("🔄 Background auto-assign check running...", "SYSTEM")
-                self.debug_print(f"   ⏰ Check Time: {self.get_ist_timestamp()}", "INFO")
-                self.debug_print(f"   📊 Run #{self.system_status['total_runs']}", "INFO")
-                self.debug_print(f"   🏭 Mode: {'Production' if is_production else 'Development'}", "INFO")
-                self.debug_print("   " + "="*80, "DEBUG")
-                
-                try:
-                    result = self.check_and_assign_new_leads()
-                    if result and result.get('success'):
-                        self.debug_print("✅ Background check completed successfully", "SUCCESS")
-                        self.system_status['total_leads_assigned'] += result.get('total_assigned', 0)
-                        if result.get('total_assigned', 0) > 0:
-                            self.debug_print(f"📊 {result.get('total_assigned')} leads assigned", "SUCCESS")
-                            self.debug_print(f"🎯 Total leads assigned so far: {self.system_status['total_leads_assigned']}", "INFO")
+                result = self.check_and_assign_new_leads()
+                if result and result.get('success'):
+                    self.debug_print("✅ Immediate auto-assign completed successfully", "SUCCESS")
+                    assigned_count = result.get('total_assigned', 0)
+                    self.system_status['total_leads_assigned'] += assigned_count
+                    if assigned_count > 0:
+                        self.debug_print(f"📊 {assigned_count} leads assigned immediately", "SUCCESS")
+                        self.debug_print(f"   🎯 Total leads assigned so far: {self.system_status['total_leads_assigned']}", "SUCCESS")
                     else:
-                        self.debug_print("⚠️ Background check completed with issues", "WARNING")
-                except Exception as context_error:
-                    self.debug_print(f"❌ Error in assignment context: {context_error}", "ERROR")
-                    
+                        self.debug_print("ℹ️ No new leads found for immediate assignment", "INFO")
+                        self.debug_print("   🔍 Status: All leads already assigned", "INFO")
+                else:
+                    self.debug_print("⚠️ Immediate auto-assign completed with issues", "WARNING")
+                    self.debug_print("   🚨 Status: Immediate check had problems", "WARNING")
+                    if result:
+                        self.debug_print(f"   📝 Message: {result.get('message', 'N/A')}", "WARNING")
             except Exception as e:
-                self.debug_print(f"❌ CRITICAL ERROR in background worker: {e}", "ERROR")
-                self.debug_print(f"   ⏰ Error Time: {self.get_ist_timestamp()}", "ERROR")
-                self.debug_print(f"   🚨 Error Type: {type(e).__name__}", "ERROR")
-                self.debug_print(f"   🔍 Error Details: {str(e)}", "ERROR")
-                self.debug_print("   " + "="*80, "ERROR")
-                
-                # Shorter error recovery time for production
-                error_recovery_time = 30 if is_production else 60
-                self.debug_print(f"   ⏳ Waiting {error_recovery_time} seconds before retrying...", "INFO")
-                time.sleep(error_recovery_time)
-        
-        self.debug_print("🛑 Auto-assign worker stopped", "SYSTEM")
-        self.system_status['is_running'] = False
+                self.debug_print(f"❌ Error in immediate auto-assign: {e}", "ERROR")
+                self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
+                self.debug_print(f"   🔍 Action: Continuing with background process", "WARNING")
+            
+            self.debug_print("   " + "="*80, "DEBUG")
+            self.debug_print("   🚀 Background process starting...", "INFO")
+            
+            # Continuous background auto-assign with Render-optimized intervals
+            if is_production:
+                # Production mode: shorter intervals for better responsiveness
+                check_interval = 60  # 1 minute for production
+                self.debug_print(f"🏭 Production mode detected - checking every {check_interval} seconds", "INFO")
+                self.debug_print("   🚀 Reference: Uday Branch Production Logic", "INFO")
+            else:
+                # Development mode: longer intervals
+                check_interval = 300  # 5 minutes for development
+                self.debug_print(f"🛠️ Development mode - checking every {check_interval} seconds", "INFO")
+                self.debug_print("   🚀 Reference: Uday Branch Development Logic", "INFO")
+            
+            # Main worker loop
+            while self.running:
+                try:
+                    # Wait for next check
+                    self.debug_print(f"⏳ Waiting {check_interval} seconds for next check...", "DEBUG")
+                    time.sleep(check_interval)
+                    
+                    # Check if we should still be running
+                    if not self.running:
+                        self.debug_print("🛑 Worker loop stopped - exiting", "INFO")
+                        break
+                    
+                    # Update status
+                    self.system_status['last_run'] = self.get_ist_timestamp()
+                    self.system_status['next_run'] = self.get_ist_timestamp()
+                    self.system_status['total_runs'] += 1
+                    
+                    self.debug_print("🔄 Background auto-assign check running...", "SYSTEM")
+                    self.debug_print(f"   ⏰ Check Time: {self.get_ist_timestamp()}", "INFO")
+                    self.debug_print(f"   📊 Run #{self.system_status['total_runs']}", "INFO")
+                    self.debug_print(f"   🏭 Mode: {'Production' if is_production else 'Development'}", "INFO")
+                    self.debug_print("   " + "="*80, "DEBUG")
+                    
+                    try:
+                        result = self.check_and_assign_new_leads()
+                        if result and result.get('success'):
+                            self.debug_print("✅ Background check completed successfully", "SUCCESS")
+                            assigned_count = result.get('total_assigned', 0)
+                            self.system_status['total_leads_assigned'] += assigned_count
+                            if assigned_count > 0:
+                                self.debug_print(f"📊 {assigned_count} leads assigned", "SUCCESS")
+                                self.debug_print(f"🎯 Total leads assigned so far: {self.system_status['total_leads_assigned']}", "INFO")
+                                self.debug_print("   🚀 Reference: Uday Branch Success Logic", "SUCCESS")
+                            else:
+                                self.debug_print("ℹ️ No new leads found in this check", "INFO")
+                                self.debug_print("   🔍 Status: All leads already assigned", "INFO")
+                        else:
+                            self.debug_print("⚠️ Background check completed with issues", "WARNING")
+                            self.debug_print("   🚨 Status: Background check had problems", "WARNING")
+                            if result:
+                                self.debug_print(f"   📝 Message: {result.get('message', 'N/A')}", "WARNING")
+                    except Exception as context_error:
+                        self.debug_print(f"❌ Error in assignment context: {context_error}", "ERROR")
+                        self.debug_print(f"   🚨 Exception type: {type(context_error).__name__}", "ERROR")
+                        self.debug_print(f"   🔍 Action: Continuing with next check", "WARNING")
+                        
+                except Exception as e:
+                    self.debug_print(f"❌ CRITICAL ERROR in background worker: {e}", "ERROR")
+                    self.debug_print(f"   ⏰ Error Time: {self.get_ist_timestamp()}", "ERROR")
+                    self.debug_print(f"   🚨 Error Type: {type(e).__name__}", "ERROR")
+                    self.debug_print(f"   🔍 Error Details: {str(e)}", "ERROR")
+                    self.debug_print("   " + "="*80, "ERROR")
+                    
+                    # Shorter error recovery time for production
+                    error_recovery_time = 30 if is_production else 60
+                    self.debug_print(f"   ⏳ Waiting {error_recovery_time} seconds before retrying...", "INFO")
+                    time.sleep(error_recovery_time)
+            
+            self.debug_print("🛑 Auto-assign worker stopped normally", "SYSTEM")
+            self.debug_print("   🎯 Status: Worker completed", "INFO")
+            
+        except Exception as e:
+            self.debug_print(f"❌ CRITICAL ERROR in worker initialization: {e}", "ERROR")
+            self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
+            self.debug_print(f"   🔍 Action: Worker failed to start", "ERROR")
+        finally:
+            # Always update status when worker stops
+            self.debug_print("🔄 Updating system status...", "DEBUG")
+            self.system_status['is_running'] = False
+            self.debug_print("🛑 Auto-assign worker stopped", "SYSTEM")
+            self.debug_print("   🎯 Status: System stopped", "INFO")
     
     def start_robust_auto_assign_system(self) -> Optional[threading.Thread]:
-        """Start the robust auto-assign system (Render-compatible)"""
+        """Start the robust auto-assign system (Render-compatible) with enhanced startup logic"""
         try:
+            self.debug_print("🚀 ========================================", "SYSTEM")
+            self.debug_print("🚀 STARTING ROBUST AUTO-ASSIGN SYSTEM", "SYSTEM")
+            self.debug_print("🚀 ========================================", "SYSTEM")
+            self.debug_print("   ⏰ Start Time: " + self.get_ist_timestamp(), "INFO")
+            self.debug_print("   🎯 Mode: Manual startup", "INFO")
+            self.debug_print("   🚀 Reference: Uday Branch Enhanced Logic", "INFO")
+            
             # Check if system is already running
             if self.system_status['is_running'] and self.auto_assign_thread and self.auto_assign_thread.is_alive():
-                self.debug_print("�� Auto-assign system is already running", "WARNING")
+                self.debug_print("⚠️ Auto-assign system is already running", "WARNING")
+                self.debug_print("   🧵 Thread ID: " + str(self.auto_assign_thread.ident), "INFO")
+                self.debug_print("   🎯 Status: System already active", "INFO")
                 return self.auto_assign_thread
             
             # Stop any existing system
             if self.auto_assign_thread:
+                self.debug_print("🛑 Stopping existing auto-assign system...", "INFO")
                 self.running = False
                 time.sleep(2)  # Give thread time to stop
+                self.debug_print("✅ Existing system stopped", "SUCCESS")
             
             self.debug_print("🚀 Starting robust auto-assign system...", "SYSTEM")
             
@@ -1158,9 +1272,11 @@ class AutoAssignSystem:
             if is_production:
                 self.debug_print("   🏭 Production mode detected - using daemon threads", "INFO")
                 self.debug_print("   📋 Will check for new leads every 1 minute", "INFO")
+                self.debug_print("   🚀 Reference: Uday Branch Production Logic", "INFO")
             else:
                 self.debug_print("   🛠️ Development mode - using regular threads", "INFO")
                 self.debug_print("   📋 Will check for new leads every 5 minutes", "INFO")
+                self.debug_print("   🚀 Reference: Uday Branch Development Logic", "INFO")
             
             self.debug_print("   ⚡ First auto-assign check starting now...", "INFO")
             
@@ -1171,22 +1287,44 @@ class AutoAssignSystem:
                 name="RobustAutoAssignWorker",
                 daemon=is_production  # Use daemon threads in production for Render compatibility
             )
+            
+            # Start the thread
             self.auto_assign_thread.start()
+            
+            # Wait a moment to ensure thread starts
+            time.sleep(0.5)
+            
+            # Verify thread is alive
+            if not self.auto_assign_thread.is_alive():
+                self.debug_print("❌ Thread failed to start", "ERROR")
+                self.system_status['is_running'] = False
+                return None
             
             # Update status
             self.system_status['is_running'] = True
+            self.system_status['started_at'] = self.get_ist_timestamp()
             self.system_status['thread_id'] = self.auto_assign_thread.ident
             
             self.debug_print("✅ Robust auto-assign system started successfully", "SUCCESS")
-            self.debug_print(f"   🧵 Thread ID: {self.auto_assign_thread.ident}", "INFO")
+            self.debug_print(f"   🧵 Thread ID: {self.auto_assign_thread.ident}", "SUCCESS")
             self.debug_print(f"   🏭 Production Mode: {is_production}", "INFO")
             self.debug_print(f"   🕒 Started At: {self.system_status['started_at']}", "INFO")
+            self.debug_print(f"   🎯 Status: System running", "SUCCESS")
+            self.debug_print(f"   🚀 Reference: Uday Branch Success Logic", "SUCCESS")
             
             return self.auto_assign_thread
             
         except Exception as e:
-            self.debug_print(f"❌ Error starting robust auto-assign system: {e}", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"❌ ERROR STARTING AUTO-ASSIGN SYSTEM", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"   🚨 Exception: {e}", "ERROR")
             self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
+            self.debug_print(f"   ⏰ Time: {self.get_ist_timestamp()}", "ERROR")
+            self.debug_print(f"   🎯 Status: Startup failed", "ERROR")
+            self.debug_print(f"   🔍 Action: Review error and retry", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            
             self.system_status['is_running'] = False
             return None
     
@@ -1541,6 +1679,122 @@ class AutoAssignSystem:
                 'uday_branch_reference'
             ]
         }
+    
+    def force_start_system(self) -> bool:
+        """Force start the auto-assign system regardless of current state"""
+        try:
+            self.debug_print("🚀 ========================================", "SYSTEM")
+            self.debug_print("🚀 FORCE STARTING AUTO-ASSIGN SYSTEM", "SYSTEM")
+            self.debug_print("🚀 ========================================", "SYSTEM")
+            self.debug_print("   ⏰ Start Time: " + self.get_ist_timestamp(), "INFO")
+            self.debug_print("   🎯 Mode: Force start", "INFO")
+            self.debug_print("   🚀 Reference: Uday Branch Enhanced Logic", "INFO")
+            
+            # Force stop any existing system
+            if self.auto_assign_thread:
+                self.debug_print("🛑 Force stopping existing system...", "WARNING")
+                self.running = False
+                self.system_status['is_running'] = False
+                time.sleep(3)  # Give more time to stop
+            
+            # Reset system status
+            self.system_status['is_running'] = False
+            self.system_status['errors'] = []
+            
+            # Start the system
+            thread = self.start_robust_auto_assign_system()
+            if thread:
+                self.debug_print("✅ Force start completed successfully", "SUCCESS")
+                self.debug_print("   🧵 Thread started", "SUCCESS")
+                self.debug_print("   🎯 Status: System running", "SUCCESS")
+                return True
+            else:
+                self.debug_print("❌ Force start failed", "ERROR")
+                self.debug_print("   🚨 Status: System not started", "ERROR")
+                return False
+                
+        except Exception as e:
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"❌ FORCE START FAILED", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"   🚨 Exception: {e}", "ERROR")
+            self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
+            self.debug_print(f"   ⏰ Time: {self.get_ist_timestamp()}", "ERROR")
+            self.debug_print(f"   🎯 Status: Force start failed", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            return False
+    
+    def check_system_health_and_restart(self) -> bool:
+        """Check system health and restart if needed"""
+        try:
+            self.debug_print("🏥 ========================================", "SYSTEM")
+            self.debug_print("🏥 SYSTEM HEALTH CHECK AND RESTART", "SYSTEM")
+            self.debug_print("🏥 ========================================", "SYSTEM")
+            self.debug_print("   ⏰ Check Time: " + self.get_ist_timestamp(), "INFO")
+            self.debug_print("   🎯 Mode: Health check with auto-restart", "INFO")
+            
+            # Get current status
+            status = self.get_auto_assign_status()
+            is_running = status.get('is_running', False)
+            thread_alive = status.get('thread_alive', False)
+            
+            self.debug_print(f"   📊 Current Status:", "INFO")
+            self.debug_print(f"      🟢 Running: {is_running}", "INFO")
+            self.debug_print(f"      🧵 Thread Alive: {thread_alive}", "INFO")
+            self.debug_print(f"      📊 Total Runs: {status.get('total_runs', 0)}", "INFO")
+            
+            # Check if system needs restart
+            needs_restart = False
+            if not is_running:
+                self.debug_print("   ⚠️ System not running - restart needed", "WARNING")
+                needs_restart = True
+            elif not thread_alive:
+                self.debug_print("   ⚠️ Thread not alive - restart needed", "WARNING")
+                needs_restart = True
+            else:
+                self.debug_print("   ✅ System healthy - no restart needed", "SUCCESS")
+            
+            # Restart if needed
+            if needs_restart:
+                self.debug_print("🔄 Restarting system...", "INFO")
+                return self.force_start_system()
+            else:
+                return True
+                
+        except Exception as e:
+            self.debug_print(f"❌ Error in health check: {e}", "ERROR")
+            return False
+    
+    def get_detailed_status(self) -> Dict[str, Any]:
+        """Get detailed system status with health information"""
+        try:
+            basic_status = self.get_auto_assign_status()
+            health_status = self.get_system_health()
+            
+            detailed_status = {
+                **basic_status,
+                'health': health_status,
+                'auto_start_enabled': self.auto_start_enabled,
+                'debug_mode': self.debug_mode,
+                'verbose_logging': self.verbose_logging,
+                'enhanced_features': [
+                    'debug_prints',
+                    'stickers',
+                    'performance_monitoring',
+                    'real_time_verification',
+                    'uday_branch_reference',
+                    'auto_start',
+                    'health_monitoring'
+                ],
+                'timestamp': self.get_ist_timestamp()
+            }
+            
+            self.debug_print("📊 Detailed status retrieved successfully", "DEBUG")
+            return detailed_status
+            
+        except Exception as e:
+            self.debug_print(f"❌ Error getting detailed status: {e}", "ERROR")
+            return {'error': str(e)}
 
 # =============================================================================
 # EXPORT AND HISTORY MANAGEMENT
