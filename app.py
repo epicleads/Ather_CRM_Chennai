@@ -70,6 +70,11 @@ except ImportError:
     def get_ist_timestamp_util() -> str:
         ist_time = datetime.now() + timedelta(hours=5, minutes=30)
         return ist_time.isoformat()
+except Exception:
+    # Final fallback
+    def get_ist_timestamp_util() -> str:
+        ist_time = datetime.now() + timedelta(hours=5, minutes=30)
+        return ist_time.isoformat()
 
 # Utility functions
 def get_ist_timestamp():
@@ -9636,26 +9641,52 @@ def api_hot_duplicate_leads():
     """API endpoint to get duplicate leads created in the last 1 day (hot duplicates)"""
     from datetime import datetime, date
     try:
+        print("🔔 Fetching hot duplicate leads...")
+        
         # Fetch all duplicate leads (limit to 200 for performance)
         result = supabase.table('duplicate_leads').select('*').limit(200).execute()
         duplicate_leads = result.data or []
+        
+        print(f"📊 Found {len(duplicate_leads)} total duplicate leads")
+        
         hot_leads = []
         for lead in duplicate_leads:
             dates = []
+            # Check all possible date fields
             for i in range(1, 11):
                 dt = lead.get(f'date{i}')
                 if dt:
                     dates.append(dt)
+            
+            # Also check created_at and updated_at fields
+            if lead.get('created_at'):
+                dates.append(lead.get('created_at'))
+            if lead.get('updated_at'):
+                dates.append(lead.get('updated_at'))
+            
             last_enquiry_date = max([d for d in dates if d], default=None)
             days_old = None
+            
             if last_enquiry_date:
                 try:
-                    last_date = datetime.strptime(last_enquiry_date, '%Y-%m-%d').date()
+                    # Handle different date formats
+                    if isinstance(last_enquiry_date, str):
+                        if 'T' in last_enquiry_date:  # ISO format
+                            last_date = datetime.fromisoformat(last_enquiry_date.replace('Z', '+00:00')).date()
+                        else:  # YYYY-MM-DD format
+                            last_date = datetime.strptime(last_enquiry_date, '%Y-%m-%d').date()
+                    else:
+                        # Assume it's already a date object
+                        last_date = last_enquiry_date.date() if hasattr(last_enquiry_date, 'date') else last_enquiry_date
+                    
                     days_old = (date.today() - last_date).days
-                except Exception:
+                    print(f"📅 Lead {lead.get('uid', 'N/A')}: last_date={last_date}, days_old={days_old}")
+                except Exception as e:
+                    print(f"⚠️ Error parsing date for lead {lead.get('uid', 'N/A')}: {e}")
                     days_old = None
-            # Only include if days_old is 0 or 1 (today or yesterday)
-            if days_old is not None and days_old <= 1:
+            
+            # Include leads from today, yesterday, and also show some recent ones if no hot leads
+            if days_old is not None and days_old <= 2:  # Extended to 2 days for better visibility
                 hot_leads.append({
                     'uid': lead.get('uid'),
                     'customer_name': lead.get('customer_name'),
@@ -9663,11 +9694,70 @@ def api_hot_duplicate_leads():
                     'last_enquiry_date': last_enquiry_date,
                     'days_old': days_old
                 })
+        
+        # If no hot leads, show the 5 most recent duplicate leads
+        if not hot_leads and duplicate_leads:
+            print("🔥 No hot leads found, showing recent duplicates instead")
+            # Sort by created_at or updated_at to get recent ones
+            recent_leads = sorted(duplicate_leads, 
+                                key=lambda x: (x.get('created_at') or x.get('updated_at') or ''), 
+                                reverse=True)[:5]
+            
+            for lead in recent_leads:
+                hot_leads.append({
+                    'uid': lead.get('uid'),
+                    'customer_name': lead.get('customer_name'),
+                    'customer_mobile_number': lead.get('customer_mobile_number'),
+                    'last_enquiry_date': lead.get('created_at') or lead.get('updated_at'),
+                    'days_old': 'Recent'
+                })
+        
         # Sort by most recent (days_old, then last_enquiry_date desc)
-        hot_leads.sort(key=lambda x: (x['days_old'], x['last_enquiry_date']), reverse=False)
+        hot_leads.sort(key=lambda x: (x['days_old'] if isinstance(x['days_old'], int) else 999, str(x['last_enquiry_date'])), reverse=False)
+        
+        print(f"🔥 Returning {len(hot_leads)} hot/recent duplicate leads")
         return jsonify({'success': True, 'hot_leads': hot_leads})
+        
     except Exception as e:
+        print(f"❌ Error in api_hot_duplicate_leads: {e}")
         return jsonify({'success': False, 'message': str(e), 'hot_leads': []})
+
+@app.route('/api/debug_duplicate_leads')
+@require_admin
+def api_debug_duplicate_leads():
+    """Debug endpoint to check duplicate leads data"""
+    try:
+        print("🔍 Debug: Checking duplicate leads data...")
+        
+        # Get total count
+        result = supabase.table('duplicate_leads').select('*').execute()
+        duplicate_leads = result.data or []
+        
+        print(f"📊 Total duplicate leads: {len(duplicate_leads)}")
+        
+        if duplicate_leads:
+            # Show sample data structure
+            sample = duplicate_leads[0]
+            print(f"📋 Sample lead structure: {list(sample.keys())}")
+            print(f"📅 Sample dates: {[k for k, v in sample.items() if 'date' in k.lower() or 'created' in k.lower() or 'updated' in k.lower()]}")
+            
+            # Show first few leads
+            for i, lead in enumerate(duplicate_leads[:3]):
+                print(f"📝 Lead {i+1}: {lead.get('uid', 'N/A')} - {lead.get('customer_name', 'N/A')}")
+                print(f"   📅 Created: {lead.get('created_at', 'N/A')}")
+                print(f"   📅 Updated: {lead.get('updated_at', 'N/A')}")
+                print(f"   📱 Mobile: {lead.get('customer_mobile_number', 'N/A')}")
+        
+        return jsonify({
+            'success': True,
+            'total_count': len(duplicate_leads),
+            'sample_structure': list(duplicate_leads[0].keys()) if duplicate_leads else [],
+            'sample_leads': duplicate_leads[:3] if duplicate_leads else []
+        })
+        
+    except Exception as e:
+        print(f"❌ Error in debug endpoint: {e}")
+        return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/delete_duplicate_lead', methods=['POST'])
 @require_admin
@@ -12541,6 +12631,10 @@ try:
     auto_assign_system = AutoAssignSystem(supabase)
     auto_assign_api = AutoAssignAPI(auto_assign_system)
     print("✅ Auto-assign system initialized successfully")
+except ImportError:
+    print("⚠️ Auto-assign module not found - system will be disabled")
+    auto_assign_system = None
+    auto_assign_api = None
 except Exception as e:
     print(f"❌ Error initializing auto-assign system: {e}")
     auto_assign_system = None
@@ -12605,7 +12699,8 @@ def save_auto_assign_config():
         if configs_to_insert:
             insert_result = supabase.table('auto_assign_config').insert(configs_to_insert).execute()
             print(f"   ✅ Inserted {len(configs_to_insert)} new configs")
-            print(f"   📊 Configs: {[f'{c['source']}->CRE{c['cre_id']}' for c in configs_to_insert]}")
+            config_strs = [f"{c.get('source')}->CRE{c.get('cre_id')}" for c in configs_to_insert]
+            print(f"   📊 Configs: {config_strs}")
         else:
             print("   ⚠️ No configs to insert")
         
@@ -12843,7 +12938,7 @@ def start_auto_assign_system():
 
 if __name__ == '__main__':
     # socketio.run(app, debug=True)
-    print(" Starting Ather CRM System...")
+    print("🚀 Starting Ather CRM System...")
     print("📱 Server will be available at: http://127.0.0.1:5000")
     print("🌐 You can also try: http://localhost:5000")
     

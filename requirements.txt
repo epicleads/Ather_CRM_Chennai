@@ -19,3 +19,4 @@ flask-socketio
 # For production use, eventlet is recommended for async workers
 # (if using gevent, you can add gevent instead)
 eventlet
+pytz

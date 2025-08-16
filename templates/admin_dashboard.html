@@ -197,22 +197,41 @@
             padding: 8px;
             border-radius: var(--airbnb-border-radius);
             transition: all 0.3s ease;
+            border: 2px solid transparent;
         }
 
         .notification-bell:hover {
             background: var(--airbnb-gray-100);
+            border-color: var(--airbnb-yellow);
+            transform: scale(1.05);
         }
 
         .notification-bell .badge {
             position: absolute;
-            top: 0;
-            right: 0;
+            top: -5px;
+            right: -5px;
             background: #dc3545;
             color: #fff;
             border-radius: 50%;
             font-size: 0.7rem;
             padding: 2px 6px;
             display: none;
+            min-width: 18px;
+            height: 18px;
+            line-height: 14px;
+            text-align: center;
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .notification-bell.has-notifications {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
         }
 
         .user-info {
@@ -324,9 +343,9 @@
         /* Notification Dropdown */
         .notification-dropdown {
             display: none;
-            position: absolute;
-            top: 100%;
-            right: 0;
+            position: fixed;
+            top: 80px;
+            right: 20px;
             width: 340px;
             background: #fff;
             border: 1px solid #ddd;
@@ -339,6 +358,18 @@
 
         .notification-dropdown.active {
             display: block;
+            animation: slideDown 0.3s ease-out;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .notification-item {
@@ -626,27 +657,46 @@
 
         // Fetch hot duplicate leads
         function fetchHotLeads() {
+            console.log('🔔 Fetching hot duplicate leads...');
             fetch('/api/hot_duplicate_leads')
                 .then(res => res.json())
                 .then(data => {
+                    console.log('📊 Hot leads response:', data);
                     const list = document.getElementById('notificationList');
                     const countBadge = document.getElementById('notificationCount');
+                    
                     if (!data.success || !data.hot_leads || data.hot_leads.length === 0) {
-                        list.innerHTML = '<div style="padding: 16px; text-align: center; color: #888;">No hot duplicate leads</div>';
+                        list.innerHTML = '<div style="padding: 16px; text-align: center; color: #888;">No hot duplicate leads found</div>';
                         countBadge.style.display = 'none';
+                        bell.classList.remove('has-notifications');
+                        console.log('🔔 No hot leads to display');
                         return;
                     }
+                    
                     countBadge.textContent = data.hot_leads.length;
                     countBadge.style.display = 'inline-block';
-                    list.innerHTML = data.hot_leads.map(lead => `
-                        <div class="notification-item" onclick="window.location.href='/admin_duplicate_leads?hot=1&uid=${encodeURIComponent(lead.uid)}'">
-                            <div class="notification-title">🔥 Duplicate: ${lead.customer_name || 'Unknown'} (${lead.uid})</div>
-                            <div class="notification-date">${lead.last_enquiry_date ? 'Enquiry: ' + lead.last_enquiry_date : ''} | <b>${lead.days_old === 0 ? 'Today' : '1 day ago'}</b></div>
-                            <div style='font-size:0.95em;color:#555;'>Mobile: ${lead.customer_mobile_number || 'N/A'}</div>
-                        </div>
-                    `).join('');
+                    bell.classList.add('has-notifications');
+                    
+                    list.innerHTML = data.hot_leads.map(lead => {
+                        const daysText = lead.days_old === 0 ? 'Today' : 
+                                        lead.days_old === 1 ? '1 day ago' : 
+                                        lead.days_old === 2 ? '2 days ago' : 
+                                        lead.days_old === 'Recent' ? 'Recent' : 
+                                        `${lead.days_old} days ago`;
+                        
+                        return `
+                            <div class="notification-item" onclick="window.location.href='/admin_duplicate_leads?hot=1&uid=${encodeURIComponent(lead.uid)}'">
+                                <div class="notification-title">🔥 Duplicate: ${lead.customer_name || 'Unknown'} (${lead.uid})</div>
+                                <div class="notification-date">${lead.last_enquiry_date ? 'Enquiry: ' + lead.last_enquiry_date : ''} | <b>${daysText}</b></div>
+                                <div style='font-size:0.95em;color:#555;'>Mobile: ${lead.customer_mobile_number || 'N/A'}</div>
+                            </div>
+                        `;
+                    }).join('');
+                    
+                    console.log(`🔔 Displayed ${data.hot_leads.length} hot leads`);
                 })
                 .catch(err => {
+                    console.error('❌ Error fetching hot leads:', err);
                     document.getElementById('notificationList').innerHTML = '<div style="padding: 16px; text-align: center; color: #888;">Error loading notifications</div>';
                 });
         }
