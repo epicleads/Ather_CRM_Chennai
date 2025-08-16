@@ -741,10 +741,487 @@ class AutoAssignSystem:
             self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
             return False
     
+    def handle_auto_assign_config_change(self, source: str, action: str, cre_ids: List[int] = None) -> bool:
+        """
+        Handle auto-assign configuration changes and automatically reset counts when needed.
+        This ensures fair distribution starts fresh when CREs are added/removed.
+        
+        Args:
+            source: The source name that configuration changed for
+            action: The action performed ('add_cre', 'remove_cre', 'update_config', 'reset_all')
+            cre_ids: List of CRE IDs affected (required for add_cre, remove_cre, update_config)
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            self.debug_print(f"🔧 ========================================", "SYSTEM")
+            self.debug_print(f"🔧 HANDLING AUTO-ASSIGN CONFIG CHANGE", "SYSTEM")
+            self.debug_print(f"🔧 ========================================", "SYSTEM")
+            self.debug_print(f"   🏷️ Source: {source}", "INFO")
+            self.debug_print(f"   🔄 Action: {action}", "INFO")
+            self.debug_print(f"   👥 Affected CREs: {cre_ids if cre_ids else 'All'}", "INFO")
+            self.debug_print(f"   ⏰ Time: {self.get_ist_timestamp()}", "INFO")
+            self.debug_print(f"   🎯 Purpose: Ensure fair distribution after config changes", "INFO")
+            
+            if action == 'add_cre':
+                if not cre_ids:
+                    self.debug_print("❌ CRE IDs required for add_cre action", "ERROR")
+                    return False
+                
+                self.debug_print(f"➕ Adding new CREs to auto-assign for {source}", "INFO")
+                self.debug_print(f"   👥 New CRE IDs: {cre_ids}", "INFO")
+                self.debug_print(f"   🔄 Action: Reset counts to 0 for new CREs", "INFO")
+                
+                # Reset counts for new CREs to ensure they start with 0
+                success = self.reset_cre_auto_assign_counts(cre_ids)
+                if success:
+                    self.debug_print(f"✅ Successfully prepared new CREs for fair distribution", "SUCCESS")
+                else:
+                    self.debug_print(f"❌ Failed to prepare new CREs", "ERROR")
+                
+                return success
+                
+            elif action == 'remove_cre':
+                if not cre_ids:
+                    self.debug_print("❌ CRE IDs required for remove_cre action", "ERROR")
+                    return False
+                
+                self.debug_print(f"➖ Removing CREs from auto-assign for {source}", "INFO")
+                self.debug_print(f"   👥 Removed CRE IDs: {cre_ids}", "INFO")
+                self.debug_print(f"   🔄 Action: Reset counts to 0 for remaining CREs", "INFO")
+                
+                # Get all currently configured CREs for this source
+                configs = self.supabase.table('auto_assign_config').select('cre_id').eq('source', source).eq('is_active', True).execute()
+                if configs.data:
+                    remaining_cre_ids = [config['cre_id'] for config in configs.data if config['cre_id'] not in cre_ids]
+                    if remaining_cre_ids:
+                        self.debug_print(f"   👥 Remaining CRE IDs: {remaining_cre_ids}", "INFO")
+                        # Reset counts for remaining CREs to ensure fair distribution
+                        success = self.reset_cre_auto_assign_counts(remaining_cre_ids)
+                        if success:
+                            self.debug_print(f"✅ Successfully reset counts for remaining CREs", "SUCCESS")
+                        else:
+                            self.debug_print(f"❌ Failed to reset counts for remaining CREs", "ERROR")
+                        return success
+                    else:
+                        self.debug_print(f"ℹ️ No CREs remaining for {source}", "INFO")
+                        return True
+                else:
+                    self.debug_print(f"ℹ️ No active configs found for {source}", "INFO")
+                    return True
+                
+            elif action == 'update_config':
+                if not cre_ids:
+                    self.debug_print("❌ CRE IDs required for update_config action", "ERROR")
+                    return False
+                
+                self.debug_print(f"🔄 Updating auto-assign configuration for {source}", "INFO")
+                self.debug_print(f"   👥 Updated CRE IDs: {cre_ids}", "INFO")
+                self.debug_print(f"   🔄 Action: Reset counts to 0 for all affected CREs", "INFO")
+                
+                # Reset counts for all affected CREs to ensure fair distribution
+                success = self.reset_cre_auto_assign_counts(cre_ids)
+                if success:
+                    self.debug_print(f"✅ Successfully reset counts for updated configuration", "SUCCESS")
+                else:
+                    self.debug_print(f"❌ Failed to reset counts for updated configuration", "ERROR")
+                
+                return success
+                
+            elif action == 'reset_all':
+                self.debug_print(f"🔄 Resetting all auto-assign counts for {source}", "INFO")
+                self.debug_print(f"   🔄 Action: Reset counts to 0 for all CREs in source", "INFO")
+                
+                # Get all CREs configured for this source
+                configs = self.supabase.table('auto_assign_config').select('cre_id').eq('source', source).eq('is_active', True).execute()
+                if configs.data:
+                    all_cre_ids = [config['cre_id'] for config in configs.data]
+                    self.debug_print(f"   👥 All CRE IDs for {source}: {all_cre_ids}", "INFO")
+                    
+                    # Reset counts for all CREs
+                    success = self.reset_cre_auto_assign_counts(all_cre_ids)
+                    if success:
+                        self.debug_print(f"✅ Successfully reset all counts for {source}", "SUCCESS")
+                    else:
+                        self.debug_print(f"❌ Failed to reset all counts for {source}", "ERROR")
+                    return success
+                else:
+                    self.debug_print(f"ℹ️ No active configs found for {source}", "INFO")
+                    return True
+                    
+            else:
+                self.debug_print(f"❌ Unknown action: {action}", "ERROR")
+                self.debug_print(f"   🔍 Valid actions: add_cre, remove_cre, update_config, reset_all", "ERROR")
+                return False
+                
+        except Exception as e:
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"❌ ERROR HANDLING CONFIG CHANGE", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"   🚨 Exception: {e}", "ERROR")
+            self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
+            self.debug_print(f"   🏷️ Source: {source}", "ERROR")
+            self.debug_print(f"   🔄 Action: {action}", "ERROR")
+            self.debug_print(f"   ⏰ Time: {self.get_ist_timestamp()}", "ERROR")
+            self.debug_print(f"   🔍 Action: Review error and retry", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            return False
+    
+    def get_fair_distribution_status(self, source: str = None) -> Dict[str, Any]:
+        """
+        Get current fair distribution status and statistics.
+        
+        Args:
+            source: Optional source name to get status for specific source
+            
+        Returns:
+            dict: Fair distribution status and statistics
+        """
+        try:
+            self.debug_print(f"📊 Getting fair distribution status...", "DEBUG")
+            
+            if source:
+                # Get status for specific source
+                configs = self.supabase.table('auto_assign_config').select('*').eq('source', source).eq('is_active', True).execute()
+                sources_to_check = [source] if configs.data else []
+            else:
+                # Get status for all sources
+                configs = self.get_auto_assign_configs()
+                sources_to_check = list(set([config['source'] for config in configs]))
+            
+            distribution_status = {}
+            
+            for source_name in sources_to_check:
+                try:
+                    # Get CREs for this source
+                    source_configs = self.supabase.table('auto_assign_config').select('cre_id').eq('source', source_name).eq('is_active', True).execute()
+                    if not source_configs.data:
+                        continue
+                    
+                    cre_ids = [config['cre_id'] for config in source_configs.data]
+                    
+                    # Get current counts for all CREs
+                    cre_counts = []
+                    for cre_id in cre_ids:
+                        cre_result = self.supabase.table('cre_users').select('id, name, auto_assign_count').eq('id', cre_id).execute()
+                        if cre_result.data:
+                            cre_data = cre_result.data[0]
+                            cre_counts.append({
+                                'id': cre_data['id'],
+                                'name': cre_data['name'],
+                                'count': cre_data.get('auto_assign_count', 0)
+                            })
+                    
+                    if cre_counts:
+                        # Calculate distribution statistics
+                        total_leads = sum(cre['count'] for cre in cre_counts)
+                        avg_leads = total_leads / len(cre_counts) if cre_counts else 0
+                        min_leads = min(cre['count'] for cre in cre_counts) if cre_counts else 0
+                        max_leads = max(cre['count'] for cre in cre_counts) if cre_counts else 0
+                        
+                        # Calculate fairness score (lower is better)
+                        variance = sum((cre['count'] - avg_leads) ** 2 for cre in cre_counts) / len(cre_counts) if cre_counts else 0
+                        fairness_score = max(0, 100 - (variance * 10))  # Convert variance to 0-100 scale
+                        
+                        distribution_status[source_name] = {
+                            'cre_count': len(cre_counts),
+                            'total_leads': total_leads,
+                            'average_leads': round(avg_leads, 2),
+                            'min_leads': min_leads,
+                            'max_leads': max_leads,
+                            'fairness_score': round(fairness_score, 1),
+                            'cre_details': sorted(cre_counts, key=lambda x: x['count']),
+                            'is_balanced': abs(max_leads - min_leads) <= 1,  # Consider balanced if difference <= 1
+                            'recommendation': self._get_distribution_recommendation(cre_counts, avg_leads)
+                        }
+                        
+                except Exception as e:
+                    self.debug_print(f"⚠️ Error getting status for source {source_name}: {e}", "WARNING")
+                    distribution_status[source_name] = {'error': str(e)}
+            
+            overall_status = {
+                'sources': distribution_status,
+                'total_sources': len(distribution_status),
+                'timestamp': self.get_ist_timestamp(),
+                'overall_fairness': self._calculate_overall_fairness(distribution_status)
+            }
+            
+            self.debug_print(f"📊 Fair distribution status retrieved successfully", "DEBUG")
+            return overall_status
+            
+        except Exception as e:
+            self.debug_print(f"❌ Error getting fair distribution status: {e}", "ERROR")
+            return {'error': str(e)}
+    
+    def _get_distribution_recommendation(self, cre_counts: List[Dict], avg_leads: float) -> str:
+        """Get recommendation for improving distribution fairness"""
+        if not cre_counts:
+            return "No CREs configured"
+        
+        if len(cre_counts) == 1:
+            return "Single CRE - no distribution needed"
+        
+        min_count = min(cre['count'] for cre in cre_counts)
+        max_count = max(cre['count'] for cre in cre_counts)
+        difference = max_count - min_count
+        
+        if difference <= 1:
+            return "Distribution is well balanced"
+        elif difference <= 3:
+            return "Distribution is reasonably balanced"
+        elif difference <= 5:
+            return "Consider redistributing leads to improve balance"
+        else:
+            return "Significant imbalance detected - redistribution recommended"
+    
+    def _calculate_overall_fairness(self, distribution_status: Dict) -> Dict[str, Any]:
+        """Calculate overall fairness metrics across all sources"""
+        try:
+            if not distribution_status:
+                return {'score': 0, 'status': 'No data'}
+            
+            total_fairness_scores = []
+            balanced_sources = 0
+            total_sources = len(distribution_status)
+            
+            for source_name, status in distribution_status.items():
+                if 'error' not in status:
+                    total_fairness_scores.append(status.get('fairness_score', 0))
+                    if status.get('is_balanced', False):
+                        balanced_sources += 1
+            
+            if not total_fairness_scores:
+                return {'score': 0, 'status': 'No valid data'}
+            
+            avg_fairness = sum(total_fairness_scores) / len(total_fairness_scores)
+            balance_percentage = (balanced_sources / total_sources) * 100 if total_sources > 0 else 0
+            
+            if avg_fairness >= 90:
+                overall_status = 'Excellent'
+            elif avg_fairness >= 80:
+                overall_status = 'Good'
+            elif avg_fairness >= 70:
+                overall_status = 'Fair'
+            elif avg_fairness >= 60:
+                overall_status = 'Poor'
+            else:
+                overall_status = 'Critical'
+            
+            return {
+                'score': round(avg_fairness, 1),
+                'status': overall_status,
+                'balanced_sources': balanced_sources,
+                'total_sources': total_sources,
+                'balance_percentage': round(balance_percentage, 1)
+            }
+            
+        except Exception as e:
+            return {'score': 0, 'status': 'Error', 'error': str(e)}
+    
+    def process_batch_leads_with_fair_distribution(self, source: str, batch_size: int = None) -> Dict[str, Any]:
+        """
+        Process a batch of leads with intelligent fair distribution to maintain balance.
+        This function ensures that even when large batches arrive, the distribution remains fair.
+        
+        Args:
+            source: The source name to process leads for
+            batch_size: Optional batch size limit (if None, processes all unassigned leads)
+            
+        Returns:
+            dict: Result with assignment details and distribution statistics
+        """
+        try:
+            self.debug_print(f"📦 ========================================", "SYSTEM")
+            self.debug_print(f"📦 BATCH LEAD PROCESSING WITH FAIR DISTRIBUTION", "SYSTEM")
+            self.debug_print(f"📦 ========================================", "SYSTEM")
+            self.debug_print(f"   🏷️ Source: {source}", "INFO")
+            self.debug_print(f"   📦 Batch Size: {batch_size if batch_size else 'All unassigned'}", "INFO")
+            self.debug_print(f"   ⏰ Start Time: {self.get_ist_timestamp()}", "INFO")
+            self.debug_print(f"   🎯 Purpose: Maintain fair distribution with batch processing", "INFO")
+            
+            # Get current distribution status before processing
+            self.debug_print(f"📊 Getting current distribution status...", "DEBUG")
+            before_status = self.get_fair_distribution_status(source)
+            
+            if source in before_status.get('sources', {}):
+                source_status = before_status['sources'][source]
+                self.debug_print(f"📊 Current status for {source}:", "INFO")
+                self.debug_print(f"   👥 CREs: {source_status.get('cre_count', 0)}", "INFO")
+                self.debug_print(f"   📊 Total leads: {source_status.get('total_leads', 0)}", "INFO")
+                self.debug_print(f"   ⚖️ Fairness score: {source_status.get('fairness_score', 0)}/100", "INFO")
+                self.debug_print(f"   🎯 Status: {'Balanced' if source_status.get('is_balanced') else 'Imbalanced'}", "INFO")
+            else:
+                self.debug_print(f"⚠️ No current status found for {source}", "WARNING")
+            
+            # Get unassigned leads
+            self.debug_print(f"🔍 Fetching unassigned leads for {source}...", "DEBUG")
+            unassigned_leads = self.get_unassigned_leads_for_source(source)
+            
+            if not unassigned_leads:
+                self.debug_print(f"ℹ️ No unassigned leads found for {source}", "INFO")
+                return {
+                    'success': True,
+                    'message': f'No unassigned leads found for {source}',
+                    'assigned_count': 0,
+                    'batch_size': 0,
+                    'distribution_improved': False
+                }
+            
+            # Apply batch size limit if specified
+            if batch_size and batch_size > 0:
+                leads_to_process = unassigned_leads[:batch_size]
+                self.debug_print(f"📦 Processing batch of {len(leads_to_process)} leads (limited from {len(unassigned_leads)} total)", "INFO")
+            else:
+                leads_to_process = unassigned_leads
+                self.debug_print(f"📦 Processing all {len(leads_to_process)} unassigned leads", "INFO")
+            
+            # Get auto-assign configuration for this source
+            configs = self.supabase.table('auto_assign_config').select('*').eq('source', source).eq('is_active', True).execute()
+            if not configs.data:
+                return {'success': False, 'message': f'No auto-assign configuration found for {source}', 'assigned_count': 0}
+            
+            cre_ids = [config['cre_id'] for config in configs.data]
+            
+            # Get current lead counts for all configured CREs
+            cre_counts = {}
+            for cre_id in cre_ids:
+                try:
+                    cre_result = self.supabase.table('cre_users').select('id, name, auto_assign_count').eq('id', cre_id).execute()
+                    if cre_result.data:
+                        cre_data = cre_result.data[0]
+                        cre_counts[cre_id] = {
+                            'id': cre_data['id'],
+                            'name': cre_data['name'],
+                            'current_count': cre_data.get('auto_assign_count', 0)
+                        }
+                except Exception as e:
+                    self.debug_print(f"⚠️ Could not get count for CRE ID {cre_id}: {e}", "WARNING")
+                    cre_counts[cre_id] = {'id': cre_id, 'name': f'CRE_{cre_id}', 'current_count': 0}
+            
+            # Process leads with intelligent distribution
+            assigned_count = 0
+            failed_assignments = []
+            assignment_details = []
+            
+            self.debug_print(f"🔄 Starting batch processing with intelligent distribution...", "INFO")
+            
+            for i, lead in enumerate(leads_to_process):
+                # Find CRE with the lowest current count
+                selected_cre_id = self._select_cre_with_lowest_count(cre_counts)
+                selected_cre_info = cre_counts[selected_cre_id]
+                
+                self.debug_print(f"🎯 Processing lead {i+1}/{len(leads_to_process)}: {lead['uid']} → {selected_cre_info['name']} (count: {selected_cre_info['current_count']})", "DEBUG")
+                
+                # Assign the lead
+                if self.assign_lead_to_cre(lead['uid'], selected_cre_id, selected_cre_info['name'], source):
+                    assigned_count += 1
+                    
+                    # Update local count tracking
+                    cre_counts[selected_cre_id]['current_count'] += 1
+                    
+                    # Record assignment details
+                    assignment_details.append({
+                        'lead_uid': lead['uid'],
+                        'cre_id': selected_cre_id,
+                        'cre_name': selected_cre_info['name'],
+                        'cre_count_before': selected_cre_info['current_count'] - 1,
+                        'cre_count_after': selected_cre_info['current_count']
+                    })
+                    
+                    self.debug_print(f"✅ Lead {lead['uid']} assigned successfully", "SUCCESS")
+                else:
+                    failed_assignments.append(lead['uid'])
+                    self.debug_print(f"❌ Failed to assign lead {lead['uid']}", "ERROR")
+                
+                # Show progress every 10 leads
+                if (i + 1) % 10 == 0:
+                    self.debug_print(f"📊 Progress: {i+1}/{len(leads_to_process)} leads processed", "INFO")
+            
+            # Get distribution status after processing
+            self.debug_print(f"📊 Getting final distribution status...", "DEBUG")
+            after_status = self.get_fair_distribution_status(source)
+            
+            # Calculate distribution improvement
+            distribution_improved = False
+            improvement_details = {}
+            
+            if source in before_status.get('sources', {}) and source in after_status.get('sources', {}):
+                before_source = before_status['sources'][source]
+                after_source = after_status['sources'][source]
+                
+                before_fairness = before_source.get('fairness_score', 0)
+                after_fairness = after_source.get('fairness_score', 0)
+                
+                before_balance = before_source.get('is_balanced', False)
+                after_balance = after_source.get('is_balanced', False)
+                
+                distribution_improved = after_fairness > before_fairness or (not before_balance and after_balance)
+                
+                improvement_details = {
+                    'before_fairness': before_fairness,
+                    'after_fairness': after_fairness,
+                    'fairness_improvement': round(after_fairness - before_fairness, 1),
+                    'before_balanced': before_balance,
+                    'after_balanced': after_balance,
+                    'balance_improved': not before_balance and after_balance
+                }
+                
+                self.debug_print(f"📊 Distribution Analysis:", "INFO")
+                self.debug_print(f"   ⚖️ Before fairness: {before_fairness}/100", "INFO")
+                self.debug_print(f"   ⚖️ After fairness: {after_fairness}/100", "INFO")
+                self.debug_print(f"   📈 Improvement: {improvement_details['fairness_improvement']} points", "INFO")
+                self.debug_print(f"   🎯 Balance: {'Improved' if improvement_details['balance_improved'] else 'Maintained'}", "INFO")
+            
+            # Summary
+            self.debug_print(f"📦 ========================================", "SYSTEM")
+            self.debug_print(f"📦 BATCH PROCESSING COMPLETED", "SYSTEM")
+            self.debug_print(f"📦 ========================================", "SYSTEM")
+            self.debug_print(f"   🏷️ Source: {source}", "INFO")
+            self.debug_print(f"   📦 Batch size: {len(leads_to_process)}", "INFO")
+            self.debug_print(f"   ✅ Successfully assigned: {assigned_count}", "SUCCESS")
+            self.debug_print(f"   ❌ Failed assignments: {len(failed_assignments)}", "WARNING")
+            self.debug_print(f"   ⚖️ Distribution improved: {'Yes' if distribution_improved else 'No'}", "INFO")
+            self.debug_print(f"   ⏰ Completion Time: {self.get_ist_timestamp()}", "INFO")
+            
+            if failed_assignments:
+                self.debug_print(f"   🚨 Failed lead UIDs: {failed_assignments}", "ERROR")
+            
+            self.debug_print(f"📦 ========================================", "SYSTEM")
+            
+            return {
+                'success': True,
+                'message': f'Batch processing completed: {assigned_count} leads assigned',
+                'assigned_count': assigned_count,
+                'batch_size': len(leads_to_process),
+                'total_unassigned': len(unassigned_leads),
+                'failed_count': len(failed_assignments),
+                'failed_leads': failed_assignments,
+                'distribution_improved': distribution_improved,
+                'improvement_details': improvement_details,
+                'assignment_details': assignment_details,
+                'final_cre_counts': cre_counts,
+                'timestamp': self.get_ist_timestamp(),
+                'reference': 'Uday branch enhanced batch processing with intelligent distribution'
+            }
+            
+        except Exception as e:
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"❌ ERROR IN BATCH PROCESSING", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"   🚨 Exception: {e}", "ERROR")
+            self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
+            self.debug_print(f"   🏷️ Source: {source}", "ERROR")
+            self.debug_print(f"   📦 Batch size: {batch_size}", "ERROR")
+            self.debug_print(f"   ⏰ Time: {self.get_ist_timestamp()}", "ERROR")
+            self.debug_print(f"   🔍 Action: Review error and retry", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            return {'success': False, 'message': str(e), 'assigned_count': 0}
+    
     def auto_assign_new_leads_for_source(self, source: str) -> Dict[str, Any]:
         """
-        Automatically assign new leads for a specific source using fair distribution.
-        Enhanced with detailed debug prints and stickers from Uday branch.
+        Automatically assign new leads for a specific source using intelligent fair distribution.
+        Enhanced with count-based distribution to equalize lead counts across CREs.
         
         Args:
             source: The source name to auto-assign leads for
@@ -758,7 +1235,7 @@ class AutoAssignSystem:
             self.debug_print(f"🤖 ========================================", "SYSTEM")
             self.debug_print(f"   ⏰ Start Time: {self.get_ist_timestamp()}", "INFO")
             self.debug_print(f"   🎯 Source: {source}", "INFO")
-            self.debug_print(f"   🔄 Process: Fair Distribution (Round-Robin)", "INFO")
+            self.debug_print(f"   🔄 Process: Intelligent Fair Distribution (Count-Based)", "INFO")
             self.debug_print(f"   🚀 Reference: Uday Branch Enhanced Logic", "INFO")
             
             # Get auto-assign configuration for this source
@@ -775,6 +1252,33 @@ class AutoAssignSystem:
             self.debug_print(f"   👥 CRE IDs: {cre_ids}", "INFO")
             self.debug_print(f"   🔧 Status: Configuration loaded successfully", "SUCCESS")
             
+            # Get current lead counts for all configured CREs
+            self.debug_print(f"📊 Fetching current lead counts for configured CREs...", "DEBUG")
+            cre_counts = {}
+            for cre_id in cre_ids:
+                try:
+                    cre_result = self.supabase.table('cre_users').select('id, name, auto_assign_count').eq('id', cre_id).execute()
+                    if cre_result.data:
+                        cre_data = cre_result.data[0]
+                        cre_counts[cre_id] = {
+                            'id': cre_data['id'],
+                            'name': cre_data['name'],
+                            'current_count': cre_data.get('auto_assign_count', 0)
+                        }
+                        self.debug_print(f"   👥 CRE {cre_data['name']} (ID: {cre_id}): {cre_data.get('auto_assign_count', 0)} leads", "DEBUG")
+                except Exception as e:
+                    self.debug_print(f"   ⚠️ Could not get count for CRE ID {cre_id}: {e}", "WARNING")
+                    # Use default count of 0
+                    cre_counts[cre_id] = {'id': cre_id, 'name': f'CRE_{cre_id}', 'current_count': 0}
+            
+            if not cre_counts:
+                self.debug_print(f"❌ No CRE counts retrieved for {source}", "ERROR")
+                return {'success': False, 'message': f'Could not retrieve CRE counts for {source}', 'assigned_count': 0}
+            
+            self.debug_print(f"📊 CRE Count Summary for {source}:", "INFO")
+            for cre_id, cre_info in cre_counts.items():
+                self.debug_print(f"   👥 {cre_info['name']}: {cre_info['current_count']} leads", "INFO")
+            
             # Get unassigned leads for this source
             self.debug_print(f"🔍 Fetching unassigned leads for {source}...", "DEBUG")
             unassigned_leads = self.get_unassigned_leads_for_source(source)
@@ -787,22 +1291,20 @@ class AutoAssignSystem:
             
             self.debug_print(f"📊 Processing {len(unassigned_leads)} unassigned leads for {source}", "INFO")
             self.debug_print(f"   🎯 Lead UIDs: {[lead['uid'] for lead in unassigned_leads[:5]]}{'...' if len(unassigned_leads) > 5 else ''}", "DEBUG")
-            self.debug_print(f"   🔄 Status: Starting assignment process", "INFO")
+            self.debug_print(f"   🔄 Status: Starting intelligent assignment process", "INFO")
             
-            # Fair distribution using round-robin
+            # Intelligent fair distribution based on current counts
             assigned_count = 0
             failed_assignments = []
             
-            self.debug_print(f"🔄 Starting fair distribution assignment...", "INFO")
-            self.debug_print(f"   🎲 Round-robin algorithm: {len(cre_ids)} CREs, {len(unassigned_leads)} leads", "DEBUG")
-            self.debug_print(f"   📊 Distribution: {len(unassigned_leads)} leads ÷ {len(cre_ids)} CREs", "DEBUG")
+            self.debug_print(f"🔄 Starting intelligent fair distribution assignment...", "INFO")
+            self.debug_print(f"   🧠 Algorithm: Count-based distribution to equalize loads", "DEBUG")
+            self.debug_print(f"   📊 CREs: {len(cre_counts)}, Leads: {len(unassigned_leads)}", "DEBUG")
             
             for i, lead in enumerate(unassigned_leads):
-                selected_cre_id = cre_ids[i % len(cre_ids)]
-                
-                # Get CRE name
-                cre_result = self.supabase.table('cre_users').select('name').eq('id', selected_cre_id).execute()
-                selected_cre_name = cre_result.data[0]['name'] if cre_result.data else f"CRE_{selected_cre_id}"
+                # Find CRE with the lowest current count
+                selected_cre_id = self._select_cre_with_lowest_count(cre_counts)
+                selected_cre_info = cre_counts[selected_cre_id]
                 
                 self.debug_print(f"🎯 ========================================", "DEBUG")
                 self.debug_print(f"🎯 PROCESSING LEAD {i+1}/{len(unassigned_leads)}", "DEBUG")
@@ -814,22 +1316,28 @@ class AutoAssignSystem:
                 self.debug_print(f"   🎯 Sub-source: {lead.get('sub_source', 'N/A')}", "DEBUG")
                 self.debug_print(f"   📊 Status: {lead.get('lead_status', 'N/A')}", "DEBUG")
                 self.debug_print(f"   📅 Created: {lead.get('created_at', 'N/A')}", "DEBUG")
-                self.debug_print(f"   👥 Assigned to: {selected_cre_name} (CRE ID: {selected_cre_id})", "DEBUG")
-                self.debug_print(f"   🎲 Round-robin index: {i} % {len(cre_ids)} = {i % len(cre_ids)}", "DEBUG")
+                self.debug_print(f"   👥 Assigned to: {selected_cre_info['name']} (CRE ID: {selected_cre_id})", "DEBUG")
+                self.debug_print(f"   📊 Current count: {selected_cre_info['current_count']} leads", "DEBUG")
+                self.debug_print(f"   🧠 Selection reason: Lowest count among {len(cre_counts)} CREs", "DEBUG")
                 self.debug_print(f"   🔄 Status: Processing assignment...", "DEBUG")
                 
                 # Assign the lead
-                if self.assign_lead_to_cre(lead['uid'], selected_cre_id, selected_cre_name, source):
+                if self.assign_lead_to_cre(lead['uid'], selected_cre_id, selected_cre_info['name'], source):
                     assigned_count += 1
-                    self.debug_print(f"✅ SUCCESS: Lead {lead['uid']} assigned to {selected_cre_name}", "SUCCESS")
+                    
+                    # Update local count tracking
+                    cre_counts[selected_cre_id]['current_count'] += 1
+                    
+                    self.debug_print(f"✅ SUCCESS: Lead {lead['uid']} assigned to {selected_cre_info['name']}", "SUCCESS")
                     self.debug_print(f"   🎉 Assignment #{assigned_count} completed", "SUCCESS")
-                    self.debug_print(f"   📊 Status: Assignment successful", "SUCCESS")
+                    self.debug_print(f"   📊 New count for {selected_cre_info['name']}: {cre_counts[selected_cre_id]['current_count']}", "SUCCESS")
+                    self.debug_print(f"   🎯 Status: Assignment successful", "SUCCESS")
                     
                     # Verify the lead appears in the right place
-                    self._verify_lead_assignment(lead['uid'], selected_cre_name, source)
+                    self._verify_lead_assignment(lead['uid'], selected_cre_info['name'], source)
                 else:
                     failed_assignments.append(lead['uid'])
-                    self.debug_print(f"❌ FAILED: Lead {lead['uid']} assignment to {selected_cre_name}", "ERROR")
+                    self.debug_print(f"❌ FAILED: Lead {lead['uid']} assignment to {selected_cre_info['name']}", "ERROR")
                     self.debug_print(f"   🚨 Failed assignment #{len(failed_assignments)}", "ERROR")
                     self.debug_print(f"   📊 Status: Assignment failed", "ERROR")
                 
@@ -850,6 +1358,11 @@ class AutoAssignSystem:
                 self.debug_print(f"   🎯 Success Rate: {(assigned_count/len(unassigned_leads)*100):.1f}%", "SUCCESS")
                 self.debug_print(f"   🚀 Reference: Uday Branch Enhanced Logic", "INFO")
                 
+                # Show final count distribution
+                self.debug_print(f"📊 Final CRE Count Distribution:", "INFO")
+                for cre_id, cre_info in cre_counts.items():
+                    self.debug_print(f"   👥 {cre_info['name']}: {cre_info['current_count']} leads", "INFO")
+                
                 if failed_assignments:
                     self.debug_print(f"   🚨 Failed lead UIDs: {failed_assignments}", "ERROR")
                     self.debug_print(f"   🔍 Action: Review failed assignments", "WARNING")
@@ -868,8 +1381,9 @@ class AutoAssignSystem:
                 'total_processed': len(unassigned_leads),
                 'failed_count': len(failed_assignments),
                 'failed_leads': failed_assignments,
+                'final_cre_counts': cre_counts,
                 'timestamp': self.get_ist_timestamp(),
-                'reference': 'Uday branch enhanced logic'
+                'reference': 'Uday branch enhanced logic with intelligent distribution'
             }
             
         except Exception as e:
@@ -883,6 +1397,260 @@ class AutoAssignSystem:
             self.debug_print(f"   🔍 Action: Review error and retry", "ERROR")
             self.debug_print(f"❌ ========================================", "ERROR")
             return {'success': False, 'message': str(e), 'assigned_count': 0}
+    
+    def detect_and_assign_new_leads(self, source: str = None, auto_rebalance: bool = True) -> Dict[str, Any]:
+        """
+        Automatically detect new leads and assign them using intelligent fair distribution.
+        This function can also rebalance existing distribution if needed.
+        
+        Args:
+            source: Optional source name (if None, checks all sources)
+            auto_rebalance: Whether to automatically rebalance if significant imbalance detected
+            
+        Returns:
+            dict: Result with assignment and rebalancing details
+        """
+        try:
+            self.debug_print(f"🔍 ========================================", "SYSTEM")
+            self.debug_print(f"🔍 DETECTING AND ASSIGNING NEW LEADS", "SYSTEM")
+            self.debug_print(f"🔍 ========================================", "SYSTEM")
+            self.debug_print(f"   🏷️ Source: {source if source else 'All Sources'}", "INFO")
+            self.debug_print(f"   ⚖️ Auto-rebalance: {'Enabled' if auto_rebalance else 'Disabled'}", "INFO")
+            self.debug_print(f"   ⏰ Start Time: {self.get_ist_timestamp()}", "INFO")
+            self.debug_print(f"   🎯 Purpose: Maintain fair distribution with new leads", "INFO")
+            
+            if source:
+                # Process single source
+                sources_to_check = [source]
+            else:
+                # Process all sources
+                configs = self.get_auto_assign_configs()
+                sources_to_check = list(set([config['source'] for config in configs]))
+            
+            self.debug_print(f"📋 Found {len(sources_to_check)} sources to check: {sources_to_check}", "INFO")
+            
+            total_results = {}
+            total_assigned = 0
+            rebalancing_performed = []
+            
+            for source_name in sources_to_check:
+                self.debug_print(f"🎯 Processing source: {source_name}", "INFO")
+                
+                try:
+                    # Get current distribution status
+                    current_status = self.get_fair_distribution_status(source_name)
+                    if source_name not in current_status.get('sources', {}):
+                        self.debug_print(f"⚠️ No status found for {source_name}, skipping", "WARNING")
+                        continue
+                    
+                    source_status = current_status['sources'][source_name]
+                    current_fairness = source_status.get('fairness_score', 0)
+                    is_balanced = source_status.get('is_balanced', False)
+                    
+                    self.debug_print(f"📊 Current status for {source_name}:", "INFO")
+                    self.debug_print(f"   ⚖️ Fairness score: {current_fairness}/100", "INFO")
+                    self.debug_print(f"   🎯 Balanced: {'Yes' if is_balanced else 'No'}", "INFO")
+                    
+                    # Check if rebalancing is needed
+                    needs_rebalancing = False
+                    if auto_rebalance and not is_balanced and current_fairness < 70:
+                        needs_rebalancing = True
+                        self.debug_print(f"⚠️ Significant imbalance detected, rebalancing recommended", "WARNING")
+                    
+                    # Process new leads
+                    result = self.auto_assign_new_leads_for_source(source_name)
+                    
+                    if result.get('success'):
+                        assigned_count = result.get('assigned_count', 0)
+                        total_assigned += assigned_count
+                        
+                        if assigned_count > 0:
+                            self.debug_print(f"✅ {source_name}: {assigned_count} leads assigned", "SUCCESS")
+                        else:
+                            self.debug_print(f"ℹ️ {source_name}: No new leads to assign", "INFO")
+                        
+                        # Check if rebalancing is still needed after new assignments
+                        if needs_rebalancing:
+                            self.debug_print(f"🔄 Checking if rebalancing is still needed...", "DEBUG")
+                            new_status = self.get_fair_distribution_status(source_name)
+                            if source_name in new_status.get('sources', {}):
+                                new_source_status = new_status['sources'][source_name]
+                                new_fairness = new_source_status.get('fairness_score', 0)
+                                new_balanced = new_source_status.get('is_balanced', False)
+                                
+                                if new_balanced or new_fairness >= 80:
+                                    self.debug_print(f"✅ Rebalancing no longer needed after new assignments", "SUCCESS")
+                                    needs_rebalancing = False
+                        
+                        # Perform rebalancing if still needed
+                        if needs_rebalancing:
+                            self.debug_print(f"🔄 Performing rebalancing for {source_name}...", "INFO")
+                            rebalance_result = self._rebalance_distribution(source_name)
+                            if rebalance_result.get('success'):
+                                rebalancing_performed.append({
+                                    'source': source_name,
+                                    'before_fairness': current_fairness,
+                                    'after_fairness': rebalance_result.get('after_fairness', 0),
+                                    'improvement': rebalance_result.get('fairness_improvement', 0)
+                                })
+                                self.debug_print(f"✅ Rebalancing completed for {source_name}", "SUCCESS")
+                            else:
+                                self.debug_print(f"❌ Rebalancing failed for {source_name}", "ERROR")
+                        
+                        total_results[source_name] = {
+                            'success': True,
+                            'assigned_count': assigned_count,
+                            'rebalancing_needed': needs_rebalancing,
+                            'rebalancing_performed': needs_rebalancing and any(r['source'] == source_name for r in rebalancing_performed)
+                        }
+                    else:
+                        self.debug_print(f"❌ {source_name}: {result.get('message', 'Unknown error')}", "ERROR")
+                        total_results[source_name] = {
+                            'success': False,
+                            'error': result.get('message', 'Unknown error')
+                        }
+                        
+                except Exception as e:
+                    self.debug_print(f"❌ Error processing {source_name}: {e}", "ERROR")
+                    total_results[source_name] = {
+                        'success': False,
+                        'error': str(e)
+                    }
+                
+                self.debug_print(f"🎯 Completed processing {source_name}", "INFO")
+            
+            # Summary
+            self.debug_print(f"🔍 ========================================", "SYSTEM")
+            self.debug_print(f"🔍 DETECTION AND ASSIGNMENT COMPLETED", "SYSTEM")
+            self.debug_print(f"🔍 ========================================", "SYSTEM")
+            self.debug_print(f"   📋 Sources processed: {len(sources_to_check)}", "INFO")
+            self.debug_print(f"   ✅ Total leads assigned: {total_assigned}", "SUCCESS")
+            self.debug_print(f"   ⚖️ Rebalancing performed: {len(rebalancing_performed)} sources", "INFO")
+            self.debug_print(f"   ⏰ Completion Time: {self.get_ist_timestamp()}", "INFO")
+            
+            if rebalancing_performed:
+                self.debug_print(f"📊 Rebalancing Summary:", "INFO")
+                for rebalance in rebalancing_performed:
+                    self.debug_print(f"   🏷️ {rebalance['source']}: {rebalance['before_fairness']} → {rebalance['after_fairness']} (+{rebalance['improvement']})", "INFO")
+            
+            self.debug_print(f"🔍 ========================================", "SYSTEM")
+            
+            return {
+                'success': True,
+                'total_assigned': total_assigned,
+                'sources_processed': len(sources_to_check),
+                'results': total_results,
+                'rebalancing_performed': rebalancing_performed,
+                'timestamp': self.get_ist_timestamp(),
+                'reference': 'Uday branch enhanced detection and assignment with auto-rebalancing'
+            }
+            
+        except Exception as e:
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"❌ ERROR IN DETECTION AND ASSIGNMENT", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            self.debug_print(f"   🚨 Exception: {e}", "ERROR")
+            self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
+            self.debug_print(f"   ⏰ Time: {self.get_ist_timestamp()}", "ERROR")
+            self.debug_print(f"   🔍 Action: Review error and retry", "ERROR")
+            self.debug_print(f"❌ ========================================", "ERROR")
+            return {'success': False, 'message': str(e), 'total_assigned': 0}
+    
+    def _rebalance_distribution(self, source: str) -> Dict[str, Any]:
+        """
+        Rebalance the distribution for a specific source by redistributing leads if possible.
+        This is a more advanced function that can move leads between CREs to improve balance.
+        
+        Args:
+            source: The source name to rebalance
+            
+        Returns:
+            dict: Rebalancing result with improvement details
+        """
+        try:
+            self.debug_print(f"⚖️ Starting distribution rebalancing for {source}...", "INFO")
+            
+            # Get current distribution status
+            current_status = self.get_fair_distribution_status(source)
+            if source not in current_status.get('sources', {}):
+                return {'success': False, 'message': f'No status found for {source}'}
+            
+            source_status = current_status['sources'][source]
+            before_fairness = source_status.get('fairness_score', 0)
+            
+            # For now, we'll just reset counts to 0 to start fresh
+            # In a more advanced implementation, you could actually move leads between CREs
+            self.debug_print(f"🔄 Resetting counts to start fresh distribution", "INFO")
+            
+            configs = self.supabase.table('auto_assign_config').select('cre_id').eq('source', source).eq('is_active', True).execute()
+            if configs.data:
+                cre_ids = [config['cre_id'] for config in configs.data]
+                reset_success = self.reset_cre_auto_assign_counts(cre_ids)
+                
+                if reset_success:
+                    # Get new status after reset
+                    new_status = self.get_fair_distribution_status(source)
+                    if source in new_status.get('sources', {}):
+                        new_source_status = new_status['sources'][source]
+                        after_fairness = new_source_status.get('fairness_score', 0)
+                        fairness_improvement = after_fairness - before_fairness
+                        
+                        return {
+                            'success': True,
+                            'before_fairness': before_fairness,
+                            'after_fairness': after_fairness,
+                            'fairness_improvement': fairness_improvement,
+                            'method': 'count_reset',
+                            'message': f'Distribution rebalanced by resetting counts'
+                        }
+            
+            return {'success': False, 'message': 'Rebalancing failed'}
+            
+        except Exception as e:
+            self.debug_print(f"❌ Error during rebalancing: {e}", "ERROR")
+            return {'success': False, 'message': str(e)}
+    
+    def _select_cre_with_lowest_count(self, cre_counts: Dict[int, Dict]) -> int:
+        """
+        Select the CRE with the lowest current lead count for fair distribution.
+        
+        Args:
+            cre_counts: Dictionary mapping CRE ID to count information
+            
+        Returns:
+            int: CRE ID with the lowest count
+        """
+        try:
+            if not cre_counts:
+                raise ValueError("No CRE counts provided")
+            
+            # Find CRE with minimum count
+            min_count = float('inf')
+            selected_cre_id = None
+            
+            for cre_id, cre_info in cre_counts.items():
+                current_count = cre_info.get('current_count', 0)
+                if current_count < min_count:
+                    min_count = current_count
+                    selected_cre_id = cre_id
+            
+            if selected_cre_id is None:
+                # Fallback to first CRE if something goes wrong
+                selected_cre_id = list(cre_counts.keys())[0]
+                self.debug_print(f"⚠️ Fallback: Using first CRE {selected_cre_id} due to selection error", "WARNING")
+            
+            self.debug_print(f"🧠 Selected CRE {cre_counts[selected_cre_id]['name']} (ID: {selected_cre_id}) with count {min_count}", "DEBUG")
+            return selected_cre_id
+            
+        except Exception as e:
+            self.debug_print(f"❌ Error selecting CRE with lowest count: {e}", "ERROR")
+            # Fallback to first available CRE
+            fallback_cre_id = list(cre_counts.keys())[0] if cre_counts else None
+            if fallback_cre_id:
+                self.debug_print(f"🔄 Fallback: Using CRE ID {fallback_cre_id}", "WARNING")
+                return fallback_cre_id
+            else:
+                raise ValueError("No CREs available for selection")
     
     def _verify_lead_assignment(self, lead_uid: str, cre_name: str, source: str):
         """Verify that a lead assignment was successful and appears in the right places with enhanced debug prints"""
