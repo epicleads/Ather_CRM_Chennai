@@ -316,11 +316,57 @@ class AutoAssignSystem:
         self.debug_mode = os.environ.get('AUTO_ASSIGN_DEBUG', 'false').lower() == 'true'
         self.verbose_logging = os.environ.get('AUTO_ASSIGN_VERBOSE', 'false').lower() == 'true'
         
+        # Health monitoring
+        self.health_monitor_thread = None
+        self.last_health_check = time.time()
+        self.health_check_interval = 300  # 5 minutes
+        
         logger.info("🚀 Auto-Assign System initialized")
         if self.debug_mode:
             logger.info("🔍 Debug mode enabled")
         if self.verbose_logging:
             logger.info("📝 Verbose logging enabled")
+        
+        # Start health monitoring in production
+        if os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False):
+            self.start_health_monitoring()
+    
+    def start_health_monitoring(self):
+        """Start health monitoring for production environments"""
+        try:
+            if self.health_monitor_thread and self.health_monitor_thread.is_alive():
+                return
+            
+            def health_monitor():
+                while True:
+                    try:
+                        time.sleep(self.health_check_interval)
+                        
+                        # Check if auto-assign system is healthy
+                        if not self.system_status['is_running'] or not self.auto_assign_thread or not self.auto_assign_thread.is_alive():
+                            logger.warning("🚨 Auto-assign system health check failed - attempting restart")
+                            
+                            # Try to restart the system
+                            try:
+                                self.stop_auto_assign_system()
+                                time.sleep(2)
+                                self.start_robust_auto_assign_system()
+                                logger.info("✅ Auto-assign system restarted successfully")
+                            except Exception as e:
+                                logger.error(f"❌ Failed to restart auto-assign system: {e}")
+                        
+                        self.last_health_check = time.time()
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Error in health monitoring: {e}")
+                        time.sleep(60)  # Wait before retrying
+            
+            self.health_monitor_thread = threading.Thread(target=health_monitor, daemon=False, name="HealthMonitor")
+            self.health_monitor_thread.start()
+            logger.info("🔍 Health monitoring started for production environment")
+            
+        except Exception as e:
+            logger.error(f"❌ Error starting health monitoring: {e}")
     
     def debug_print(self, message: str, level: str = 'INFO'):
         """Enhanced debug print function with configurable levels and stickers"""
@@ -1166,11 +1212,23 @@ class AutoAssignSystem:
             
             # Create and start new thread
             self.running = True
-            self.auto_assign_thread = threading.Thread(
-                target=self.robust_auto_assign_worker, 
-                name="RobustAutoAssignWorker",
-                daemon=is_production  # Use daemon threads in production for Render compatibility
-            )
+            
+            # In production, use non-daemon threads to prevent premature termination
+            if is_production:
+                self.debug_print("   🏭 Production mode: Using non-daemon thread for stability", "INFO")
+                self.auto_assign_thread = threading.Thread(
+                    target=self.robust_auto_assign_worker, 
+                    name="RobustAutoAssignWorker",
+                    daemon=False  # Non-daemon for production stability
+                )
+            else:
+                self.debug_print("   🛠️ Development mode: Using daemon thread", "INFO")
+                self.auto_assign_thread = threading.Thread(
+                    target=self.robust_auto_assign_worker, 
+                    name="RobustAutoAssignWorker",
+                    daemon=True
+                )
+            
             self.auto_assign_thread.start()
             
             # Update status
@@ -1209,6 +1267,31 @@ class AutoAssignSystem:
             
         except Exception as e:
             self.debug_print(f"❌ Error stopping auto-assign system: {e}", "ERROR")
+            return False
+    
+    def force_restart_auto_assign_system(self) -> bool:
+        """Force restart the auto-assign system (useful for production troubleshooting)"""
+        try:
+            self.debug_print("🔄 Force restarting auto-assign system...", "SYSTEM")
+            
+            # Stop the system
+            self.stop_auto_assign_system()
+            
+            # Wait a bit
+            time.sleep(3)
+            
+            # Start the system again
+            thread = self.start_robust_auto_assign_system()
+            
+            if thread and thread.is_alive():
+                self.debug_print("✅ Auto-assign system force restarted successfully", "SUCCESS")
+                return True
+            else:
+                self.debug_print("❌ Auto-assign system force restart failed", "ERROR")
+                return False
+                
+        except Exception as e:
+            self.debug_print(f"❌ Error force restarting auto-assign system: {e}", "ERROR")
             return False
     
     def get_auto_assign_status(self) -> Dict[str, Any]:

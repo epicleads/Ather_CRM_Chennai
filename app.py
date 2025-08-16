@@ -12594,31 +12594,59 @@ def debug_phone_status(phone_number):
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Enhanced health check with system status"""
+    """Enhanced health check with system status and auto-assign monitoring"""
     try:
         # Test database connection
         test_result = supabase.table("lead_master").select("id").limit(1).execute()
         db_status = "connected" if test_result else "error"
         
+        # Get auto-assign system status
+        auto_assign_status = {
+            'available': auto_assign_system is not None,
+            'running': False,
+            'thread_alive': False,
+            'thread_id': None,
+            'thread_name': None
+        }
+        
+        if auto_assign_system:
+            try:
+                status = auto_assign_system.get_auto_assign_status()
+                auto_assign_status.update({
+                    'running': status.get('is_running', False),
+                    'thread_alive': status.get('thread_alive', False),
+                    'thread_id': status.get('thread_id', None),
+                    'thread_name': status.get('thread_name', None)
+                })
+            except Exception as e:
+                auto_assign_status['error'] = str(e)
+        
         return jsonify({
             "status": "healthy",
-            "service": "WhatsApp Qualified Leads with Advanced Duplicate Handling",
+            "service": "Ather CRM with Auto-Assign System",
             "database_status": db_status,
+            "auto_assign_system": auto_assign_status,
+            "environment": {
+                "production": os.environ.get('PRODUCTION', 'false'),
+                "render": os.environ.get('RENDER', 'false'),
+                "port": os.environ.get('PORT', 'Not Set')
+            },
             "features": [
                 "Qualification filtering",
                 "Advanced duplicate handling",
                 "Real-time processing",
                 "Multi-source tracking",
-                "Detailed debugging",
-                "Lead capture only"
+                "Auto-assign system",
+                "Lead management",
+                "CRE assignment"
             ],
-            "timestamp": datetime.now().isoformat()
+            "timestamp": get_ist_timestamp()
         }), 200
     except Exception as e:
         return jsonify({
             "status": "unhealthy",
             "error": str(e),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": get_ist_timestamp()
         }), 500
 
 # =============================================================================
@@ -12910,6 +12938,84 @@ def api_auto_assign_status():
         print(f"   🚨 Exception type: {type(e).__name__}")
         return jsonify({'success': False, 'message': str(e)})
 
+@app.route('/api/auto_assign_health')
+def api_auto_assign_health():
+    """Get detailed auto-assign system health for production monitoring"""
+    try:
+        if not auto_assign_system:
+            return jsonify({
+                'status': 'unhealthy',
+                'error': 'Auto-assign system not available',
+                'timestamp': get_ist_timestamp()
+            })
+        
+        status = auto_assign_system.get_auto_assign_status()
+        
+        health_status = {
+            'status': 'healthy' if status.get('is_running', False) else 'unhealthy',
+            'auto_assign_system': {
+                'available': True,
+                'running': status.get('is_running', False),
+                'thread_alive': status.get('thread_alive', False),
+                'thread_id': status.get('thread_id', None),
+                'thread_name': status.get('thread_name', None),
+                'total_runs': status.get('total_runs', 0),
+                'total_leads_assigned': status.get('total_leads_assigned', 0),
+                'last_run': status.get('last_run', None),
+                'started_at': status.get('started_at', None)
+            },
+            'environment': {
+                'production': os.environ.get('PRODUCTION', 'false'),
+                'render': os.environ.get('RENDER', 'false'),
+                'port': os.environ.get('PORT', 'Not Set')
+            },
+            'timestamp': get_ist_timestamp()
+        }
+        
+        return jsonify(health_status)
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': get_ist_timestamp()
+        }), 500
+
+
+
+@app.route('/force_restart_auto_assign', methods=['POST'])
+def force_restart_auto_assign():
+    """Force restart the auto-assign system (production troubleshooting)"""
+    try:
+        if not auto_assign_system:
+            return jsonify({'success': False, 'message': 'Auto-assign system not available'})
+        
+        print("🔄 Force restarting auto-assign system...")
+        
+        # Force restart
+        success = auto_assign_system.force_restart_auto_assign_system()
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Auto-assign system force restarted successfully',
+                'timestamp': get_ist_timestamp()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Auto-assign system force restart failed',
+                'timestamp': get_ist_timestamp()
+            })
+            
+    except Exception as e:
+        print(f"❌ Error force restarting auto-assign system: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Error: {str(e)}',
+            'timestamp': get_ist_timestamp()
+        }), 500
+
 @app.route('/auto_assign_history_page')
 def auto_assign_history_page():
     """Auto-assign history page"""
@@ -12950,7 +13056,138 @@ def start_auto_assign_system():
     except Exception as e:
         print(f"❌ Error starting auto-assign system: {e}")
 
+# Start auto-assign system when Flask app is created (for production deployment)
+try:
+    if auto_assign_system:
+        # Use a small delay to ensure the app is fully initialized
+        import threading
+        import time
+        import os
+        
+        def delayed_start():
+            time.sleep(5)  # Wait 5 seconds for app to fully initialize
+            try:
+                print("🚀 Starting auto-assign system for production deployment...")
+                print(f"   🏭 Environment: RENDER={os.environ.get('RENDER', 'Not Set')}")
+                print(f"   🏭 Environment: PRODUCTION={os.environ.get('PRODUCTION', 'Not Set')}")
+                print(f"   🏭 Environment: PORT={os.environ.get('PORT', 'Not Set')}")
+                
+                # Force production mode for deployment
+                os.environ['PRODUCTION'] = 'true'
+                if os.environ.get('PORT'):
+                    os.environ['RENDER'] = 'true'
+                
+                print(f"   🏭 Updated Environment: RENDER={os.environ.get('RENDER', 'Not Set')}")
+                print(f"   🏭 Updated Environment: PRODUCTION={os.environ.get('PRODUCTION', 'Not Set')}")
+                
+                auto_assign_system.start_robust_auto_assign_system()
+                print("✅ Auto-assign system started successfully in production")
+            except Exception as e:
+                print(f"❌ Error starting auto-assign system in production: {e}")
+                print(f"   🚨 Exception type: {type(e).__name__}")
+                import traceback
+                traceback.print_exc()
+        
+        # Start the delayed initialization thread
+        init_thread = threading.Thread(target=delayed_start, daemon=True)
+        init_thread.start()
+        print("⏰ Auto-assign system initialization scheduled for production deployment")
+    else:
+        print("⚠️ Auto-assign system not available for production deployment")
+except Exception as e:
+    print(f"❌ Error scheduling auto-assign system for production: {e}")
+    import traceback
+    traceback.print_exc()
+
 # WhatsApp sending endpoint removed - not needed for lead capture
+
+# Additional production auto-assign system starter for gunicorn compatibility
+def ensure_auto_assign_system_running():
+    """Ensure auto-assign system is running before first request (gunicorn compatibility)"""
+    try:
+        if auto_assign_system and not auto_assign_system.system_status['is_running']:
+            print("🚀 Auto-assign system not running, starting it now...")
+            import threading
+            import os
+            
+            def start_system():
+                try:
+                    # Force production mode
+                    os.environ['PRODUCTION'] = 'true'
+                    if os.environ.get('PORT'):
+                        os.environ['RENDER'] = 'true'
+                    
+                    print(f"🏭 Starting auto-assign system with production mode...")
+                    auto_assign_system.start_robust_auto_assign_system()
+                    print("✅ Auto-assign system started successfully via ensure function")
+                except Exception as e:
+                    print(f"❌ Error starting auto-assign system via ensure function: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Start in background thread
+            start_thread = threading.Thread(target=start_system, daemon=True)
+            start_thread.start()
+            print("⏰ Auto-assign system start scheduled via ensure function")
+    except Exception as e:
+        print(f"❌ Error in ensure function: {e}")
+
+# Call the function immediately for production deployment
+ensure_auto_assign_system_running()
+
+# Alternative startup method for production (when before_first_request might not work)
+def start_production_auto_assign():
+    """Start auto-assign system for production deployment"""
+    try:
+        if auto_assign_system and not auto_assign_system.system_status['is_running']:
+            print("🚀 Starting auto-assign system for production deployment...")
+            import threading
+            import os
+            import time
+            
+            def production_start():
+                try:
+                    # Wait for app to be fully ready
+                    time.sleep(10)
+                    
+                    # Force production mode
+                    os.environ['PRODUCTION'] = 'true'
+                    if os.environ.get('PORT'):
+                        os.environ['RENDER'] = 'true'
+                    
+                    print(f"🏭 Production environment detected:")
+                    print(f"   RENDER={os.environ.get('RENDER')}")
+                    print(f"   PRODUCTION={os.environ.get('PRODUCTION')}")
+                    print(f"   PORT={os.environ.get('PORT', 'Not Set')}")
+                    
+                    # Start the system
+                    thread = auto_assign_system.start_robust_auto_assign_system()
+                    
+                    if thread and thread.is_alive():
+                        print("✅ Auto-assign system started successfully in production!")
+                        print(f"   🧵 Thread ID: {thread.ident}")
+                        print(f"   🧵 Thread Name: {thread.name}")
+                        print(f"   🧵 Thread Alive: {thread.is_alive()}")
+                    else:
+                        print("❌ Auto-assign system failed to start in production")
+                        
+                except Exception as e:
+                    print(f"❌ Error starting auto-assign system in production: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Start production initialization
+            prod_thread = threading.Thread(target=production_start, daemon=True)
+            prod_thread.start()
+            print("⏰ Production auto-assign system initialization scheduled")
+            
+    except Exception as e:
+        print(f"❌ Error scheduling production auto-assign system: {e}")
+        import traceback
+        traceback.print_exc()
+
+# Start production auto-assign system
+start_production_auto_assign()
 
 if __name__ == '__main__':
     # socketio.run(app, debug=True)
