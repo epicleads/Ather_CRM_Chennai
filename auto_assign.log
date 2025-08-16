@@ -1,0 +1,4 @@
+2025-08-16 17:23:43,625 - auto_assign_module - INFO - 🚀 Thread thread_0_TestThread started
+2025-08-16 17:23:43,625 - auto_assign_module - INFO - ✅ Thread created successfully: thread_0_TestThread
+2025-08-16 17:23:44,627 - auto_assign_module - INFO - ✅ Thread thread_0_TestThread completed successfully
+2025-08-16 17:23:45,631 - auto_assign_module - INFO - 🧹 Cleaned up thread: thread_0_TestThread

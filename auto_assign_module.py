@@ -82,184 +82,161 @@ class Lead:
     lead_status: str = 'Pending'
 
 # =============================================================================
-# VIRTUAL THREAD MANAGEMENT SYSTEM
+# VIRTUAL THREAD MANAGEMENT SYSTEM (RENDER-COMPATIBLE)
 # =============================================================================
 
 class VirtualThreadManager:
-    """Manages virtual threads for auto-assign operations"""
+    """Manages threads for auto-assign operations (Render-compatible)"""
     
     def __init__(self):
         self.threads = {}
         self.thread_counter = 0
-        self.max_threads = 10
-        self.thread_timeout = 300  # 5 minutes
+        self.max_threads = 5  # Reduced for Render compatibility
+        self.thread_timeout = 120  # Reduced timeout for Render (2 minutes)
+        self.is_production = os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False)
         
     def create_virtual_thread(self, name: str, target_func, *args, **kwargs) -> str:
-        """Create a virtual thread for background processing"""
+        """Create a thread for background processing (Render-compatible)"""
         if len(self.threads) >= self.max_threads:
             logger.warning(f"Maximum threads ({self.max_threads}) reached. Cannot create new thread: {name}")
             return None
-            
-        thread_id = f"vt_{self.thread_counter}_{int(time.time())}"
+        
+        # Clean up completed threads first
+        self._cleanup_completed_threads()
+        
+        thread_id = f"thread_{self.thread_counter}_{name}"
         self.thread_counter += 1
         
-        # Create actual thread
-        thread = threading.Thread(
-            target=self._thread_wrapper,
-            args=(thread_id, target_func, args, kwargs),
-            name=name,
-            daemon=True
-        )
-        
-        self.threads[thread_id] = {
-            'thread': thread,
-            'name': name,
-            'created_at': time.time(),
-            'status': 'created',
-            'result': None,
-            'error': None
-        }
-        
-        thread.start()
-        logger.info(f"🚀 Virtual thread created: {thread_id} ({name})")
-        return thread_id
-    
-    def _thread_wrapper(self, thread_id: str, target_func, args, kwargs):
-        """Wrapper for thread execution with error handling"""
         try:
-            self.threads[thread_id]['status'] = 'running'
-            logger.info(f"🔄 Virtual thread {thread_id} started execution")
+            # Use standard threading for Render compatibility
+            if self.is_production:
+                # Production mode: use daemon threads with reduced stack size
+                thread = threading.Thread(
+                    target=self._thread_wrapper,
+                    args=(thread_id, target_func, *args),
+                    kwargs=kwargs,
+                    daemon=True,
+                    name=thread_id
+                )
+                thread.daemon = True
+            else:
+                # Development mode: use regular threads
+                thread = threading.Thread(
+                    target=self._thread_wrapper,
+                    args=(thread_id, target_func, *args),
+                    kwargs=kwargs,
+                    name=thread_id
+                )
             
-            result = target_func(*args, **kwargs)
-            self.threads[thread_id]['result'] = result
-            self.threads[thread_id]['status'] = 'completed'
+            thread.start()
             
-            logger.info(f"✅ Virtual thread {thread_id} completed successfully")
+            self.threads[thread_id] = {
+                'thread': thread,
+                'name': name,
+                'started_at': time.time(),
+                'status': 'running',
+                'result': None,
+                'error': None
+            }
+            
+            logger.info(f"✅ Thread created successfully: {thread_id}")
+            return thread_id
             
         except Exception as e:
-            self.threads[thread_id]['error'] = str(e)
-            self.threads[thread_id]['status'] = 'failed'
-            logger.error(f"❌ Virtual thread {thread_id} failed: {e}")
-        
-        finally:
-            # Clean up completed threads after timeout
-            self._cleanup_threads()
+            logger.error(f"❌ Error creating thread {thread_id}: {e}")
+            return None
     
-    def _cleanup_threads(self):
-        """Clean up completed or timed-out threads"""
+    def _thread_wrapper(self, thread_id: str, target_func, *args, **kwargs):
+        """Wrapper for thread execution with error handling"""
+        try:
+            logger.info(f"🚀 Thread {thread_id} started")
+            result = target_func(*args, **kwargs)
+            
+            if thread_id in self.threads:
+                self.threads[thread_id]['status'] = 'completed'
+                self.threads[thread_id]['result'] = result
+                logger.info(f"✅ Thread {thread_id} completed successfully")
+            
+        except Exception as e:
+            logger.error(f"❌ Thread {thread_id} failed: {e}")
+            if thread_id in self.threads:
+                self.threads[thread_id]['status'] = 'failed'
+                self.threads[thread_id]['error'] = str(e)
+        finally:
+            # Clean up thread reference after completion
+            if thread_id in self.threads:
+                self.threads[thread_id]['completed_at'] = time.time()
+    
+    def _cleanup_completed_threads(self):
+        """Clean up completed and failed threads"""
         current_time = time.time()
         threads_to_remove = []
         
         for thread_id, thread_info in self.threads.items():
+            # Remove threads that are completed, failed, or timed out
             if thread_info['status'] in ['completed', 'failed']:
-                if current_time - thread_info['created_at'] > self.thread_timeout:
-                    threads_to_remove.append(thread_id)
+                threads_to_remove.append(thread_id)
+            elif current_time - thread_info['started_at'] > self.thread_timeout:
+                # Mark timed out threads as failed
+                thread_info['status'] = 'timeout'
+                thread_info['error'] = 'Thread timeout'
+                threads_to_remove.append(thread_id)
         
+        # Remove completed/failed/timed out threads
         for thread_id in threads_to_remove:
-            del self.threads[thread_id]
-            logger.info(f"🧹 Cleaned up virtual thread: {thread_id}")
+            if thread_id in self.threads:
+                del self.threads[thread_id]
+                logger.info(f"🧹 Cleaned up thread: {thread_id}")
     
-    def get_thread_status(self, thread_id: str) -> Optional[Dict]:
+    def get_thread_status(self, thread_id: str) -> Dict[str, Any]:
         """Get status of a specific thread"""
-        return self.threads.get(thread_id)
+        if thread_id not in self.threads:
+            return {'status': 'not_found'}
+        
+        thread_info = self.threads[thread_id]
+        return {
+            'status': thread_info['status'],
+            'name': thread_info['name'],
+            'started_at': thread_info['started_at'],
+            'result': thread_info.get('result'),
+            'error': thread_info.get('error'),
+            'completed_at': thread_info.get('completed_at')
+        }
     
-    def get_all_threads_status(self) -> Dict:
+    def get_all_threads_status(self) -> Dict[str, Any]:
         """Get status of all threads"""
+        self._cleanup_completed_threads()
+        
+        active_threads = sum(1 for t in self.threads.values() if t['status'] == 'running')
+        completed_threads = sum(1 for t in self.threads.values() if t['status'] == 'completed')
+        failed_threads = sum(1 for t in self.threads.values() if t['status'] in ['failed', 'timeout'])
+        
         return {
             'total_threads': len(self.threads),
-            'active_threads': len([t for t in self.threads.values() if t['status'] == 'running']),
-            'completed_threads': len([t for t in self.threads.values() if t['status'] == 'completed']),
-            'failed_threads': len([t for t in self.threads.values() if t['status'] == 'failed']),
-            'threads': {tid: {k: v for k, v in info.items() if k != 'thread'} 
-                       for tid, info in self.threads.items()}
+            'active_threads': active_threads,
+            'completed_threads': completed_threads,
+            'failed_threads': failed_threads,
+            'threads': {tid: self.get_thread_status(tid) for tid in self.threads.keys()}
         }
     
     def stop_thread(self, thread_id: str) -> bool:
         """Stop a specific thread"""
-        if thread_id in self.threads:
-            thread_info = self.threads[thread_id]
-            if thread_info['status'] == 'running':
-                # Note: In real implementation, you'd need proper thread termination
-                thread_info['status'] = 'stopping'
-                logger.info(f"🛑 Stopping virtual thread: {thread_id}")
-                return True
-        return False
-    
-    def get_thread_result(self, thread_id: str) -> Optional[Any]:
-        """Get result of a completed thread"""
-        if thread_id in self.threads:
-            thread_info = self.threads[thread_id]
-            if thread_info['status'] == 'completed':
-                return thread_info['result']
-        return None
-    
-    def get_thread_error(self, thread_id: str) -> Optional[str]:
-        """Get error of a failed thread"""
-        if thread_id in self.threads:
-            thread_info = self.threads[thread_id]
-            if thread_info['status'] == 'failed':
-                return thread_info['error']
-        return None
-    
-    def wait_for_thread(self, thread_id: str, timeout: float = None) -> bool:
-        """Wait for a thread to complete"""
         if thread_id not in self.threads:
             return False
         
         thread_info = self.threads[thread_id]
-        thread = thread_info['thread']
+        if thread_info['status'] == 'running':
+            # Note: We can't forcefully stop threads in Python, just mark them
+            thread_info['status'] = 'stopping'
+            logger.warning(f"⚠️ Thread {thread_id} marked for stopping (will complete naturally)")
         
-        if timeout:
-            thread.join(timeout=timeout)
-        else:
-            thread.join()
-        
-        return thread_info['status'] in ['completed', 'failed']
+        return True
     
-    def get_active_threads(self) -> List[str]:
-        """Get list of active thread IDs"""
-        return [tid for tid, info in self.threads.items() if info['status'] == 'running']
-    
-    def get_completed_threads(self) -> List[str]:
-        """Get list of completed thread IDs"""
-        return [tid for tid, info in self.threads.items() if info['status'] == 'completed']
-    
-    def get_failed_threads(self) -> List[str]:
-        """Get list of failed thread IDs"""
-        return [tid for tid, info in self.threads.items() if info['status'] == 'failed']
-    
-    def cleanup_all_completed_threads(self) -> int:
-        """Clean up all completed threads and return count of cleaned threads"""
-        current_time = time.time()
-        threads_to_remove = []
-        
-        for thread_id, thread_info in self.threads.items():
-            if thread_info['status'] in ['completed', 'failed']:
-                if current_time - thread_info['created_at'] > self.thread_timeout:
-                    threads_to_remove.append(thread_id)
-        
-        for thread_id in threads_to_remove:
-            del self.threads[thread_id]
-            logger.info(f"🧹 Cleaned up virtual thread: {thread_id}")
-        
-        return len(threads_to_remove)
-    
-    def get_thread_summary(self) -> Dict[str, Any]:
-        """Get comprehensive thread summary"""
-        active_threads = self.get_active_threads()
-        completed_threads = self.get_completed_threads()
-        failed_threads = self.get_failed_threads()
-        
-        return {
-            'total_threads': len(self.threads),
-            'active_threads': len(active_threads),
-            'completed_threads': len(completed_threads),
-            'failed_threads': len(failed_threads),
-            'max_threads': self.max_threads,
-            'available_slots': self.max_threads - len(self.threads),
-            'thread_timeout': self.thread_timeout,
-            'thread_counter': self.thread_counter
-        }
+    def stop_all_threads(self):
+        """Stop all running threads"""
+        for thread_id in self.threads.keys():
+            self.stop_thread(thread_id)
+        logger.info("🛑 All threads marked for stopping")
 
 # =============================================================================
 # IST TIMESTAMP UTILITIES
@@ -780,10 +757,13 @@ class AutoAssignSystem:
             return {'success': False, 'message': str(e), 'total_assigned': 0}
     
     def robust_auto_assign_worker(self):
-        """Robust background worker that continuously checks for new leads"""
+        """Robust background worker that continuously checks for new leads (Render-compatible)"""
         self.debug_print("🚀 Robust auto-assign background worker started", "SYSTEM")
         self.system_status['is_running'] = True
         self.system_status['started_at'] = self.get_ist_timestamp()
+        
+        # Check if running in production (Render)
+        is_production = os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False)
         
         # Immediate auto-assign when server starts
         self.debug_print("🚀 Starting immediate auto-assign check...", "SYSTEM")
@@ -803,11 +783,20 @@ class AutoAssignSystem:
         
         self.debug_print("   " + "="*80, "DEBUG")
         
-        # Continuous background auto-assign every 5 minutes
+        # Continuous background auto-assign with Render-optimized intervals
+        if is_production:
+            # Production mode: shorter intervals for better responsiveness
+            check_interval = 60  # 1 minute for production
+            self.debug_print(f"🏭 Production mode detected - checking every {check_interval} seconds", "INFO")
+        else:
+            # Development mode: longer intervals
+            check_interval = 300  # 5 minutes for development
+            self.debug_print(f"🛠️ Development mode - checking every {check_interval} seconds", "INFO")
+        
         while self.running:
             try:
-                # Check for new leads every 5 minutes
-                time.sleep(300)  # 5 minutes
+                # Wait for next check
+                time.sleep(check_interval)
                 
                 # Update status
                 self.system_status['last_run'] = self.get_ist_timestamp()
@@ -817,6 +806,7 @@ class AutoAssignSystem:
                 self.debug_print("🔄 Background auto-assign check running...", "SYSTEM")
                 self.debug_print(f"   ⏰ Check Time: {self.get_ist_timestamp()}", "INFO")
                 self.debug_print(f"   📊 Run #{self.system_status['total_runs']}", "INFO")
+                self.debug_print(f"   🏭 Mode: {'Production' if is_production else 'Development'}", "INFO")
                 self.debug_print("   " + "="*80, "DEBUG")
                 
                 try:
@@ -838,13 +828,17 @@ class AutoAssignSystem:
                 self.debug_print(f"   🚨 Error Type: {type(e).__name__}", "ERROR")
                 self.debug_print(f"   🔍 Error Details: {str(e)}", "ERROR")
                 self.debug_print("   " + "="*80, "ERROR")
-                time.sleep(60)  # Wait 1 minute on error before retrying
+                
+                # Shorter error recovery time for production
+                error_recovery_time = 30 if is_production else 60
+                self.debug_print(f"   ⏳ Waiting {error_recovery_time} seconds before retrying...", "INFO")
+                time.sleep(error_recovery_time)
         
         self.debug_print("🛑 Auto-assign worker stopped", "SYSTEM")
         self.system_status['is_running'] = False
     
     def start_robust_auto_assign_system(self) -> Optional[threading.Thread]:
-        """Start the robust auto-assign system"""
+        """Start the robust auto-assign system (Render-compatible)"""
         try:
             # Check if system is already running
             if self.system_status['is_running'] and self.auto_assign_thread and self.auto_assign_thread.is_alive():
@@ -857,7 +851,17 @@ class AutoAssignSystem:
                 time.sleep(2)  # Give thread time to stop
             
             self.debug_print("🚀 Starting robust auto-assign system...", "SYSTEM")
-            self.debug_print("   📋 Will check for new leads every 5 minutes", "INFO")
+            
+            # Check if running in production (Render)
+            is_production = os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False)
+            
+            if is_production:
+                self.debug_print("   🏭 Production mode detected - using daemon threads", "INFO")
+                self.debug_print("   📋 Will check for new leads every 1 minute", "INFO")
+            else:
+                self.debug_print("   🛠️ Development mode - using regular threads", "INFO")
+                self.debug_print("   📋 Will check for new leads every 5 minutes", "INFO")
+            
             self.debug_print("   ⚡ First auto-assign check starting now...", "INFO")
             
             # Create and start new thread
@@ -865,18 +869,25 @@ class AutoAssignSystem:
             self.auto_assign_thread = threading.Thread(
                 target=self.robust_auto_assign_worker, 
                 name="RobustAutoAssignWorker",
-                daemon=False
+                daemon=is_production  # Use daemon threads in production for Render compatibility
             )
             self.auto_assign_thread.start()
             
             # Update status
             self.system_status['is_running'] = True
+            self.system_status['thread_id'] = self.auto_assign_thread.ident
             
             self.debug_print("✅ Robust auto-assign system started successfully", "SUCCESS")
+            self.debug_print(f"   🧵 Thread ID: {self.auto_assign_thread.ident}", "INFO")
+            self.debug_print(f"   🏭 Production Mode: {is_production}", "INFO")
+            self.debug_print(f"   🕒 Started At: {self.system_status['started_at']}", "INFO")
+            
             return self.auto_assign_thread
             
         except Exception as e:
-            self.debug_print(f"❌ Error starting auto-assign system: {e}", "ERROR")
+            self.debug_print(f"❌ Error starting robust auto-assign system: {e}", "ERROR")
+            self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
+            self.system_status['is_running'] = False
             return None
     
     def stop_auto_assign_system(self) -> bool:
@@ -1056,6 +1067,72 @@ class AutoAssignSystem:
         error_count = len(status.get('errors', []))
         success_rate = max(0, 100 - (error_count / total_runs * 100))
         return round(success_rate, 1)
+    
+    def manual_trigger_auto_assign(self, source: str = None) -> Dict[str, Any]:
+        """Manual trigger for auto-assign (Render-optimized)"""
+        try:
+            self.debug_print("🎯 ========================================", "SYSTEM")
+            self.debug_print("🎯 MANUAL TRIGGER AUTO-ASSIGN", "SYSTEM")
+            self.debug_print("🎯 ========================================", "SYSTEM")
+            
+            # Check if running in production (Render)
+            is_production = os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False)
+            
+            if is_production:
+                self.debug_print("🏭 Production mode detected - using optimized trigger", "INFO")
+            else:
+                self.debug_print("🛠️ Development mode - using standard trigger", "INFO")
+            
+            if source:
+                # Trigger for specific source
+                self.debug_print(f"📍 Manual trigger requested for source: {source}", "INFO")
+                result = self.auto_assign_new_leads_for_source(source)
+            else:
+                # Trigger for all sources
+                self.debug_print("📍 Manual trigger requested for all sources", "INFO")
+                result = self.check_and_assign_new_leads()
+            
+            if result and result.get('success'):
+                assigned_count = result.get('assigned_count', 0) or result.get('total_assigned', 0)
+                self.debug_print(f"✅ Manual trigger completed successfully", "SUCCESS")
+                self.debug_print(f"   🎯 Leads assigned: {assigned_count}", "SUCCESS")
+                self.debug_print(f"   📝 Message: {result.get('message', 'N/A')}", "INFO")
+                
+                # Update system status for manual triggers
+                if assigned_count > 0:
+                    self.system_status['total_leads_assigned'] += assigned_count
+                    self.debug_print(f"   📊 Total leads assigned so far: {self.system_status['total_leads_assigned']}", "INFO")
+                
+                return {
+                    'success': True,
+                    'message': f'Manual trigger completed: {assigned_count} leads assigned',
+                    'assigned_count': assigned_count,
+                    'source': source,
+                    'timestamp': self.get_ist_timestamp(),
+                    'production_mode': is_production
+                }
+            else:
+                error_msg = result.get('message', 'Unknown error') if result else 'No result'
+                self.debug_print(f"❌ Manual trigger failed: {error_msg}", "ERROR")
+                return {
+                    'success': False,
+                    'message': f'Manual trigger failed: {error_msg}',
+                    'source': source,
+                    'timestamp': self.get_ist_timestamp(),
+                    'production_mode': is_production
+                }
+                
+        except Exception as e:
+            self.debug_print(f"❌ CRITICAL ERROR in manual trigger: {e}", "ERROR")
+            self.debug_print(f"   🚨 Exception type: {type(e).__name__}", "ERROR")
+            self.debug_print(f"   📍 Source: {source}", "ERROR")
+            return {
+                'success': False,
+                'message': f'Critical error in manual trigger: {str(e)}',
+                'source': source,
+                'timestamp': self.get_ist_timestamp(),
+                'production_mode': os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False)
+            }
 
 # =============================================================================
 # EXPORT AND HISTORY MANAGEMENT
