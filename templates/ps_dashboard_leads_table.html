@@ -10,7 +10,13 @@
                 <th>Model Interested</th>
                 <th>CRE Name</th>
                 <th>Branch</th>
-                <th>{{ 'Won Date' if status == 'won' else 'Lost Date' }}</th>
+                {% if status == 'verification' %}
+                    <th>Sent to CRE Date</th>
+                {% elif status == 'approval' %}
+                    <th>Approval Requested Date</th>
+                {% else %}
+                    <th>{{ 'Won Date' if status == 'won' else 'Lost Date' }}</th>
+                {% endif %}
                 <th>UID</th>
             </tr>
         </thead>
@@ -51,16 +57,34 @@
                 <td>{{ lead.customer_mobile_number }}</td>
                 <td>{{ lead.model_interested or 'Not specified' }}</td>
                 <td>{{ lead.cre_name or 'N/A' }}</td>
-                                                <td>{{ lead.branch or lead.ps_branch or 'N/A' }}</td>
-                <td>
-                    {% if status == 'won' and lead.won_timestamp %}
-                        <span class="badge bg-success">{{ lead.won_timestamp[:10] }}</span>
-                    {% elif status != 'won' and lead.lost_timestamp %}
-                        <span class="badge bg-danger">{{ lead.lost_timestamp[:10] }}</span>
-                    {% else %}
-                        <span class="badge bg-secondary">N/A</span>
-                    {% endif %}
-                </td>
+                <td>{{ lead.branch or lead.ps_branch or 'N/A' }}</td>
+                {% if status == 'verification' %}
+                    <td>
+                        {% if lead.updated_at %}
+                            <span class="badge bg-info">{{ lead.updated_at[:10] }}</span>
+                        {% else %}
+                            <span class="badge bg-secondary">N/A</span>
+                        {% endif %}
+                    </td>
+                {% elif status == 'approval' %}
+                    <td>
+                        {% if lead.approval_requested_at %}
+                            <span class="badge bg-warning">{{ lead.approval_requested_at[:10] }}</span>
+                        {% else %}
+                            <span class="badge bg-secondary">N/A</span>
+                        {% endif %}
+                    </td>
+                {% else %}
+                    <td>
+                        {% if status == 'won' and lead.won_timestamp %}
+                            <span class="badge bg-success">{{ lead.won_timestamp[:10] }}</span>
+                        {% elif status != 'won' and lead.lost_timestamp %}
+                            <span class="badge bg-danger">{{ lead.lost_timestamp[:10] }}</span>
+                        {% else %}
+                            <span class="badge bg-secondary">N/A</span>
+                        {% endif %}
+                    </td>
+                {% endif %}
                 <td><span class="badge bg-primary">{{ lead.lead_uid or lead.uid }}</span></td>
             </tr>
             {% endfor %}
@@ -69,8 +93,18 @@
 </div>
 {% else %}
 <div class="text-center py-5">
-    <i class="fas fa-ban fa-3x text-muted mb-3"></i>
-    <h5 class="text-muted">No {{ 'won' if status == 'won' else 'lost' }} leads yet</h5>
-    <p class="text-muted">Leads will appear here when their final status is changed to "{{ 'Won' if status == 'won' else 'Lost' }}"</p>
+    {% if status == 'verification' %}
+        <i class="fas fa-clock fa-3x text-muted mb-3"></i>
+        <h5 class="text-muted">No leads sent to CRE for verification</h5>
+        <p class="text-muted">Leads will appear here when you mark them as lost (Lost to Competition, Lost to Codealer, Dropped, Not Interested)</p>
+    {% elif status == 'approval' %}
+        <i class="fas fa-clock fa-3x text-muted mb-3"></i>
+        <h5 class="text-muted">No leads waiting for approval</h5>
+        <p class="text-muted">Leads will appear here when you mark them as Booked or Retailed</p>
+    {% else %}
+        <i class="fas fa-ban fa-3x text-muted mb-3"></i>
+        <h5 class="text-muted">No {{ 'won' if status == 'won' else 'lost' }} leads yet</h5>
+        <p class="text-muted">Leads will appear here when their final status is changed to "{{ 'Won' if status == 'won' else 'Lost' }}"</p>
+    {% endif %}
 </div>
 {% endif %} 

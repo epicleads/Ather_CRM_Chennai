@@ -438,11 +438,12 @@
             <div class="tab-pane fade" id="won-lost" role="tabpanel" aria-labelledby="won-lost-tab">
                 <div class="d-flex align-items-center mb-3 justify-content-between">
                     <div class="d-flex align-items-center">
-                        <h5 class="mb-0 me-3" id="wonLostHeader">{{ 'Won' if status == 'won' else 'Lost' if status == 'lost' else 'Waiting for Approval' }} Leads ({{ (won_leads if status == 'won' else lost_leads if status == 'lost' else approval_leads)|length }})</h5>
-                        <!-- Three-State Toggle -->
-                        <div class="three-state-toggle">
+                        <h5 class="mb-0 me-3" id="wonLostHeader">{{ 'Won' if status == 'won' else 'Lost' if status == 'lost' else 'Verification by CRE' if status == 'verification' else 'Waiting for Approval' }} Leads ({{ (won_leads if status == 'won' else lost_leads if status == 'lost' else verification_leads if status == 'verification' else approval_leads)|length }})</h5>
+                        <!-- Four-State Toggle -->
+                        <div class="four-state-toggle">
                             <div class="toggle-options">
                                 <button type="button" class="toggle-option" data-status="lost" id="toggle-lost">Lost</button>
+                                <button type="button" class="toggle-option" data-status="verification" id="toggle-verification">Verification by CRE</button>
                                 <button type="button" class="toggle-option" data-status="approval" id="toggle-approval">Waiting for Approval</button>
                                 <button type="button" class="toggle-option" data-status="won" id="toggle-won">Won</button>
                             </div>
@@ -460,7 +461,7 @@
                         </div>
                     </div>
                 </div>
-                {% set leads_list = won_leads if status == 'won' else lost_leads %}
+                {% set leads_list = won_leads if status == 'won' else lost_leads if status == 'lost' else verification_leads if status == 'verification' else approval_leads %}
                 {% include 'ps_dashboard_leads_table.html' %}
             </div>
 
@@ -695,7 +696,7 @@
                                 <td>{{ lead.approved_by or 'N/A' }}</td>
                                 <td>
                                     {% if lead.approval_remarks %}
-                                        <button class="btn btn-sm btn-outline-info" onclick="showRejectionRemarks('{{ lead.approval_remarks|replace("'", "\\'")|replace('"', '\\"') }}')" title="View Rejection Remarks">
+                                        <button class="btn btn-sm btn-outline-info" onclick="showRejectionRemarks('{{ lead.approval_remarks|replace("'", "\\'")|replace('"', '\\"')|safe }}')" title="View Rejection Remarks">
                                             <i class="fas fa-comment"></i> View
                                         </button>
                                     {% else %}
@@ -852,8 +853,8 @@
     border-radius: 50%;
 }
 
-/* Three-State Toggle Styles */
-.three-state-toggle {
+/* Four-State Toggle Styles */
+.four-state-toggle {
     margin-left: 20px;
 }
 
@@ -869,14 +870,14 @@
 .toggle-option {
     background: none;
     border: none;
-    padding: 8px 16px;
+    padding: 8px 12px;
     border-radius: 20px;
     font-weight: 500;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     color: #6c757d;
     cursor: pointer;
     transition: all 0.3s ease;
-    min-width: 80px;
+    min-width: 70px;
     text-align: center;
 }
 
@@ -897,6 +898,12 @@
     box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);
 }
 
+.toggle-option[data-status="verification"].active {
+    background-color: #fd7e14;
+    color: white;
+    box-shadow: 0 2px 4px rgba(253, 126, 20, 0.3);
+}
+
 .toggle-option[data-status="approval"].active {
     background-color: #ffc107;
     color: #212529;
@@ -906,8 +913,6 @@
 .toggle-option[data-status="won"].active {
     background-color: #28a745;
     box-shadow: 0 2px 4px rgba(40, 167, 69, 0.3);
-}
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 input:checked + .slider {
@@ -1688,17 +1693,18 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    // Three-State Toggle Functionality for Won/Lost/Approval Leads
+    // Four-State Toggle Functionality for Won/Lost/Verification/Approval Leads
     const wonLostTabContent = document.getElementById('won-lost');
     const toggleLost = document.getElementById('toggle-lost');
+    const toggleVerification = document.getElementById('toggle-verification');
     const toggleApproval = document.getElementById('toggle-approval');
     const toggleWon = document.getElementById('toggle-won');
 
-    if (wonLostTabContent && toggleLost && toggleApproval && toggleWon) {
+    if (wonLostTabContent && toggleLost && toggleVerification && toggleApproval && toggleWon) {
         // Function to handle toggle clicks
         function handleToggleClick(clickedToggle, status) {
             // Remove active class from all toggles
-            [toggleLost, toggleApproval, toggleWon].forEach(toggle => {
+            [toggleLost, toggleVerification, toggleApproval, toggleWon].forEach(toggle => {
                 toggle.classList.remove('active');
             });
             
@@ -1714,7 +1720,14 @@ document.addEventListener('DOMContentLoaded', function() {
             // Update the header text
             const headerText = wonLostTabContent.querySelector('#wonLostHeader');
             if (headerText) {
-                const statusText = status === 'won' ? 'Won' : status === 'lost' ? 'Lost' : 'Waiting for Approval';
+                let statusText;
+                switch(status) {
+                    case 'won': statusText = 'Won'; break;
+                    case 'lost': statusText = 'Lost'; break;
+                    case 'verification': statusText = 'Verification by CRE'; break;
+                    case 'approval': statusText = 'Waiting for Approval'; break;
+                    default: statusText = 'Unknown';
+                }
                 headerText.textContent = `${statusText} Leads (Loading...)`;
             }
             
@@ -1734,18 +1747,34 @@ document.addEventListener('DOMContentLoaded', function() {
                     const count = newTable ? newTable.querySelectorAll('tbody tr').length : 0;
                     
                     if (headerText) {
-                        const statusText = status === 'won' ? 'Won' : status === 'lost' ? 'Lost' : 'Waiting for Approval';
+                        let statusText;
+                        switch(status) {
+                            case 'won': statusText = 'Won'; break;
+                            case 'lost': statusText = 'Lost'; break;
+                            case 'verification': statusText = 'Verification by CRE'; break;
+                            case 'approval': statusText = 'Waiting for Approval'; break;
+                            default: statusText = 'Unknown';
+                        }
                         headerText.textContent = `${statusText} Leads (${count})`;
                     }
                     
-                    // Re-initialize search functionality for the new table
-                    const searchInput = document.getElementById('wonLostLeadSearchInput');
-                    const searchButton = document.getElementById('wonLostLeadSearchButton');
-                    const clearButton = document.getElementById('wonLostLeadClearButton');
-                    
-                    if (searchInput && searchButton && clearButton) {
-                        setupSearch('wonLostLeadSearchInput', 'wonLostLeadSearchButton', 'wonLostLeadClearButton', 'wonLostLeadsTable');
-                    }
+                                         // Re-initialize search functionality for the new table
+                     const searchInput = document.getElementById('wonLostLeadSearchInput');
+                     const searchButton = document.getElementById('wonLostLeadSearchButton');
+                     const clearButton = document.getElementById('wonLostLeadClearButton');
+                     
+                     if (searchInput && searchButton && clearButton) {
+                         setupSearch('wonLostLeadSearchInput', 'wonLostLeadSearchButton', 'wonLostLeadClearButton', 'wonLostLeadsTable');
+                     }
+                     
+                     // Refresh card counts after status change
+                     // Function to refresh card counts
+                     function refreshCardCounts() {
+                         // Note: We don't need to update any card counts here
+                         // The cards should remain static and show their original counts
+                         // Verification leads count is already shown in the table header
+                     }
+                     refreshCardCounts();
                 })
                 .catch(error => {
                     console.error('Error fetching leads:', error);
@@ -1758,6 +1787,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Add click event listeners
         toggleLost.addEventListener('click', () => handleToggleClick(toggleLost, 'lost'));
+        toggleVerification.addEventListener('click', () => handleToggleClick(toggleVerification, 'verification'));
         toggleApproval.addEventListener('click', () => handleToggleClick(toggleApproval, 'approval'));
         toggleWon.addEventListener('click', () => handleToggleClick(toggleWon, 'won'));
 
@@ -1770,6 +1800,8 @@ document.addEventListener('DOMContentLoaded', function() {
             toggleWon.classList.add('active');
         } else if (currentStatus === 'approval') {
             toggleApproval.classList.add('active');
+        } else if (currentStatus === 'verification') {
+            toggleVerification.classList.add('active');
         } else {
             toggleLost.classList.add('active');
         }

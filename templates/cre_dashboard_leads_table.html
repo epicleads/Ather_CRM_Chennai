@@ -9,8 +9,14 @@
                 <th>Mobile</th>
                 <th>Model Interested</th>
                 <th>PS Name</th>
-                <th>Branch</th>
-                <th>{{ 'Won Date' if status == 'won' else 'Lost Date' }}</th>
+                <th>PS Branch</th>
+                {% if status == 'ps-verification' %}
+                    <th>PS Lead Status</th>
+                    <th>Sent to CRE Date</th>
+                {% else %}
+                    <th>Branch</th>
+                    <th>{{ 'Won Date' if status == 'won' else 'Lost Date' }}</th>
+                {% endif %}
                 <th>UID</th>
             </tr>
         </thead>
@@ -35,16 +41,34 @@
                 <td>{{ lead.customer_mobile_number }}</td>
                 <td>{{ lead.model_interested or 'Not specified' }}</td>
                 <td>{{ lead.ps_name or 'N/A' }}</td>
-                <td>{{ lead.branch or 'N/A' }}</td>
-                <td>
-                    {% if status == 'won' and lead.won_timestamp %}
-                        <span class="badge bg-success">{{ lead.won_timestamp[:10] }}</span>
-                    {% elif status != 'won' and lead.lost_timestamp %}
-                        <span class="badge bg-danger">{{ lead.lost_timestamp[:10] }}</span>
-                    {% else %}
-                        <span class="badge bg-secondary">N/A</span>
-                    {% endif %}
-                </td>
+                {% if status == 'ps-verification' %}
+                    <td>{{ lead.ps_branch or 'N/A' }}</td>
+                    <td>
+                        {% if lead.ps_lead_status %}
+                            <span class="badge bg-warning">{{ lead.ps_lead_status }}</span>
+                        {% else %}
+                            <span class="badge bg-secondary">Not Set</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if lead.sent_to_cre_at %}
+                            <span class="badge bg-info">{{ lead.sent_to_cre_at[:10] }}</span>
+                        {% else %}
+                            <span class="badge bg-secondary">N/A</span>
+                        {% endif %}
+                    </td>
+                {% else %}
+                    <td>{{ lead.branch or 'N/A' }}</td>
+                    <td>
+                        {% if status == 'won' and lead.won_timestamp %}
+                            <span class="badge bg-success">{{ lead.won_timestamp[:10] }}</span>
+                        {% elif status != 'won' and lead.lost_timestamp %}
+                            <span class="badge bg-danger">{{ lead.lost_timestamp[:10] }}</span>
+                        {% else %}
+                            <span class="badge bg-secondary">N/A</span>
+                        {% endif %}
+                    </td>
+                {% endif %}
                 <td><span class="badge bg-primary">{{ lead.uid }}</span></td>
             </tr>
             {% endfor %}
@@ -53,8 +77,14 @@
 </div>
 {% else %}
 <div class="text-center py-5">
-    <i class="fas fa-ban fa-3x text-muted mb-3"></i>
-    <h5 class="text-muted">No {{ 'won' if status == 'won' else 'lost' }} leads yet</h5>
-    <p class="text-muted">Leads will appear here when their final status is changed to "{{ 'Won' if status == 'won' else 'Lost' }}"</p>
+    {% if status == 'ps-verification' %}
+        <i class="fas fa-clock fa-3x text-muted mb-3"></i>
+        <h5 class="text-muted">No leads waiting for PS verification</h5>
+        <p class="text-muted">Leads will appear here when PS marks them as lost and sends them to CRE for verification</p>
+    {% else %}
+        <i class="fas fa-ban fa-3x text-muted mb-3"></i>
+        <h5 class="text-muted">No {{ 'won' if status == 'won' else 'lost' }} leads yet</h5>
+        <p class="text-muted">Leads will appear here when their final status is changed to "{{ 'Won' if status == 'won' else 'Lost' }}"</p>
+    {% endif %}
 </div>
 {% endif %} 

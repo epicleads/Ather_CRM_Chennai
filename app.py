@@ -3649,6 +3649,27 @@ def cre_dashboard():
         if (lead.get('follow_up_date') and str(lead.get('follow_up_date')).startswith(today_str)
         and lead.get('final_status') not in ['Won', 'Lost'])
     ]
+    
+    # Get leads sent to CRE for verification from PS (from ps_followup_master)
+    ps_verification_leads = []
+    try:
+        ps_verification_result = supabase.table('ps_followup_master').select('*').eq('final_status', 'Sent to CRE').execute()
+        if ps_verification_result.data:
+            for ps_lead in ps_verification_result.data:
+                # Get the corresponding lead from lead_master for display
+                lead_result = supabase.table('lead_master').select('*').eq('uid', ps_lead.get('lead_uid')).execute()
+                if lead_result.data:
+                    lead_data = lead_result.data[0]
+                    # Add PS information to the lead data
+                    lead_data['ps_name'] = ps_lead.get('ps_name')
+                    lead_data['ps_branch'] = ps_lead.get('ps_branch')
+                    # Note: sent_to_cre_at column doesn't exist, using updated_at instead
+                    lead_data['sent_to_cre_at'] = ps_lead.get('updated_at')
+                    lead_data['ps_lead_status'] = ps_lead.get('lead_status')
+                    ps_verification_leads.append(lead_data)
+    except Exception as e:
+        print(f"Error fetching PS verification leads: {e}")
+        ps_verification_leads = []
 
     # Add event leads with today's cre_followup_date to the follow-up list
     event_leads_today = []
@@ -3695,6 +3716,7 @@ def cre_dashboard():
         assigned_to_ps=assigned_to_ps,
         won_leads=won_leads,
         lost_leads=lost_leads,
+        ps_verification_leads=ps_verification_leads,
         event_event_leads=event_event_leads,
         filter_type=filter_type,  # Pass filter type to template
         start_date=start_date_str,  # Pass start date to template
@@ -3873,7 +3895,21 @@ def update_lead(uid):
                     if 'final_status' in update_data and lead_data.get('ps_name'):
                         ps_result = supabase.table('ps_followup_master').select('lead_uid').eq('lead_uid', uid).execute()
                         if ps_result.data:
-                            supabase.table('ps_followup_master').update({'final_status': update_data['final_status']}).eq('lead_uid', uid).execute()
+                            ps_update_data = {'final_status': update_data['final_status']}
+                            
+                            # If CRE marks the lead as Lost, add lost_timestamp to ps_followup_master
+                            if update_data['final_status'] == 'Lost':
+                                ps_update_data['lost_timestamp'] = update_data.get('lost_timestamp') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                print(f"[DEBUG] CRE marked lead {uid} as Lost, updating ps_followup_master with lost_timestamp")
+                                # Note: sent_to_cre_at column doesn't exist, so we can't clear it
+                            
+                            # If CRE marks the lead as Won, add won_timestamp to ps_followup_master
+                            elif update_data['final_status'] == 'Won':
+                                ps_update_data['won_timestamp'] = update_data.get('won_timestamp') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                print(f"[DEBUG] CRE marked lead {uid} as Won, updating ps_followup_master with won_timestamp")
+                                # Note: sent_to_cre_at column doesn't exist, so we can't clear it
+                            
+                            supabase.table('ps_followup_master').update(ps_update_data).eq('lead_uid', uid).execute()
                     
                     # Synchronize timestamps between tables
                     if 'final_status' in update_data:
@@ -4033,6 +4069,7 @@ def ps_dashboard():
         lost_leads = []
         approval_leads = []  # New list for leads waiting for approval
         rejected_leads = []  # New list for leads rejected by Branch Head
+        verification_leads = []  # New list for leads sent to CRE for verification
         event_leads = []  # Separate list for event leads
 
         # Define statuses that should be excluded from Today's Follow-up and Pending Leads
@@ -4129,6 +4166,11 @@ def ps_dashboard():
                 lead_dict['source_table'] = 'ps_followup'
                 rejected_leads.append(lead_dict)
                 print(f"[DEBUG] Added to rejected_leads (rejected by BH): {lead.get('lead_uid')}")
+            
+            # Check for leads sent to CRE for verification (PS marked as lost but need CRE approval)
+            if final_status == 'Sent to CRE':
+                verification_leads.append(lead_dict)
+                print(f"[DEBUG] Added to verification_leads (Sent to CRE): {lead.get('lead_uid')}")
 
 
 
@@ -4405,6 +4447,7 @@ def ps_dashboard():
                                attended_leads=attended_leads,
                                won_leads=won_leads,
                                lost_leads=lost_leads,
+                               verification_leads=verification_leads,  # Add verification leads
                                approval_leads=approval_leads,  # Add approval leads
                                rejected_leads=rejected_leads,  # Add rejected leads
                                event_leads=event_leads,
@@ -4437,6 +4480,7 @@ def ps_dashboard():
             'attended_leads': attended_leads,
             'won_leads': won_leads,
             'lost_leads': lost_leads,
+            'verification_leads': verification_leads,  # Add verification leads
             'approval_leads': approval_leads,  # Add approval leads
             'rejected_leads': rejected_leads,  # Add rejected leads
             'event_leads': event_leads,
@@ -4696,6 +4740,7 @@ def update_ps_lead(uid):
                 test_drive_done = request.form.get('test_drive_done', '')
                 
                 # Always update lead_status from the form
+                print(f"[DEBUG] Received lead_status from form: '{lead_status}'")
                 if lead_status:
                     update_data['lead_status'] = lead_status
                     
@@ -4704,6 +4749,15 @@ def update_ps_lead(uid):
                         update_data['final_status'] = 'Won'
                         won_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         update_data['won_timestamp'] = won_timestamp
+                    
+                    # Auto-set final_status to 'Sent to CRE' for certain lost statuses
+                    if lead_status in ['Lost to Competition', 'Lost to Codealer', 'Dropped', 'Not Interested']:
+                        update_data['final_status'] = 'Sent to CRE'
+                        # Note: sent_to_cre_at column doesn't exist in ps_followup_master table
+                        # We'll use the existing updated_at timestamp instead
+                        print(f"[DEBUG] Auto-setting final_status to 'Sent to CRE' for lead {uid} with status: {lead_status}")
+                        # Force this to override any manual final_status selection
+                        print(f"[DEBUG] This will override any manual final_status selection")
                         
                 if lead_category:
                     update_data['lead_category'] = lead_category
@@ -4716,7 +4770,8 @@ def update_ps_lead(uid):
                 update_data['test_drive_done'] = test_drive_done
                 if request.form.get('follow_up_date'):
                     update_data['follow_up_date'] = follow_up_date
-                if request.form.get('final_status'):
+                # Only set final_status from form if it's not auto-set by lead_status
+                if request.form.get('final_status') and 'final_status' not in update_data:
                     final_status = request.form['final_status']
                     update_data['final_status'] = final_status
                     if final_status == 'Won':
@@ -4739,6 +4794,9 @@ def update_ps_lead(uid):
                     update_data[f'{next_call}_call_remark'] = combined_remark
                     # Notification removed - no longer sending notifications between PS and CRE
                 try:
+                    # Debug: Print final update_data before database update
+                    print(f"[DEBUG] Final update_data before database update: {update_data}")
+                    
                     # Track the PS call attempt before updating the lead
                     if lead_status:
                         call_was_recorded = bool(request.form.get('call_date') and call_remark)
@@ -4752,7 +4810,17 @@ def update_ps_lead(uid):
                             remarks=call_remark if call_remark else None
                         )
                     if update_data:
+                        print(f"[DEBUG] Updating ps_followup_master for lead {uid} with data: {update_data}")
                         supabase.table('ps_followup_master').update(update_data).eq('lead_uid', uid).execute()
+                        print(f"[DEBUG] Successfully updated ps_followup_master for lead {uid}")
+                        
+                        # Verify the update by fetching the updated data
+                        verify_result = supabase.table('ps_followup_master').select('lead_status, final_status').eq('lead_uid', uid).execute()
+                        if verify_result.data:
+                            updated_lead = verify_result.data[0]
+                            print(f"[DEBUG] Verification - Lead {uid} after update: lead_status='{updated_lead.get('lead_status')}', final_status='{updated_lead.get('final_status')}'")
+                        else:
+                            print(f"[DEBUG] Warning: Could not verify update for lead {uid}")
                         
                         # Sync to alltest_drive table if test_drive_done is set
                         if test_drive_done in ['Yes', 'No', True, False]:
@@ -4796,11 +4864,18 @@ def update_ps_lead(uid):
                             if request.form.get('final_status'):
                                 final_status = request.form['final_status']
                                 main_update_data = {'final_status': final_status}
-                            if final_status == 'Won':
-                                main_update_data['won_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            elif final_status == 'Lost':
-                                main_update_data['lost_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                if final_status == 'Won':
+                                    main_update_data['won_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                elif final_status == 'Lost':
+                                    main_update_data['lost_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                supabase.table('lead_master').update(main_update_data).eq('uid', uid).execute()
+                        
+                        # Handle auto-set final_status (like 'Sent to CRE')
+                        if 'final_status' in update_data and update_data['final_status'] == 'Sent to CRE':
+                            # Update lead_master table to sync the status
+                            main_update_data = {'final_status': 'Sent to CRE'}
                             supabase.table('lead_master').update(main_update_data).eq('uid', uid).execute()
+                            print(f"[DEBUG] Synced 'Sent to CRE' status to lead_master for lead {uid}")
                         
                         # Synchronize timestamps between tables
                         if 'final_status' in update_data:
@@ -4830,6 +4905,12 @@ def update_ps_lead(uid):
                     return redirect(redirect_url)
                 except Exception as e:
                     flash(f'Error updating lead: {str(e)}', 'error')
+                    redirect_url = url_for('ps_dashboard', tab=return_tab)
+                    if status_filter:
+                        redirect_url += f'&status_filter={status_filter}'
+                    if category_filter:
+                        redirect_url += f'&category_filter={category_filter}'
+                    return redirect(redirect_url)
             else:
                 return render_template('update_ps_lead.html',
                                        lead=ps_data,
@@ -9548,7 +9629,7 @@ def delete_duplicate_lead():
 @app.route('/cre_dashboard_leads')
 @require_cre
 def cre_dashboard_leads():
-    """AJAX endpoint to get leads table HTML for Won/Lost toggle"""
+    """AJAX endpoint to get leads table HTML for Won/Lost/PS Verification toggle"""
     status = request.args.get('status', 'lost')
     cre_name = session.get('cre_name')
     
@@ -9559,6 +9640,7 @@ def cre_dashboard_leads():
         # Initialize lists
         won_leads = []
         lost_leads = []
+        ps_verification_leads = []
         
         # Process leads
         for lead in all_leads:
@@ -9569,8 +9651,33 @@ def cre_dashboard_leads():
             elif final_status == 'Lost':
                 lost_leads.append(lead)
         
+        # Get leads sent to CRE for verification from PS (from ps_followup_master)
+        try:
+            ps_verification_result = supabase.table('ps_followup_master').select('*').eq('final_status', 'Sent to CRE').execute()
+            if ps_verification_result.data:
+                for ps_lead in ps_verification_result.data:
+                    # Get the corresponding lead from lead_master for display
+                    lead_result = supabase.table('lead_master').select('*').eq('uid', ps_lead.get('lead_uid')).execute()
+                    if lead_result.data:
+                        lead_data = lead_result.data[0]
+                        # Add PS information to the lead data
+                        lead_data['ps_name'] = ps_lead.get('ps_name')
+                        lead_data['ps_branch'] = ps_lead.get('ps_branch')
+                        # Note: sent_to_cre_at column doesn't exist, using updated_at instead
+                        lead_data['sent_to_cre_at'] = ps_lead.get('updated_at')
+                        lead_data['ps_lead_status'] = ps_lead.get('lead_status')
+                        ps_verification_leads.append(lead_data)
+        except Exception as e:
+            print(f"Error fetching PS verification leads: {e}")
+            ps_verification_leads = []
+        
         # Select the appropriate list based on status
-        leads_list = won_leads if status == 'won' else lost_leads
+        if status == 'won':
+            leads_list = won_leads
+        elif status == 'ps-verification':
+            leads_list = ps_verification_leads
+        else:
+            leads_list = lost_leads
         
         # Render only the table HTML
         return render_template('cre_dashboard_leads_table.html', 
@@ -9595,6 +9702,8 @@ def ps_dashboard_leads():
         # Initialize lists
         won_leads = []
         lost_leads = []
+        verification_leads = []
+        approval_leads = []
         
         # Process regular assigned leads
         for lead in assigned_leads:
@@ -9606,6 +9715,10 @@ def ps_dashboard_leads():
                 won_leads.append(lead_dict)
             elif final_status == 'Lost':
                 lost_leads.append(lead_dict)
+            elif final_status == 'Sent to CRE':
+                verification_leads.append(lead_dict)
+            elif final_status == 'Waiting for Approval':
+                approval_leads.append(lead_dict)
         
 
         
@@ -9620,6 +9733,10 @@ def ps_dashboard_leads():
                 won_leads.append(lead_dict)
             elif final_status == 'Lost':
                 lost_leads.append(lead_dict)
+            elif final_status == 'Sent to CRE':
+                verification_leads.append(lead_dict)
+            elif final_status == 'Waiting for Approval':
+                approval_leads.append(lead_dict)
         
         # Process walk-in leads
         walkin_leads = safe_get_data('walkin_table', {'ps_assigned': ps_name})
@@ -9640,39 +9757,17 @@ def ps_dashboard_leads():
             elif final_status == 'Lost':
                 lead_dict['lost_timestamp'] = lead.get('updated_at') or datetime.now().isoformat()
                 lost_leads.append(lead_dict)
+            elif final_status == 'Sent to CRE':
+                verification_leads.append(lead_dict)
+            elif final_status == 'Waiting for Approval':
+                approval_leads.append(lead_dict)
         
         # Select the appropriate list based on status
         if status == 'won':
             leads_list = won_leads
+        elif status == 'verification':
+            leads_list = verification_leads
         elif status == 'approval':
-            # Get leads waiting for approval
-            approval_leads = []
-            for lead in assigned_leads:
-                lead_dict = dict(lead)
-                lead_dict['lead_uid'] = lead.get('lead_uid')
-                if lead.get('final_status') == 'Waiting for Approval':
-                    approval_leads.append(lead_dict)
-            
-            # Process event leads for approval
-            for lead in event_leads:
-                lead_dict = dict(lead)
-                lead_dict['lead_uid'] = lead.get('activity_uid', '') or lead.get('uid', '')
-                lead_dict['customer_mobile_number'] = lead.get('customer_phone_number', '')
-                if lead.get('final_status') == 'Waiting for Approval':
-                    approval_leads.append(lead_dict)
-            
-            # Process walk-in leads for approval
-            for lead in walkin_leads:
-                lead_dict = dict(lead)
-                lead_dict['lead_uid'] = lead.get('uid', f"W{lead.get('id')}")
-                lead_dict['customer_mobile_number'] = lead.get('mobile_number', '')
-                lead_dict['customer_name'] = lead.get('customer_name', '')
-                lead_dict['is_walkin'] = True
-                lead_dict['walkin_id'] = lead.get('id')
-                lead_dict['cre_name'] = ''
-                if lead.get('status') == 'Waiting for Approval':
-                    approval_leads.append(lead_dict)
-            
             leads_list = approval_leads
         else:  # lost
             leads_list = lost_leads
