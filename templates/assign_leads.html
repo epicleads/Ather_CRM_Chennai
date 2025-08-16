@@ -1763,25 +1763,38 @@
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Triggering...';
         showAlert('🔄 Manually triggering auto-assignment for all configured sources...', 'info');
         
-        // Trigger auto-assignment for all configured sources
+        // Check if we have configured sources
         const configuredSources = [...new Set(autoAssignConfigs.map(config => config.source))];
         if (configuredSources.length > 0) {
-            configuredSources.forEach(source => {
-                fetch('/trigger_auto_assign/' + encodeURIComponent(source), {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        showAlert(`✅ Auto-assignment for ${source}: ${data.assigned_count} leads assigned`, 'success');
-                    } else {
-                        showAlert(`⚠️ Auto-assignment for ${source} failed: ${data.message}`, 'warning');
+            // Use a single endpoint call for better Render compatibility
+            // First, try to trigger for all sources at once
+            fetch('/trigger_auto_assign/' + encodeURIComponent(configuredSources[0]), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    showAlert(`✅ Auto-assignment completed: ${data.assigned_count} leads assigned`, 'success');
+                    if (data.production_mode) {
+                        showAlert(`🏭 Production mode detected - using optimized trigger`, 'info');
                     }
-                })
-                .catch(error => {
-                    showAlert(`❌ Error triggering auto-assignment for ${source}`, 'error');
-                });
+                    // Refresh the page to show updated counts
+                    setTimeout(() => {
+                        location.reload();
+                    }, 2000);
+                } else {
+                    showAlert(`⚠️ Auto-assignment failed: ${data.message}`, 'warning');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showAlert(`❌ Error triggering auto-assignment: ${error.message}`, 'error');
             });
         } else {
             showAlert('ℹ️ No auto-assignment configurations found', 'info');
@@ -1790,7 +1803,7 @@
         setTimeout(() => {
             btn.disabled = false;
             btn.innerHTML = originalText;
-        }, 3000);
+        }, 5000); // Increased timeout for better user experience
     });
     
     // System status button event handler

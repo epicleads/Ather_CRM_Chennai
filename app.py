@@ -12818,10 +12818,10 @@ def get_auto_assign_history():
 
 @app.route('/trigger_auto_assign/<source>', methods=['POST'])
 def trigger_auto_assign(source):
-    """Trigger auto-assign for a specific source"""
+    """Trigger auto-assign for a specific source (Render-optimized)"""
     try:
         print("🎯 ========================================")
-        print("🎯 TRIGGERING AUTO-ASSIGN")
+        print("🎯 TRIGGERING AUTO-ASSIGN (RENDER-OPTIMIZED)")
         print("🎯 ========================================")
         
         if not auto_assign_system:
@@ -12832,12 +12832,18 @@ def trigger_auto_assign(source):
         print(f"   📍 Source: {source}")
         print(f"   ⏰ Time: {get_ist_timestamp()}")
         
-        result = auto_assign_system.auto_assign_new_leads_for_source(source)
+        # Check if running in production (Render)
+        is_production = os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False)
+        print(f"   🏭 Production Mode: {is_production}")
+        
+        # Use the new manual trigger method for better Render compatibility
+        result = auto_assign_system.manual_trigger_auto_assign(source)
         
         print(f"📊 Auto-assign result:")
         print(f"   ✅ Success: {result.get('success', False)}")
         print(f"   🎯 Leads assigned: {result.get('assigned_count', 0)}")
         print(f"   📝 Message: {result.get('message', 'N/A')}")
+        print(f"   🏭 Production Mode: {result.get('production_mode', False)}")
         
         if result.get('failed_count', 0) > 0:
             print(f"   ❌ Failed assignments: {result.get('failed_count', 0)}")
@@ -12852,17 +12858,27 @@ def trigger_auto_assign(source):
                 'assigned_count': result.get('assigned_count', 0),
                 'total_processed': result.get('total_processed', 0),
                 'failed_count': result.get('failed_count', 0),
-                'failed_leads': result.get('failed_leads', [])
+                'failed_leads': result.get('failed_leads', []),
+                'production_mode': result.get('production_mode', False),
+                'timestamp': result.get('timestamp', get_ist_timestamp())
             })
         else:
             return jsonify({
                 'success': False,
-                'message': result.get('message', 'Auto-assign failed')
+                'message': result.get('message', 'Auto-assign failed'),
+                'production_mode': result.get('production_mode', False),
+                'timestamp': result.get('timestamp', get_ist_timestamp())
             })
         
     except Exception as e:
-        print(f"Error triggering auto-assign: {e}")
-        return jsonify({'success': False, 'message': str(e)})
+        print(f"❌ CRITICAL ERROR triggering auto-assign: {e}")
+        print(f"   🚨 Exception type: {type(e).__name__}")
+        return jsonify({
+            'success': False, 
+            'message': f'Critical error: {str(e)}',
+            'production_mode': os.environ.get('RENDER', False) or os.environ.get('PRODUCTION', False),
+            'timestamp': get_ist_timestamp()
+        })
 
 @app.route('/api/auto_assign_status')
 def api_auto_assign_status():
